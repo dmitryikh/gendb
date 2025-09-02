@@ -1,0 +1,15 @@
+types:
+  fbs_files:
+    - account.fbs
+    - position.fbs
+
+tables:
+  - name: accounts
+    type: AccountFb
+    primary_key:
+      - account_id
+
+  - name: positions
+    type: PositionFb
+    primary_key:
+      - position_id

@@ -1,0 +1,9 @@
+namespace gendb.tests;
+
+table PositionFb {
+  position_id: int;
+  account_id: int;
+  volume: int;
+  instrument:string;
+  open_price: float;
+}

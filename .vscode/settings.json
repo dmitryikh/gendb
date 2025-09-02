@@ -1,0 +1,19 @@
+{
+    "cmake.buildOutput": "always",
+    "cmake.testOutput": "always",
+    "cmake.showOptions": "terminal",
+    "cSpell.words": [
+        "flatc",
+    ],
+    "C_Cpp.intelliSenseEngine": "disabled", // disable in favor of clangd
+    "clangd.arguments": [
+        "--compile-commands-dir=build",
+        "--background-index",
+        "--clang-tidy",
+        "--completion-style=detailed",
+        "--header-insertion=iwyu"
+    ],
+    "files.watcherExclude": {
+        "**/build/**": true
+    }
+}

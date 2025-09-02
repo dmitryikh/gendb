@@ -1,0 +1,50 @@
+// AUTO GENERATED. DO NOT EDIT.
+//
+#pragma once
+#include <cstdint>
+#include <string_view>
+#include "message_format.h"
+
+{% if table.namespace %}namespace {{ table.namespace }} {
+{% endif %}
+// GeneratedClass
+class {{ table.class_name }} : public gendb::MessageBase {
+ public:
+  enum Field : int {
+    {% for field in fields %}
+    {{ field.enum_name }} = {{ loop.index }},
+    {% endfor %}
+    MaxFields
+  };
+
+  {{ table.class_name }}(std::span<uint8_t> span) : MessageBase(span) {}
+
+  {% for field in fields %}
+  bool has_{{ field.name }}() const { return HasField({{ field.enum_name }}); }
+  {% if field.cpp_type == 'std::string_view' %}
+  std::string_view {{ field.name }}() const { return ReadStringField({{ field.enum_name }}, ""); }
+  {% else %}
+  {{ field.cpp_type }} {{ field.name }}() const { return ReadScalarField<{{ field.cpp_type }}>({{ field.enum_name }}, {{ field.default }}); }
+  bool set_{{ field.name }}({{ field.cpp_type }} value) { return SetScalarField<{{ field.cpp_type }}>({{ field.enum_name }}, value); }
+  {% endif %}
+  {% endfor %}
+};
+
+class {{ table.class_name }}Builder : public gendb::MessageBuilder {
+ public:
+  {{ table.class_name }}Builder() : MessageBuilder() {}
+  {{ table.class_name }}Builder({{ table.class_name }}& obj) : MessageBuilder(obj) {}
+
+  {% for field in fields %}
+  {% if field.cpp_type == 'std::string_view' %}
+  void set_{{ field.name }}(std::string_view value) { AddStringField({{ table.class_name }}::{{ field.enum_name }}, value); }
+  {% else %}
+  void set_{{ field.name }}({{ field.cpp_type }} value) { AddField<{{ field.cpp_type }}>({{ table.class_name }}::{{ field.enum_name }}, value); }
+  {% endif %}
+  {% endfor %}
+
+  std::vector<uint8_t> Build() { return MessageBuilder::Build(); }
+};
+{% if table.namespace %}
+} // namespace {{ table.namespace }}
+{% endif %}

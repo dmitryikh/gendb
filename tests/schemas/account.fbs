@@ -1,0 +1,12 @@
+namespace gendb.tests;
+
+table AccountFb {
+  account_id: int;
+  trader_id: string;
+  name: string;
+  address: string;
+  age: int;
+  is_active: bool;
+  balance: float;
+  config_name: string;
+}

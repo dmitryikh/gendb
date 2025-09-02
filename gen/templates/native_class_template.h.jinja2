@@ -1,0 +1,23 @@
+#pragma once
+#include <string>
+#include <vector>
+
+class {{ table.name }} {
+public:
+    {% for field in table.fields %}
+    {{ field.type }} {{ field.name }};
+    {% endfor %}
+
+    {{ table.name }}() = default;
+
+    std::vector<uint8_t> ToFlatBuffer() const {
+        // TODO: implement serialization using FlatBuffers
+        return {};
+    }
+
+    static {{ table.name }} FromFlatBuffer(const uint8_t* buffer, size_t size) {
+        {{ table.name }} obj;
+        // TODO: implement deserialization using FlatBuffers
+        return obj;
+    }
+};
