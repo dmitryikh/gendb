@@ -18,6 +18,18 @@ def cpp_type(flat_type):
     }
     return mapping[flat_type]
 
+def is_fixed_size(flat_type):
+    # Map FlatBuffer types to fixed size status
+    mapping = {
+        "Uint": True,
+        "Int": True,
+        "Float": True,
+        "Bool": True,
+        "String": False,
+        # Add more mappings as needed
+    }
+    return mapping[flat_type]
+
 def enum_name(field_name):
     # Convert field name to PascalCase for enum
     return ''.join(word.capitalize() for word in field_name.split('_'))
@@ -58,20 +70,32 @@ def main():
         schema = flatc.get_schema(fbs_file)
         for table in schema["objects"]:
             fields = []
-            for f in table["fields"]:
+            fixed_indices = []
+            fixed_fields = []
+            for idx, f in enumerate(table["fields"]):
                 t = cpp_type(f["type"]["base_type"])
+                is_fixed = is_fixed_size(f["type"]["base_type"])
                 fields.append({
                     "name": f["name"],
                     "cpp_type": t,
                     "enum_name": enum_name(f["name"]),
-                    "default": default_value(t)
+                    "default": default_value(t),
+                    "is_fixed_size": is_fixed
                 })
+                if is_fixed:
+                    fixed_indices.append(idx)
+                    fixed_fields.append({"idx": idx, "enum_name": enum_name(f["name"])})
+            # Compute K for bitmask
+            K = (max(fixed_indices) // 32 + 1) if fixed_indices else 1
             namespace, class_name = split_namespace_class(table["name"])
             table_data = {
                 "name": table["name"],
                 "namespace": namespace,
                 "class_name": class_name,
-                "fields": fields
+                "fields": fields,
+                "fixed_indices": fixed_indices,
+                "fixed_fields": fixed_fields,
+                "K": K
             }
             output_file = args.output_dir / f"{class_name}.h"
             cpp_code = template.render(table=table_data, fields=fields)

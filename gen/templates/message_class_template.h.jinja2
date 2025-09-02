@@ -2,8 +2,12 @@
 //
 #pragma once
 #include <cstdint>
+#include <array>
 #include <string_view>
+
 #include "message_format.h"
+#include "bits.h"
+#include "message_patch.h"
 
 {% if table.namespace %}namespace {{ table.namespace }} {
 {% endif %}
@@ -17,6 +21,13 @@ class {{ table.class_name }} : public gendb::MessageBase {
     MaxFields
   };
 
+  static constexpr std::array<uint32_t, {{ table.K }}> kFixedSizeFields = gendb::MakeConstexprFieldBitmask<{{ table.K }}>({
+    {% for field in table.fixed_fields %}
+      {{ field.enum_name }},
+    {% endfor %}
+  });
+
+  {{ table.class_name }}() = default;
   {{ table.class_name }}(std::span<uint8_t> span) : MessageBase(span) {}
 
   {% for field in fields %}
@@ -28,6 +39,10 @@ class {{ table.class_name }} : public gendb::MessageBase {
   bool set_{{ field.name }}({{ field.cpp_type }} value) { return SetScalarField<{{ field.cpp_type }}>({{ field.enum_name }}, value); }
   {% endif %}
   {% endfor %}
+
+  bool CanApplyPatchInplace(const gendb::MessagePatch& patch) const {
+    return gendb::MessageBase::CanApplyPatchInplace<kFixedSizeFields.size(), kFixedSizeFields>(patch);
+  }
 };
 
 class {{ table.class_name }}Builder : public gendb::MessageBuilder {

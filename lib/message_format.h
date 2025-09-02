@@ -10,6 +10,10 @@
 #include <string_view>
 #include <vector>
 
+#include "absl/container/inlined_vector.h"
+#include "bits.h"
+#include "message_patch.h"
+
 namespace gendb {
 
 constexpr bool kLittleEndianArch = (std::endian::native == std::endian::little);
@@ -175,6 +179,31 @@ class MessageBase {
   std::span<uint8_t> FieldRaw(int field_id) const;
 
   bool HasField(int field_id) const { return !FieldRaw(field_id).empty(); }
+
+  absl::InlinedVector<uint32_t, 2> GetFieldsMask() const;
+
+  template <size_t K, std::array<uint32_t, K> FixedSizeFields>
+  bool CanApplyPatchInplace(const MessagePatch& patch) const {
+    // Patch can be done in-place if:
+    // 1. The modified fields are subset of the set original message fields.
+    // 2. The modified fields are subset of the fixed size fields.
+    // 3. The removed fields are subset of inverted set original message fields.
+
+    // Get bitmasks for current, modified, and removed fields
+    absl::InlinedVector<uint32_t, 2> current_mask = GetFieldsMask();
+
+    // 1. Modified fields must be subset of current fields
+    if (!IsBitmaskSubset(current_mask, patch.modified)) return false;
+    // 2. Modified fields must be subset of fixed size fields
+    if (!IsBitmaskSubset(std::span<const uint32_t>(FixedSizeFields), patch.modified)) return false;
+    // 3. Removed fields must be subset of inverted current fields
+    absl::InlinedVector<uint32_t, 2> inverted_mask(current_mask.size(), 0);
+    for (size_t i = 0; i < current_mask.size(); ++i) {
+      inverted_mask[i] = ~current_mask[i];
+    }
+    if (!IsBitmaskSubset(inverted_mask, patch.removed)) return false;
+    return true;
+  }
 
  private:
   uint8_t* _buffer;

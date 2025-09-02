@@ -2,23 +2,75 @@
 
 #include "AccountFb.h"
 #include "PositionFb.h"
+#include "bits.h"
 
 using namespace gendb::tests;
 
-TEST(AccountFbTest, SetGetFields) {
-  AccountFbBuilder builder;
-  builder.set_account_id(1001);
-  builder.set_name("Alice");
-  builder.set_is_active(true);
-  std::vector<uint8_t> buffer = builder.Build();
-  AccountFb account{buffer};
+class AccountFbPatchTest : public ::testing::Test {
+ protected:
+  AccountFb account;
+  std::vector<uint8_t> buffer;
+  void SetUp() override {
+    AccountFbBuilder builder;
+    builder.set_account_id(42);
+    builder.set_age(30);
+    builder.set_balance(100.0f);
+    builder.set_is_active(true);
+    buffer = builder.Build();
+    account = AccountFb(buffer);
+  }
+};
 
-  EXPECT_EQ(account.account_id(), 1001);
-  EXPECT_EQ(account.name(), "Alice");
-  EXPECT_EQ(account.is_active(), true);
-  EXPECT_TRUE(account.has_account_id());
-  EXPECT_TRUE(account.has_name());
-  EXPECT_TRUE(account.has_is_active());
+TEST_F(AccountFbPatchTest, ModifyFixedSizeField) {
+  gendb::MessagePatch patch;
+  patch.modified = gendb::MakeFieldBitmask({AccountFb::AccountId});
+  EXPECT_TRUE(account.CanApplyPatchInplace(patch));
+}
+
+TEST_F(AccountFbPatchTest, ModifyNonFixedSizeField) {
+  gendb::MessagePatch patch;
+  patch.modified = gendb::MakeFieldBitmask({AccountFb::Name});
+  EXPECT_FALSE(account.CanApplyPatchInplace(patch));
+}
+
+TEST_F(AccountFbPatchTest, RemoveFixedSizeField) {
+  gendb::MessagePatch patch;
+  patch.removed = gendb::MakeFieldBitmask({AccountFb::AccountId});
+  EXPECT_FALSE(account.CanApplyPatchInplace(patch));
+}
+
+TEST_F(AccountFbPatchTest, RemoveNonFixedSizeField) {
+  gendb::MessagePatch patch;
+  patch.removed = gendb::MakeFieldBitmask({AccountFb::Name});
+  EXPECT_TRUE(account.CanApplyPatchInplace(patch));
+}
+
+TEST_F(AccountFbPatchTest, ModifyAndRemoveFields) {
+  gendb::MessagePatch patch;
+  patch.modified = gendb::MakeFieldBitmask({AccountFb::Age, AccountFb::Balance});
+  patch.removed = gendb::MakeFieldBitmask({AccountFb::Name});
+  EXPECT_TRUE(account.CanApplyPatchInplace(patch));
+}
+
+TEST_F(AccountFbPatchTest, ModifyAndRemoveExistingFields) {
+  gendb::MessagePatch patch;
+  patch.modified = gendb::MakeFieldBitmask({AccountFb::Age, AccountFb::Balance});
+  patch.removed = gendb::MakeFieldBitmask({AccountFb::AccountId});
+  EXPECT_FALSE(account.CanApplyPatchInplace(patch));
+}
+
+TEST_F(AccountFbPatchTest, ModifyNonFixedAndRemoveFixed) {
+  gendb::MessagePatch patch;
+  patch.modified = gendb::MakeFieldBitmask({AccountFb::Name});
+  patch.removed = gendb::MakeFieldBitmask({AccountFb::AccountId});
+  EXPECT_FALSE(account.CanApplyPatchInplace(patch));
+}
+
+TEST_F(AccountFbPatchTest, ModifyAndRemoveNonFixed) {
+  gendb::MessagePatch patch;
+  patch.modified = gendb::MakeFieldBitmask({AccountFb::Name});
+  patch.removed = gendb::MakeFieldBitmask({AccountFb::ConfigName});
+  EXPECT_FALSE(account.CanApplyPatchInplace(patch));
 }
 
 TEST(PositionFbTest, SetGetFields) {

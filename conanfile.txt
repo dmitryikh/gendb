@@ -1,5 +1,6 @@
 [requires]
 gtest/1.14.0
+abseil/20250512.1
 
 [generators]
 CMakeDeps

@@ -1,9 +1,13 @@
 #include "message_format.h"
 
+#include <absl/container/inlined_vector.h>
+
 #include <bit>
 #include <cstdint>
 #include <cstring>
 #include <span>
+
+#include "math.h"
 
 namespace gendb {
 
@@ -28,6 +32,19 @@ std::span<uint8_t> MessageBase::FieldRaw(int field_id) const {
   const uint16_t start = ReadScalarRaw<uint16_t>(_buffer + field_id * sizeof(uint16_t));
   const uint16_t end = ReadScalarRaw<uint16_t>(_buffer + (field_id + 1) * sizeof(uint16_t));
   return std::span<uint8_t>(_buffer + start, _buffer + end);
+}
+
+absl::InlinedVector<uint32_t, 2> MessageBase::GetFieldsMask() const {
+  absl::InlinedVector<uint32_t, 2> mask;
+  int n_fields = FieldCount();
+  int n_words = DivRoundUp(n_fields, 32);
+  mask.resize(n_words, 0);
+  for (int i = 0; i < n_fields; ++i) {
+    if (HasField(i + 1)) {
+      mask[i / 32] |= (1u << (i % 32));
+    }
+  }
+  return mask;
 }
 
 MessageBuilder::MessageBuilder() {}
