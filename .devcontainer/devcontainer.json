@@ -18,7 +18,8 @@
         "streetsidesoftware.code-spell-checker",
         "twxs.cmake", // syntax highlighting for CMake
         "vadimcn.vscode-lldb",
-        "xaver.clang-format"
+        "xaver.clang-format",
+        "samuelcolvin.jinjahtml",
     ],
     "postCreateCommand": "bash .devcontainer/setup.sh",
     "runArgs": [

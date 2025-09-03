@@ -131,22 +131,14 @@ void WriteScalarRaw(void* buffer, T value) {
 
 inline std::array<uint16_t, 1> kEmptyMessage = {0};
 
-// Message binary repr:
-// [num_fields]{2b}
-// [field_0_offset]{2b}
-// [field_1_offset]{2b}
-// ...
-// [field num_fields - 1 offset]{2b}
-// [message_size]{2b}
-// [field_0_bytes] unaligned, size of `field_1_offset` - `field_0_offset`
-// [field_1_bytes] unaligned, size of `field_2_offset` - `field_1_offset`, if size = 0 the field is
-// not set
-
 class MessageBase {
  public:
   MessageBase();
 
   MessageBase(std::span<uint8_t> span);
+
+  // TODO: find a better way to be const correct.
+  MessageBase(std::span<const uint8_t> span) : _buffer(const_cast<uint8_t*>(span.data())) {}
 
   template <typename T>
     requires IsSupportedScalar<T>
@@ -182,32 +174,18 @@ class MessageBase {
 
   absl::InlinedVector<uint32_t, 2> GetFieldsMask() const;
 
-  template <size_t K, std::array<uint32_t, K> FixedSizeFields>
-  bool CanApplyPatchInplace(const MessagePatch& patch) const {
-    // Patch can be done in-place if:
-    // 1. The modified fields are subset of the set original message fields.
-    // 2. The modified fields are subset of the fixed size fields.
-    // 3. The removed fields are subset of inverted set original message fields.
+  bool CanApplyPatchInplace(const MessagePatch& patch,
+                            std::span<const uint32_t> all_fixed_size_fields) const;
 
-    // Get bitmasks for current, modified, and removed fields
-    absl::InlinedVector<uint32_t, 2> current_mask = GetFieldsMask();
+  // Applies the patch to the message in place. If patch can't be applied in-place
+  // (CanApplyPatchInplace = false), the state of the message is unspecified.
+  bool ApplyPatchInplace(const MessagePatch& patch);
 
-    // 1. Modified fields must be subset of current fields
-    if (!IsBitmaskSubset(current_mask, patch.modified)) return false;
-    // 2. Modified fields must be subset of fixed size fields
-    if (!IsBitmaskSubset(std::span<const uint32_t>(FixedSizeFields), patch.modified)) return false;
-    // 3. Removed fields must be subset of inverted current fields
-    absl::InlinedVector<uint32_t, 2> inverted_mask(current_mask.size(), 0);
-    for (size_t i = 0; i < current_mask.size(); ++i) {
-      inverted_mask[i] = ~current_mask[i];
-    }
-    if (!IsBitmaskSubset(inverted_mask, patch.removed)) return false;
-    return true;
-  }
+  // Applies the patch to the message and writes the result to the provided buffer.
+  void ApplyPatch(const MessagePatch& patch, std::vector<uint8_t>& buffer) const;
 
  private:
   uint8_t* _buffer;
-  //   uint8_t* _vtable;
 };
 
 class MessageBuilder {
@@ -233,7 +211,10 @@ class MessageBuilder {
 
   void AddFieldRaw(int field_id, std::span<const uint8_t> data);
 
+  void ClearField(int field_id);
+
   // Returns empty vector in case of failures.
+  // TODO: support external buffer.
   std::vector<uint8_t> Build();
 
   void MergeFields(const MessageBase& rhs);

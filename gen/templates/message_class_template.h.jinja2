@@ -41,7 +41,7 @@ class {{ table.class_name }} : public gendb::MessageBase {
   {% endfor %}
 
   bool CanApplyPatchInplace(const gendb::MessagePatch& patch) const {
-    return gendb::MessageBase::CanApplyPatchInplace<kFixedSizeFields.size(), kFixedSizeFields>(patch);
+    return gendb::MessageBase::CanApplyPatchInplace(patch, kFixedSizeFields);
   }
 };
 
@@ -58,7 +58,45 @@ class {{ table.class_name }}Builder : public gendb::MessageBuilder {
   {% endif %}
   {% endfor %}
 
+  {% for field in fields %}
+  void clear_{{ field.name }}() { ClearField({{ table.class_name }}::{{ field.enum_name }}); }
+  {% endfor %}
+
   std::vector<uint8_t> Build() { return MessageBuilder::Build(); }
+};
+
+class {{ table.class_name }}PatchBuilder {
+ public:
+  {{ table.class_name }}PatchBuilder() = default;
+  // TODO: Add constructor with primary key fields.
+
+  {% for field in fields %}
+  {{ table.class_name }}PatchBuilder&& set_{{ field.name }}({{ field.cpp_type }} value) && {
+    _builder.set_{{ field.name }}(value);
+    SetFieldBit(modified, {{ table.class_name }}::{{ field.enum_name }});
+    UnsetFieldBit(removed, {{ table.class_name }}::{{ field.enum_name }});
+    return std::move(*this);
+  }
+  {{ table.class_name }}PatchBuilder&& clear_{{ field.name }}() && {
+    SetFieldBit(removed, {{ table.class_name }}::{{ field.enum_name }});
+    UnsetFieldBit(modified, {{ table.class_name }}::{{ field.enum_name }});
+    _builder.clear_{{ field.name }}();
+    return std::move(*this);
+  }
+  {% endfor %}
+
+  gendb::MessagePatch BuildPatch() && {
+    gendb::MessagePatch patch;
+    patch.modified = std::move(modified);
+    patch.removed = std::move(removed);
+    patch.buffer = _builder.Build();
+    return patch;
+  }
+
+ private:
+  gendb::Bitmask modified;
+  gendb::Bitmask removed;
+  {{ table.class_name }}Builder _builder;
 };
 {% if table.namespace %}
 } // namespace {{ table.namespace }}

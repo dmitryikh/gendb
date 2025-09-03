@@ -78,3 +78,35 @@ TEST(BitmaskSubsetTest, BAllZerosAEmpty) {
   std::vector<uint32_t> b = {0, 0};
   EXPECT_TRUE(IsBitmaskSubset(a, b));
 }
+
+TEST(ForEachSetFieldTest, EmptyMask) {
+  std::vector<uint32_t> mask;
+  std::vector<int> fields;
+  gendb::ForEachSetField(mask, [&](int field_id) { fields.push_back(field_id); });
+  EXPECT_TRUE(fields.empty());
+}
+
+TEST(ForEachSetFieldTest, SingleWord) {
+  std::vector<uint32_t> mask = {0b10101};
+  std::vector<int> fields;
+  gendb::ForEachSetField(mask, [&](int field_id) { fields.push_back(field_id); });
+  std::vector<int> expected = {1, 3, 5};
+  EXPECT_EQ(fields, expected);
+}
+
+TEST(ForEachSetFieldTest, MultiWord) {
+  std::vector<uint32_t> mask = {0b10101, 0b100};
+  std::vector<int> fields;
+  gendb::ForEachSetField(mask, [&](int field_id) { fields.push_back(field_id); });
+  std::vector<int> expected = {1, 3, 5, 35};
+  EXPECT_EQ(fields, expected);
+}
+
+TEST(ForEachSetFieldTest, AllBitsSet) {
+  std::vector<uint32_t> mask = {0xFFFFFFFF};
+  std::vector<int> fields;
+  gendb::ForEachSetField(mask, [&](int field_id) { fields.push_back(field_id); });
+  std::vector<int> expected(32);
+  for (int i = 0; i < 32; ++i) expected[i] = i + 1;
+  EXPECT_EQ(fields, expected);
+}

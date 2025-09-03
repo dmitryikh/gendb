@@ -22,54 +22,51 @@ class AccountFbPatchTest : public ::testing::Test {
 };
 
 TEST_F(AccountFbPatchTest, ModifyFixedSizeField) {
-  gendb::MessagePatch patch;
-  patch.modified = gendb::MakeFieldBitmask({AccountFb::AccountId});
+  auto patch = AccountFbPatchBuilder().set_account_id(24).BuildPatch();
   EXPECT_TRUE(account.CanApplyPatchInplace(patch));
+  EXPECT_TRUE(account.ApplyPatchInplace(patch));
+  EXPECT_EQ(account.account_id(), 24);
 }
 
 TEST_F(AccountFbPatchTest, ModifyNonFixedSizeField) {
-  gendb::MessagePatch patch;
-  patch.modified = gendb::MakeFieldBitmask({AccountFb::Name});
+  auto patch = AccountFbPatchBuilder().set_name("TestName").BuildPatch();
   EXPECT_FALSE(account.CanApplyPatchInplace(patch));
 }
 
 TEST_F(AccountFbPatchTest, RemoveFixedSizeField) {
-  gendb::MessagePatch patch;
-  patch.removed = gendb::MakeFieldBitmask({AccountFb::AccountId});
+  auto patch = AccountFbPatchBuilder().clear_account_id().BuildPatch();
   EXPECT_FALSE(account.CanApplyPatchInplace(patch));
 }
 
 TEST_F(AccountFbPatchTest, RemoveNonFixedSizeField) {
-  gendb::MessagePatch patch;
-  patch.removed = gendb::MakeFieldBitmask({AccountFb::Name});
+  auto patch = AccountFbPatchBuilder().clear_name().BuildPatch();
   EXPECT_TRUE(account.CanApplyPatchInplace(patch));
+  EXPECT_TRUE(account.ApplyPatchInplace(patch));
+  EXPECT_TRUE(account.name().empty());
 }
 
 TEST_F(AccountFbPatchTest, ModifyAndRemoveFields) {
-  gendb::MessagePatch patch;
-  patch.modified = gendb::MakeFieldBitmask({AccountFb::Age, AccountFb::Balance});
-  patch.removed = gendb::MakeFieldBitmask({AccountFb::Name});
+  auto patch = AccountFbPatchBuilder().set_age(31).set_balance(200.0f).clear_name().BuildPatch();
   EXPECT_TRUE(account.CanApplyPatchInplace(patch));
+  EXPECT_TRUE(account.ApplyPatchInplace(patch));
+  EXPECT_EQ(account.age(), 31);
+  EXPECT_EQ(account.balance(), 200.0f);
+  EXPECT_TRUE(account.name().empty());
 }
 
 TEST_F(AccountFbPatchTest, ModifyAndRemoveExistingFields) {
-  gendb::MessagePatch patch;
-  patch.modified = gendb::MakeFieldBitmask({AccountFb::Age, AccountFb::Balance});
-  patch.removed = gendb::MakeFieldBitmask({AccountFb::AccountId});
+  auto patch =
+      AccountFbPatchBuilder().set_age(31).set_balance(200.0f).clear_account_id().BuildPatch();
   EXPECT_FALSE(account.CanApplyPatchInplace(patch));
 }
 
 TEST_F(AccountFbPatchTest, ModifyNonFixedAndRemoveFixed) {
-  gendb::MessagePatch patch;
-  patch.modified = gendb::MakeFieldBitmask({AccountFb::Name});
-  patch.removed = gendb::MakeFieldBitmask({AccountFb::AccountId});
+  auto patch = AccountFbPatchBuilder().set_name("TestName").clear_account_id().BuildPatch();
   EXPECT_FALSE(account.CanApplyPatchInplace(patch));
 }
 
 TEST_F(AccountFbPatchTest, ModifyAndRemoveNonFixed) {
-  gendb::MessagePatch patch;
-  patch.modified = gendb::MakeFieldBitmask({AccountFb::Name});
-  patch.removed = gendb::MakeFieldBitmask({AccountFb::ConfigName});
+  auto patch = AccountFbPatchBuilder().set_name("TestName").clear_config_name().BuildPatch();
   EXPECT_FALSE(account.CanApplyPatchInplace(patch));
 }
 
@@ -257,6 +254,89 @@ TEST(AccountFbTest, PatchUnknownField) {
     // Unknown fields.
     EXPECT_EQ(patch_account.ReadStringField(6, ""), "Patched Field#6");
   }
+}
+
+TEST(AccountFbTest, ApplyPatch_ModifyFixedField) {
+  AccountFbBuilder builder;
+  builder.set_account_id(42);
+  builder.set_age(30);
+  builder.set_balance(100.0f);
+  builder.set_is_active(true);
+  std::vector<uint8_t> buffer = builder.Build();
+  AccountFb account(buffer);
+
+  auto patch = AccountFbPatchBuilder().set_balance(200.0f).BuildPatch();
+  std::vector<uint8_t> patched_buffer;
+  account.ApplyPatch(patch, patched_buffer);
+  AccountFb patched(patched_buffer);
+  EXPECT_EQ(patched.balance(), 200.0f);
+  EXPECT_EQ(patched.account_id(), 42);
+  EXPECT_EQ(patched.age(), 30);
+  EXPECT_EQ(patched.is_active(), true);
+}
+
+TEST(AccountFbTest, ApplyPatch_ModifyNonFixedField) {
+  AccountFbBuilder builder;
+  builder.set_account_id(42);
+  builder.set_name("OldName");
+  std::vector<uint8_t> buffer = builder.Build();
+  AccountFb account(buffer);
+
+  auto patch = AccountFbPatchBuilder().set_name("NewName").BuildPatch();
+  std::vector<uint8_t> patched_buffer;
+  account.ApplyPatch(patch, patched_buffer);
+  AccountFb patched(patched_buffer);
+  EXPECT_EQ(patched.name(), "NewName");
+  EXPECT_EQ(patched.account_id(), 42);
+}
+
+TEST(AccountFbTest, ApplyPatch_RemoveFixedField) {
+  AccountFbBuilder builder;
+  builder.set_account_id(42);
+  builder.set_age(30);
+  std::vector<uint8_t> buffer = builder.Build();
+  AccountFb account(buffer);
+
+  auto patch = AccountFbPatchBuilder().clear_age().BuildPatch();
+  std::vector<uint8_t> patched_buffer;
+  account.ApplyPatch(patch, patched_buffer);
+  AccountFb patched(patched_buffer);
+  EXPECT_FALSE(patched.has_age());
+  EXPECT_EQ(patched.account_id(), 42);
+}
+
+TEST(AccountFbTest, ApplyPatch_RemoveNonFixedField) {
+  AccountFbBuilder builder;
+  builder.set_account_id(42);
+  builder.set_name("OldName");
+  std::vector<uint8_t> buffer = builder.Build();
+  AccountFb account(buffer);
+
+  auto patch = AccountFbPatchBuilder().clear_name().BuildPatch();
+  std::vector<uint8_t> patched_buffer;
+  account.ApplyPatch(patch, patched_buffer);
+  AccountFb patched(patched_buffer);
+  EXPECT_TRUE(patched.name().empty());
+  EXPECT_EQ(patched.account_id(), 42);
+}
+
+TEST(AccountFbTest, ApplyPatch_ModifyAndRemoveFields) {
+  AccountFbBuilder builder;
+  builder.set_account_id(42);
+  builder.set_age(30);
+  builder.set_balance(100.0f);
+  builder.set_name("OldName");
+  std::vector<uint8_t> buffer = builder.Build();
+  AccountFb account(buffer);
+
+  auto patch = AccountFbPatchBuilder().set_balance(200.0f).clear_name().BuildPatch();
+  std::vector<uint8_t> patched_buffer;
+  account.ApplyPatch(patch, patched_buffer);
+  AccountFb patched(patched_buffer);
+  EXPECT_EQ(patched.balance(), 200.0f);
+  EXPECT_TRUE(patched.name().empty());
+  EXPECT_EQ(patched.account_id(), 42);
+  EXPECT_EQ(patched.age(), 30);
 }
 
 int main(int argc, char **argv) {

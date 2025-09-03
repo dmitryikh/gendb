@@ -7,6 +7,7 @@
 #include <cstring>
 #include <span>
 
+#include "bits.h"
 #include "math.h"
 
 namespace gendb {
@@ -47,6 +48,50 @@ absl::InlinedVector<uint32_t, 2> MessageBase::GetFieldsMask() const {
   return mask;
 }
 
+bool MessageBase::CanApplyPatchInplace(const MessagePatch& patch,
+                                       std::span<const uint32_t> all_fixed_size_fields) const {
+  // 1. Modified fields must be subset of all fixed size fields.
+  if (!IsBitmaskSubset(all_fixed_size_fields, patch.modified)) return false;
+
+  // Get currently set fields from the message.
+  absl::InlinedVector<uint32_t, 2> current = GetFieldsMask();
+  // 2. Modified fields must be subset of current fields.
+  if (!IsBitmaskSubset(current, patch.modified)) return false;
+
+  // 3. Removed fields must be subset of inverted current fields.
+  if (!IsBitmaskSubsetInverted(current, patch.removed)) return false;
+  return true;
+}
+
+bool MessageBase::ApplyPatchInplace(const MessagePatch& patch) {
+  MessageBase patch_message{patch.buffer};
+  bool res = true;
+  ForEachSetField(patch.modified, [&](int field_id) {
+    auto dst_field = FieldRaw(field_id);
+    auto src_field = patch_message.FieldRaw(field_id);
+    if (dst_field.size() != src_field.size()) {
+      res = false;
+      return;
+    }
+    memcpy(dst_field.data(), src_field.data(), src_field.size());
+  });
+  return res;
+}
+
+void MessageBase::ApplyPatch(const MessagePatch& patch, std::vector<uint8_t>& buffer) const {
+  MessageBuilder builder(*this);
+  MessageBase patch_message{patch.buffer};
+  ForEachSetField(patch.removed, [&](int field_id) { builder.ClearField(field_id); });
+  ForEachSetField(patch.modified, [&](int field_id) {
+    auto src_field = patch_message.FieldRaw(field_id);
+    if (src_field.empty()) {
+      return;
+    }
+    builder.AddFieldRaw(field_id, src_field);
+  });
+  buffer = builder.Build();
+}
+
 MessageBuilder::MessageBuilder() {}
 
 MessageBuilder::MessageBuilder(const MessageBase& src) {
@@ -55,6 +100,10 @@ MessageBuilder::MessageBuilder(const MessageBase& src) {
 
 void MessageBuilder::AddFieldRaw(int field_id, std::span<const uint8_t> data) {
   _fields[field_id] = std::string(data.begin(), data.end());
+}
+
+void MessageBuilder::ClearField(int field_id) {
+  _fields.erase(field_id);
 }
 
 // Returns empty vector in case of failures.
