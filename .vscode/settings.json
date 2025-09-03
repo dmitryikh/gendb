@@ -3,7 +3,11 @@
     "cmake.testOutput": "always",
     "cmake.showOptions": "terminal",
     "cSpell.words": [
+        "absl",
+        "codegen",
         "flatc",
+        "gendb",
+        "gtest"
     ],
     "C_Cpp.intelliSenseEngine": "disabled", // disable in favor of clangd
     "clangd.arguments": [
@@ -15,5 +19,6 @@
     ],
     "files.watcherExclude": {
         "**/build/**": true
-    }
+    },
+    "cmake.copyCompileCommands": "${workspaceFolder}/build/compile_commands.json"
 }

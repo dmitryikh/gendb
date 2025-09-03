@@ -1,18 +1,16 @@
-# Enable testing
 include(CTest)
 
-# Find GTest
 find_package(GTest REQUIRED)
 
-# Add test sources
-add_executable(message_class_test message_class_test.cpp)
+add_codegen_target(
+    ${CMAKE_SOURCE_DIR}/tests/schemas
+    ${CMAKE_SOURCE_DIR}/tests/generated
+)
 
-# Include generated headers
-# (Assumes generated headers are in ${CMAKE_BINARY_DIR}/gendb/tests)
-target_include_directories(message_class_test PRIVATE ${CMAKE_BINARY_DIR}/gendb/tests)
+add_executable(message_test message_test.cpp)
 
-# Link GTest and pthread
-target_link_libraries(message_class_test PRIVATE gendb_lib GTest::gtest_main)
+target_link_libraries(message_test PRIVATE gendb_lib GTest::gtest_main)
 
-# Add test to CTest
-add_test(NAME message_class_test COMMAND message_class_test)
+add_dependencies(message_test codegen)
+
+add_test(NAME message_test COMMAND message_test)

@@ -1,2 +1,2 @@
-Checks: 'modernize-*,performance-*,bugprone-*'
+Checks: 'modernize-*,performance-*,bugprone-*,-modernize-use-trailing-return-type,-modernize-use-nodiscard'
 WarningsAsErrors: '*'

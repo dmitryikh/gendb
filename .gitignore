@@ -1,5 +1,6 @@
 tmp/
 build/
+**/compile_commands.json
 
 # Prerequisites
 *.d
@@ -14,6 +15,9 @@ build/
 *.gch
 *.pch
 
+# Python ignores
+__pycache__/
+*.pyc
 # Linker files
 *.ilk
 

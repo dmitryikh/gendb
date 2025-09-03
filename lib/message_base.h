@@ -1,17 +1,14 @@
 #pragma once
+#include <array>
 #include <bit>
-#include <cassert>
 #include <cstdint>
 #include <cstring>
 #include <limits>
-#include <map>
 #include <span>
-#include <string>
 #include <string_view>
 #include <vector>
 
 #include "absl/container/inlined_vector.h"
-#include "bits.h"
 #include "message_patch.h"
 
 namespace gendb {
@@ -134,11 +131,9 @@ inline std::array<uint16_t, 1> kEmptyMessage = {0};
 class MessageBase {
  public:
   MessageBase();
-
   MessageBase(std::span<uint8_t> span);
-
-  // TODO: find a better way to be const correct.
-  MessageBase(std::span<const uint8_t> span) : _buffer(const_cast<uint8_t*>(span.data())) {}
+  // TODO: is there better way for const correctness?
+  MessageBase(const std::vector<uint8_t>& buffer) : _buffer(const_cast<uint8_t*>(buffer.data())) {}
 
   template <typename T>
     requires IsSupportedScalar<T>
@@ -167,72 +162,15 @@ class MessageBase {
     WriteScalarRaw<T>(field_raw.data(), value);
     return true;
   }
-
   std::span<uint8_t> FieldRaw(int field_id) const;
-
   bool HasField(int field_id) const { return !FieldRaw(field_id).empty(); }
-
   absl::InlinedVector<uint32_t, 2> GetFieldsMask() const;
-
   bool CanApplyPatchInplace(const MessagePatch& patch,
                             std::span<const uint32_t> all_fixed_size_fields) const;
-
-  // Applies the patch to the message in place. If patch can't be applied in-place
-  // (CanApplyPatchInplace = false), the state of the message is unspecified.
   bool ApplyPatchInplace(const MessagePatch& patch);
-
-  // Applies the patch to the message and writes the result to the provided buffer.
   void ApplyPatch(const MessagePatch& patch, std::vector<uint8_t>& buffer) const;
 
  private:
   uint8_t* _buffer;
 };
-
-class MessageBuilder {
- public:
-  MessageBuilder();
-  MessageBuilder(const MessageBase& src);
-
-  template <typename T>
-    requires IsSupportedScalar<T>
-  void AddField(int field_id, T value) {
-    if constexpr (!kLittleEndianArch) {
-      // Convert from host order to LittleEndian.
-      value = std::byteswap(value);
-    }
-    AddFieldRaw(field_id,
-                std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(&value), sizeof(value)));
-  }
-
-  void AddStringField(int field_id, std::string_view value) {
-    AddFieldRaw(field_id, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(value.data()),
-                                                   value.size()));
-  }
-
-  void AddFieldRaw(int field_id, std::span<const uint8_t> data);
-
-  void ClearField(int field_id);
-
-  // Returns empty vector in case of failures.
-  // TODO: support external buffer.
-  std::vector<uint8_t> Build();
-
-  void MergeFields(const MessageBase& rhs);
-
-  bool NeedRebuild() const { return !_fields.empty(); }
-
-  std::map<int, std::span<const uint8_t>> GetFieldData() const {
-    std::map<int, std::span<const uint8_t>> field_data;
-    for (const auto& [field_id, field_raw] : _fields) {
-      field_data[field_id] = std::span<const uint8_t>(
-          reinterpret_cast<const uint8_t*>(field_raw.data()), field_raw.size());
-    }
-    return field_data;
-  }
-
- private:
-  std::map</*field_id*/ int, /*field_raw*/ std::string> _fields;
-};
-
-// Empty message would look like: 2 bytes (vtable_offset) = 0
 }  // namespace gendb

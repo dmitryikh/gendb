@@ -10,11 +10,6 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 include(cmake/CodegenTargets.cmake)
 
 
-add_codegen_target(
-    ${CMAKE_SOURCE_DIR}/tests/schemas
-    ${CMAKE_BINARY_DIR}/tests/schemas
-)
-
 include_directories(
     ${CMAKE_SOURCE_DIR}/lib
 )
@@ -22,8 +17,10 @@ include_directories(
 find_package(absl REQUIRED)
 # Main library
 add_library(gendb_lib
-    lib/message_format.h
-    lib/message_format.cpp
+    lib/message_base.h
+    lib/message_base.cpp
+    lib/message_builder.h
+    lib/message_builder.cpp
 )
 target_include_directories(gendb_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/lib)
 target_link_libraries(gendb_lib PUBLIC absl::inlined_vector)

@@ -2,7 +2,6 @@
 
 #include <gtest/gtest.h>
 
-#include <span>
 #include <vector>
 using gendb::IsBitmaskSubset;
 
