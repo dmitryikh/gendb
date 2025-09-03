@@ -1,11 +1,11 @@
-#include "message_base.h"
+#include "gendb/message_base.h"
 
 #include <cassert>
 #include <cstring>
 
-#include "bits.h"
-#include "math.h"
-#include "message_builder.h"
+#include "gendb/bits.h"
+#include "gendb/math.h"
+#include "gendb/message_builder.h"
 namespace gendb {
 MessageBase::MessageBase() : _buffer(reinterpret_cast<uint8_t*>(kEmptyMessage.data())) {}
 

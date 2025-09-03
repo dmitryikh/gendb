@@ -1,8 +1,8 @@
 
 #include <gtest/gtest.h>
 
-#include "message_base.h"
-#include "message_builder.h"
+#include "gendb/message_base.h"
+#include "gendb/message_builder.h"
 
 using namespace gendb;
 

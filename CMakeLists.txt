@@ -17,18 +17,21 @@ include_directories(
 find_package(absl REQUIRED)
 # Main library
 add_library(gendb_lib
-    lib/message_base.h
-    lib/message_base.cpp
-    lib/message_builder.h
-    lib/message_builder.cpp
+    lib/gendb/message_base.h
+    lib/gendb/message_base.cpp
+    lib/gendb/message_builder.h
+    lib/gendb/message_builder.cpp
+    lib/gendb/bits.h
+    lib/gendb/math.h
+    lib/gendb/message_patch.h
 )
 target_include_directories(gendb_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/lib)
 target_link_libraries(gendb_lib PUBLIC absl::inlined_vector)
 
 # Add your test sources here
 add_executable(gendb_tests
-    lib/message_format_test.cpp
-    lib/bits_test.cpp
+    lib/gendb/message_format_test.cpp
+    lib/gendb/bits_test.cpp
 )
 target_link_libraries(gendb_tests PRIVATE gendb_lib GTest::gtest_main)
 add_test(NAME gendb_tests COMMAND gendb_tests)

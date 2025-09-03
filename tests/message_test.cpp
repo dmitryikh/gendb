@@ -2,7 +2,7 @@
 
 #include "AccountFb.h"
 #include "PositionFb.h"
-#include "bits.h"
+#include "gendb/bits.h"
 
 using namespace gendb::tests;
 

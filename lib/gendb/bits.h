@@ -9,7 +9,7 @@
 #include <initializer_list>
 #include <span>
 
-#include "math.h"
+#include "gendb/math.h"
 
 namespace gendb {
 // Iterates over all set bits in the bitmask and calls functor(field_id) for each.

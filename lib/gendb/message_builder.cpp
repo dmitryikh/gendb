@@ -1,4 +1,4 @@
-#include "message_builder.h"
+#include "gendb/message_builder.h"
 
 #include <algorithm>
 #include <cstring>

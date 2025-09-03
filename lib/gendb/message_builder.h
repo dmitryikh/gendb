@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-#include "message_base.h"
+#include "gendb/message_base.h"
 namespace gendb {
 class MessageBuilder {
  public:

@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "absl/container/inlined_vector.h"
-#include "message_patch.h"
+#include "gendb/message_patch.h"
 
 namespace gendb {
 
