@@ -7,10 +7,19 @@ add_codegen_target(
     ${CMAKE_SOURCE_DIR}/tests/generated
 )
 
-add_executable(message_test message_test.cpp)
-
+add_executable(message_test
+    message_test.cpp
+)
 target_link_libraries(message_test PRIVATE gendb_lib GTest::gtest_main)
-
 add_dependencies(message_test codegen)
-
 add_test(NAME message_test COMMAND message_test)
+
+add_executable(database_test
+    database_test.cpp
+    generated/database.h
+    generated/database.cpp
+)
+target_link_libraries(database_test PRIVATE gendb_lib GTest::gtest_main)
+add_dependencies(database_test codegen)
+add_test(NAME database_test COMMAND database_test)
+

@@ -12,8 +12,9 @@
 
 namespace gendb::tests {
 // GeneratedClass
-class PositionFb : public gendb::MessageBase {
+class PositionFb : private gendb::MessageBase {
  public:
+
   enum Field : int {
     AccountId = 1,
     Instrument = 2,
@@ -31,26 +32,29 @@ class PositionFb : public gendb::MessageBase {
   });
 
   PositionFb() = default;
-  PositionFb(std::span<uint8_t> span) : MessageBase(span) {}
+  PositionFb(std::span<const uint8_t> span) : MessageBase(span) {}
 
   bool has_account_id() const { return HasField(AccountId); }
   int32_t account_id() const { return ReadScalarField<int32_t>(AccountId, 0); }
-  bool set_account_id(int32_t value) { return SetScalarField<int32_t>(AccountId, value); }
   bool has_instrument() const { return HasField(Instrument); }
   std::string_view instrument() const { return ReadStringField(Instrument, ""); }
   bool has_open_price() const { return HasField(OpenPrice); }
   float open_price() const { return ReadScalarField<float>(OpenPrice, 0.0f); }
-  bool set_open_price(float value) { return SetScalarField<float>(OpenPrice, value); }
   bool has_position_id() const { return HasField(PositionId); }
   int32_t position_id() const { return ReadScalarField<int32_t>(PositionId, 0); }
-  bool set_position_id(int32_t value) { return SetScalarField<int32_t>(PositionId, value); }
   bool has_volume() const { return HasField(Volume); }
   int32_t volume() const { return ReadScalarField<int32_t>(Volume, 0); }
-  bool set_volume(int32_t value) { return SetScalarField<int32_t>(Volume, value); }
 
-  bool CanApplyPatchInplace(const gendb::MessagePatch& patch) const {
-    return gendb::MessageBase::CanApplyPatchInplace(patch, kFixedSizeFields);
+
+  // MessageBase methods.
+  using gendb::MessageBase::FieldCount;
+  using gendb::MessageBase::HasField;
+  using gendb::MessageBase::GetFieldsMask;
+  std::span<const uint8_t> FieldRaw(int field_id) const {
+    return gendb::MessageBase::FieldRaw(field_id);
   }
+
+  friend class PositionFbBuilder;
 };
 
 class PositionFbBuilder : public gendb::MessageBuilder {

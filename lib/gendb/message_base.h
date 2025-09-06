@@ -107,7 +107,7 @@ inline constexpr bool IsSupportedScalar<double> = true;
 constexpr inline int kMaxMessageSize = std::numeric_limits<uint16_t>::max();
 
 template <typename T>
-T ReadScalarRaw(void* buffer) {
+T ReadScalarRaw(const void* buffer) {
   T value;
   std::memcpy(&value, buffer, sizeof(value));
   if constexpr (!kLittleEndianArch) {
@@ -131,19 +131,20 @@ inline std::array<uint16_t, 1> kEmptyMessage = {0};
 class MessageBase {
  public:
   MessageBase();
-  MessageBase(std::span<uint8_t> span);
+  MessageBase(std::span<uint8_t> buffer);
   // TODO: is there better way for const correctness?
-  MessageBase(const std::vector<uint8_t>& buffer) : _buffer(const_cast<uint8_t*>(buffer.data())) {}
+  MessageBase(std::span<const uint8_t> buffer);
+  MessageBase(std::vector<uint8_t>& buffer);
 
   template <typename T>
     requires IsSupportedScalar<T>
   T ReadScalarField(int field_id, T default_value) const {
-    const std::span<uint8_t> field_raw = FieldRaw(field_id);
+    std::span<const uint8_t> field_raw = FieldRaw(field_id);
     return field_raw.empty() ? default_value : ReadScalarRaw<T>(field_raw.data());
   }
 
   std::string_view ReadStringField(int field_id, std::string_view default_value) const {
-    const std::span<uint8_t> field_raw = FieldRaw(field_id);
+    std::span<const uint8_t> field_raw = FieldRaw(field_id);
     return field_raw.empty() ? default_value
                              : std::string_view(reinterpret_cast<const char*>(field_raw.data()),
                                                 field_raw.size());
@@ -162,13 +163,10 @@ class MessageBase {
     WriteScalarRaw<T>(field_raw.data(), value);
     return true;
   }
-  std::span<uint8_t> FieldRaw(int field_id) const;
+  std::span<const uint8_t> FieldRaw(int field_id) const;
+  std::span<uint8_t> FieldRaw(int field_id);
   bool HasField(int field_id) const { return !FieldRaw(field_id).empty(); }
   absl::InlinedVector<uint32_t, 2> GetFieldsMask() const;
-  bool CanApplyPatchInplace(const MessagePatch& patch,
-                            std::span<const uint32_t> all_fixed_size_fields) const;
-  bool ApplyPatchInplace(const MessagePatch& patch);
-  void ApplyPatch(const MessagePatch& patch, std::vector<uint8_t>& buffer) const;
 
  private:
   uint8_t* _buffer;

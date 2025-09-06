@@ -12,8 +12,9 @@
 
 namespace gendb::tests {
 // GeneratedClass
-class AccountFb : public gendb::MessageBase {
+class AccountFb : private gendb::MessageBase {
  public:
+
   enum Field : int {
     AccountId = 1,
     Address = 2,
@@ -34,32 +35,35 @@ class AccountFb : public gendb::MessageBase {
   });
 
   AccountFb() = default;
-  AccountFb(std::span<uint8_t> span) : MessageBase(span) {}
+  AccountFb(std::span<const uint8_t> span) : MessageBase(span) {}
 
   bool has_account_id() const { return HasField(AccountId); }
   int32_t account_id() const { return ReadScalarField<int32_t>(AccountId, 0); }
-  bool set_account_id(int32_t value) { return SetScalarField<int32_t>(AccountId, value); }
   bool has_address() const { return HasField(Address); }
   std::string_view address() const { return ReadStringField(Address, ""); }
   bool has_age() const { return HasField(Age); }
   int32_t age() const { return ReadScalarField<int32_t>(Age, 0); }
-  bool set_age(int32_t value) { return SetScalarField<int32_t>(Age, value); }
   bool has_balance() const { return HasField(Balance); }
   float balance() const { return ReadScalarField<float>(Balance, 0.0f); }
-  bool set_balance(float value) { return SetScalarField<float>(Balance, value); }
   bool has_config_name() const { return HasField(ConfigName); }
   std::string_view config_name() const { return ReadStringField(ConfigName, ""); }
   bool has_is_active() const { return HasField(IsActive); }
   bool is_active() const { return ReadScalarField<bool>(IsActive, false); }
-  bool set_is_active(bool value) { return SetScalarField<bool>(IsActive, value); }
   bool has_name() const { return HasField(Name); }
   std::string_view name() const { return ReadStringField(Name, ""); }
   bool has_trader_id() const { return HasField(TraderId); }
   std::string_view trader_id() const { return ReadStringField(TraderId, ""); }
 
-  bool CanApplyPatchInplace(const gendb::MessagePatch& patch) const {
-    return gendb::MessageBase::CanApplyPatchInplace(patch, kFixedSizeFields);
+
+  // MessageBase methods.
+  using gendb::MessageBase::FieldCount;
+  using gendb::MessageBase::HasField;
+  using gendb::MessageBase::GetFieldsMask;
+  std::span<const uint8_t> FieldRaw(int field_id) const {
+    return gendb::MessageBase::FieldRaw(field_id);
   }
+
+  friend class AccountFbBuilder;
 };
 
 class AccountFbBuilder : public gendb::MessageBuilder {

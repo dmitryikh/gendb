@@ -13,8 +13,9 @@
 {% if table.namespace %}namespace {{ table.namespace }} {
 {% endif %}
 // GeneratedClass
-class {{ table.class_name }} : public gendb::MessageBase {
+class {{ table.class_name }} : private gendb::MessageBase {
  public:
+
   enum Field : int {
     {% for field in fields %}
     {{ field.enum_name }} = {{ loop.index }},
@@ -29,7 +30,7 @@ class {{ table.class_name }} : public gendb::MessageBase {
   });
 
   {{ table.class_name }}() = default;
-  {{ table.class_name }}(std::span<uint8_t> span) : MessageBase(span) {}
+  {{ table.class_name }}(std::span<const uint8_t> span) : MessageBase(span) {}
 
   {% for field in fields %}
   bool has_{{ field.name }}() const { return HasField({{ field.enum_name }}); }
@@ -37,13 +38,19 @@ class {{ table.class_name }} : public gendb::MessageBase {
   std::string_view {{ field.name }}() const { return ReadStringField({{ field.enum_name }}, ""); }
   {% else %}
   {{ field.cpp_type }} {{ field.name }}() const { return ReadScalarField<{{ field.cpp_type }}>({{ field.enum_name }}, {{ field.default }}); }
-  bool set_{{ field.name }}({{ field.cpp_type }} value) { return SetScalarField<{{ field.cpp_type }}>({{ field.enum_name }}, value); }
   {% endif %}
   {% endfor %}
 
-  bool CanApplyPatchInplace(const gendb::MessagePatch& patch) const {
-    return gendb::MessageBase::CanApplyPatchInplace(patch, kFixedSizeFields);
+
+  // MessageBase methods.
+  using gendb::MessageBase::FieldCount;
+  using gendb::MessageBase::HasField;
+  using gendb::MessageBase::GetFieldsMask;
+  std::span<const uint8_t> FieldRaw(int field_id) const {
+    return gendb::MessageBase::FieldRaw(field_id);
   }
+
+  friend class {{ table.class_name }}Builder;
 };
 
 class {{ table.class_name }}Builder : public gendb::MessageBuilder {

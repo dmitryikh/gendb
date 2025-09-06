@@ -24,9 +24,13 @@ add_library(gendb_lib
     lib/gendb/bits.h
     lib/gendb/math.h
     lib/gendb/message_patch.h
+    lib/gendb/message_patch.cpp
+    lib/gendb/storage.h
+    lib/gendb/layered_storage.h
+    lib/gendb/layered_storage.cpp
 )
 target_include_directories(gendb_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/lib)
-target_link_libraries(gendb_lib PUBLIC absl::inlined_vector)
+target_link_libraries(gendb_lib PUBLIC absl::inlined_vector absl::hash absl::span absl::status)
 
 # Add your test sources here
 add_executable(gendb_tests
