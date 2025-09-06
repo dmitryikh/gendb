@@ -3,11 +3,14 @@
 #include "database.h"
 
 #include <cstdint>
+#include <optional>
 
 #include "Account.h"
 #include "Config.h"
 #include "Position.h"
 #include "absl/status/status.h"
+#include "gendb/bytes.h"
+#include "gendb/message_patch.h"
 #include "gendb/status.h"
 
 namespace gendb::tests {
@@ -34,15 +37,49 @@ absl::Status ScopedWrite::GetAccount(uint64_t account_id, Account& account) cons
   return absl::OkStatus();
 }
 
-absl::Status ScopedWrite::PutAccount(uint64_t account_id, std::vector<uint8_t> obj) {
-  _temp_storage.Put(AccountCollId, ToAccountKey(account_id), std::move(obj));
+absl::Status ScopedWrite::PutAccount(uint64_t account_id, Bytes account) {
+  auto key = ToAccountKey(account_id);
+  MaybeUpdateAccountByAgeIndex(key, account, /*update=*/nullptr);
+  _temp_storage.Put(AccountCollId, key, std::move(account));
+
   return absl::OkStatus();
+}
+
+void ScopedWrite::MaybeUpdateAccountByAgeIndex(gendb::BytesConstView key,
+                                               gendb::BytesConstView account_buffer,
+                                               const MessagePatch* update) {
+  std::optional<int32_t> age_before = std::nullopt;
+  std::optional<int32_t> age_after = std::nullopt;
+  if (update != nullptr && !DoModifyField(*update, Account::Age)) {
+    // This is update op which doesn't touch age.
+    return;
+  }
+  Account account{account_buffer};
+  if (account.has_age()) {
+    age_before = account.age();
+  }
+  if (update != nullptr) {
+    Account account_update{update->buffer};
+    if (account_update.has_age()) {
+      age_after = account_update.age();
+    }
+  }
+  if (age_before.has_value()) {
+    // TODO (perf): Avoid extra allocation on Bytes here.
+    _temp_indices.account_by_age.Insert(age_before.value(), Bytes{key.begin(), key.end()},
+                                        /*is_deleted=*/update != nullptr);
+  }
+  if (age_after.has_value()) {
+    // TODO (perf): Avoid extra allocation on Bytes here.
+    _temp_indices.account_by_age.Insert(age_after.value(), Bytes{key.begin(), key.end()});
+  }
 }
 
 absl::Status ScopedWrite::UpdateAccount(uint64_t account_id, const MessagePatch& update) {
   Bytes* ptr = nullptr;
   RETURN_IF_ERROR(
       _layered_storage.EnsureInTempStorage(AccountCollId, ToAccountKey(account_id), &ptr));
+  MaybeUpdateAccountByAgeIndex(ToAccountKey(account_id), *ptr, &update);
   gendb::ApplyPatch<Account>(update, *ptr);
   return absl::OkStatus();
 }
@@ -102,6 +139,7 @@ absl::Status ScopedWrite::UpdateConfig(std::string_view config_name, const Messa
 void ScopedWrite::Commit() {
   std::unique_lock lock(_db._reader_mutex);
   _layered_storage.MergeTempStorage();
+  _db._indices.MergeTempIndices(std::move(_temp_indices));
 }
 
 }  // namespace gendb::tests

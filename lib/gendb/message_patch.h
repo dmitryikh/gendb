@@ -38,4 +38,9 @@ bool CanApplyPatchInplace(const MessagePatch& patch, std::span<const uint8_t> me
   return true;
 }
 
+// Returns true if `patch` modifies or removes `field_id`.
+inline bool DoModifyField(const MessagePatch& patch, uint32_t field_id) {
+  return IsFieldSet(patch.modified, field_id) || IsFieldSet(patch.removed, field_id);
+}
+
 }  // namespace gendb

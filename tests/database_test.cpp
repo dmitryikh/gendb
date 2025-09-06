@@ -1,5 +1,6 @@
 #include "generated/database.h"
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 using namespace gendb::tests;
@@ -166,4 +167,80 @@ TEST(DbTest, NoYetCommittedChangesVisibleInWriter) {
 int main(int argc, char **argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
+}
+
+TEST(DbTest, GetAccountByAgeRange) {
+  Db db;
+  {
+    auto writer = db.CreateWriter();
+    AccountBuilder builder;
+    builder.set_account_id(100);
+    builder.set_name("Anna");
+    builder.set_age(20);
+    std::vector<uint8_t> buffer = builder.Build();
+    EXPECT_TRUE(writer.PutAccount(100, buffer).ok());
+
+    builder.set_account_id(101);
+    builder.set_name("Ben");
+    builder.set_age(25);
+    buffer = builder.Build();
+    EXPECT_TRUE(writer.PutAccount(101, buffer).ok());
+
+    builder.set_account_id(102);
+    builder.set_name("Cara");
+    builder.set_age(30);
+    buffer = builder.Build();
+    EXPECT_TRUE(writer.PutAccount(102, buffer).ok());
+
+    writer.Commit();
+  }
+  {
+    auto guard = db.SharedLock();
+    auto it = guard.GetAccountByAgeRange(21, 31);
+    std::vector<std::string> names;
+    while (it.IsValid()) {
+      auto account = it.Value();
+      names.emplace_back(account.name());
+      it.Next();
+    }
+    EXPECT_THAT(names, ::testing::UnorderedElementsAre("Ben", "Cara"));
+  }
+}
+
+TEST(DbTest, GetAccountByAgeEqual) {
+  Db db;
+  {
+    auto writer = db.CreateWriter();
+    AccountBuilder builder;
+    builder.set_account_id(200);
+    builder.set_name("Dan");
+    builder.set_age(40);
+    std::vector<uint8_t> buffer = builder.Build();
+    EXPECT_TRUE(writer.PutAccount(200, buffer).ok());
+
+    builder.set_account_id(201);
+    builder.set_name("Eve");
+    builder.set_age(40);
+    buffer = builder.Build();
+    EXPECT_TRUE(writer.PutAccount(201, buffer).ok());
+
+    builder.set_account_id(202);
+    builder.set_name("Finn");
+    builder.set_age(41);
+    buffer = builder.Build();
+    EXPECT_TRUE(writer.PutAccount(202, buffer).ok());
+
+    writer.Commit();
+  }
+  {
+    auto guard = db.SharedLock();
+    auto it = guard.GetAccountByAgeEqual(40);
+    std::vector<std::string> names;
+    while (it.IsValid()) {
+      auto account = it.Value();
+      names.emplace_back(account.name());
+      it.Next();
+    }
+    EXPECT_THAT(names, ::testing::UnorderedElementsAre("Dan", "Eve"));
+  }
 }

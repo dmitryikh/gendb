@@ -89,6 +89,16 @@ void UnsetFieldBit(Bitmask& bitmask, ValueType field_id) {
   }
 }
 
+template <typename ValueType>
+  requires(std::is_integral_v<ValueType> || std::is_enum_v<ValueType>)
+bool IsFieldSet(const Bitmask& bitmask, ValueType field_id) {
+  const size_t word_id = (field_id - 1) / 32;
+  if (word_id < bitmask.size()) {
+    return (bitmask[word_id] & (1u << ((field_id - 1) % 32))) != 0;
+  }
+  return false;
+}
+
 // Returns true, if b is subset of a.
 inline bool IsBitmaskSubset(std::span<const uint32_t> a, std::span<const uint32_t> b) {
   std::size_t min_size = std::min(a.size(), b.size());

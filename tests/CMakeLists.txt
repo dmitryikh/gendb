@@ -9,11 +9,11 @@ add_codegen_target(
     ${CMAKE_SOURCE_DIR}/tests/generated
 )
 
-# Database codegen
-add_db_codegen_target(
-    ${CMAKE_SOURCE_DIR}/tests/schemas/db.yaml
-    ${CMAKE_SOURCE_DIR}/tests/generated
-)
+# # Database codegen
+# add_db_codegen_target(
+#     ${CMAKE_SOURCE_DIR}/tests/schemas/db.yaml
+#     ${CMAKE_SOURCE_DIR}/tests/generated
+# )
 
 add_executable(message_test
     message_test.cpp
@@ -28,7 +28,8 @@ add_executable(database_test
     generated/database.h
     generated/database.cpp
 )
-target_link_libraries(database_test PRIVATE gendb_lib GTest::gtest_main)
-add_dependencies(database_test codegen db_codegen)
+target_link_libraries(database_test PRIVATE gendb_lib GTest::gtest_main GTest::gmock)
+# add_dependencies(database_test codegen db_codegen)
+add_dependencies(database_test codegen)
 add_test(NAME database_test COMMAND database_test)
 
