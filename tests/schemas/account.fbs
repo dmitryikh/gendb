@@ -1,7 +1,7 @@
 namespace gendb.tests;
 
 table Account {
-  account_id: int;
+  account_id: ulong;
   trader_id: string;
   name: string;
   address: string;

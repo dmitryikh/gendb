@@ -37,7 +37,7 @@ class Account : private gendb::MessageBase {
   Account(std::span<const uint8_t> span) : MessageBase(span) {}
 
   bool has_account_id() const { return HasField(AccountId); }
-  int32_t account_id() const { return ReadScalarField<int32_t>(AccountId, 0); }
+  uint64_t account_id() const { return ReadScalarField<uint64_t>(AccountId, 0ULL); }
   bool has_address() const { return HasField(Address); }
   std::string_view address() const { return ReadStringField(Address, ""); }
   bool has_age() const { return HasField(Age); }
@@ -69,7 +69,7 @@ class AccountBuilder : public gendb::MessageBuilder {
   AccountBuilder() : MessageBuilder() {}
   AccountBuilder(Account& obj) : MessageBuilder(obj) {}
 
-  void set_account_id(int32_t value) { AddField<int32_t>(Account::AccountId, value); }
+  void set_account_id(uint64_t value) { AddField<uint64_t>(Account::AccountId, value); }
   void set_address(std::string_view value) { AddStringField(Account::Address, value); }
   void set_age(int32_t value) { AddField<int32_t>(Account::Age, value); }
   void set_balance(float value) { AddField<float>(Account::Balance, value); }
@@ -95,7 +95,7 @@ class AccountPatchBuilder {
   AccountPatchBuilder() = default;
   // TODO: Add constructor with primary key fields.
 
-  AccountPatchBuilder&& set_account_id(int32_t value) && {
+  AccountPatchBuilder&& set_account_id(uint64_t value) && {
     _builder.set_account_id(value);
     SetFieldBit(modified, Account::AccountId);
     UnsetFieldBit(removed, Account::AccountId);

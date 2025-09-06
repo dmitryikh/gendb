@@ -2,6 +2,7 @@ types:
   fbs_files:
     - tests/schemas/account.fbs
     - tests/schemas/position.fbs
+    - tests/schemas/config.fbs
   include_prefix: ""  # Optional prefix path for generated includes
 
 options:
@@ -17,3 +18,8 @@ collections:
     type: Position
     primary_key:
       - position_id
+
+  - name: configs
+    type: Config
+    primary_key:
+      - config_name

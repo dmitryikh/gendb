@@ -6,6 +6,7 @@
 #include <shared_mutex>
 
 #include "Account.h"
+#include "Config.h"
 #include "Position.h"
 #include "absl/status/status.h"
 #include "gendb/layered_storage.h"
@@ -21,24 +22,31 @@ class ScopedWrite;
 enum CollectionId {
   AccountCollId = 0,
   PositionCollId = 1,
+  ConfigCollId = 2,
 };
 
 // Collection keys getters.
-inline std::array<uint8_t, sizeof(int)> ToAccountKey(int account_id) {
-  std::array<uint8_t, sizeof(int)> key_raw;
+inline std::array<uint8_t, sizeof(uint64_t)> ToAccountKey(uint64_t account_id) {
+  std::array<uint8_t, sizeof(uint64_t)> key_raw;
   WriteScalarRaw(key_raw.data(), account_id);
   return key_raw;
 }
 inline BytesConstView ToAccountKey(Account account) {
   return account.FieldRaw(Account::AccountId);
 }
-inline std::array<uint8_t, sizeof(int)> ToPositionKey(int position_id) {
-  std::array<uint8_t, sizeof(int)> key_raw;
+inline std::array<uint8_t, sizeof(int32_t)> ToPositionKey(int32_t position_id) {
+  std::array<uint8_t, sizeof(int32_t)> key_raw;
   WriteScalarRaw(key_raw.data(), position_id);
   return key_raw;
 }
 inline BytesConstView ToPositionKey(Position position) {
   return position.FieldRaw(Position::PositionId);
+}
+inline BytesConstView ToConfigKey(std::string_view config_name) {
+  return {reinterpret_cast<const uint8_t*>(config_name.data()), config_name.size()};
+}
+inline BytesConstView ToConfigKey(Config config) {
+  return config.FieldRaw(Config::ConfigName);
 }
 
 class Db {
@@ -57,8 +65,9 @@ class Db {
 
 class Guard {
  public:
-  absl::Status GetAccount(int account_id, Account& account) const;
-  absl::Status GetPosition(int position_id, Position& position) const;
+  absl::Status GetAccount(uint64_t account_id, Account& account) const;
+  absl::Status GetPosition(int32_t position_id, Position& position) const;
+  absl::Status GetConfig(std::string_view config_name, Config& config) const;
   ~Guard() = default;
 
  private:
@@ -76,12 +85,15 @@ class Guard {
 
 class ScopedWrite {
  public:
-  absl::Status GetAccount(int account_id, Account& account) const;
-  absl::Status PutAccount(int account_id, std::vector<uint8_t> obj);
-  absl::Status UpdateAccount(int account_id, const MessagePatch& update);
-  absl::Status GetPosition(int position_id, Position& position) const;
-  absl::Status PutPosition(int position_id, std::vector<uint8_t> obj);
-  absl::Status UpdatePosition(int position_id, const MessagePatch& update);
+  absl::Status GetAccount(uint64_t account_id, Account& account) const;
+  absl::Status PutAccount(uint64_t account_id, std::vector<uint8_t> account);
+  absl::Status UpdateAccount(uint64_t account_id, const MessagePatch& update);
+  absl::Status GetPosition(int32_t position_id, Position& position) const;
+  absl::Status PutPosition(int32_t position_id, std::vector<uint8_t> position);
+  absl::Status UpdatePosition(int32_t position_id, const MessagePatch& update);
+  absl::Status GetConfig(std::string_view config_name, Config& config) const;
+  absl::Status PutConfig(std::string_view config_name, std::vector<uint8_t> config);
+  absl::Status UpdateConfig(std::string_view config_name, const MessagePatch& update);
 
   void Commit();
   ~ScopedWrite() = default;

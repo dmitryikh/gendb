@@ -5,6 +5,7 @@ from store import Store
 import flatc
 import naming
 from clang_format import clang_format
+import cpp_types
 
 
 def load_yaml_db(yaml_path):
@@ -17,34 +18,17 @@ def message_from_flatc_obj(obj, include_prefix=""):
     fields = []
     for f in obj["fields"]:
         base_type = f["type"]["base_type"]
-        # Map FlatBuffer base_type to string
-        # Use the same mapping as generate_message_class.py
         # For custom types, use the name
-        if base_type == "String":
-            typ = "string"
-        elif base_type == "Int":
-            typ = "int"
-        elif base_type == "Uint":
-            typ = "uint"
-        elif base_type == "Float":
-            typ = "float"
-        elif base_type == "Bool":
-            typ = "bool"
-        elif base_type == "Obj":
-            typ = f["type"].get("index_name", obj["name"])
-        else:
-            typ = base_type
         is_array = base_type == "Vector"
         optional = f.get("optional", False)
         default = f.get("default_integer", None)
         fields.append(Field(
             name=f["name"],
-            type=typ,
+            type=base_type,
             is_array=is_array,
             optional=optional,
             default=default
         ))
-    # Compose cpp_include path
 
     namespace, name = naming.split_namespace_class(obj['name'])
     cpp_include = f"{include_prefix}{name}.h"
@@ -117,16 +101,19 @@ def main():
     # Compose collections info
     collections = []
     for col in store.collections.values():
+        pk_type = store.get_field(col.type, col.primary_key[0]).type
         collections.append({
             "name": col.name,
             "type": col.type,
             "type_snake_case": naming.snake_case(col.type),
             "enum_name": naming.PascalCase(col.type) + "CollId",
-            "primary_key_name": col.primary_key[0],
+            "pk_name": col.primary_key[0],
             # Primary key enum: PascalCase of primary key field
             # TODO: start using common store for message & db generators
-            "primary_key_enum": naming.PascalCase(col.primary_key[0]),
-            "primary_key_type": store.get_field(col.type, col.primary_key[0]).type,
+            "pk_enum": naming.PascalCase(col.primary_key[0]),
+            "pk_type": pk_type,
+            "pk_cpp_type": cpp_types.cpp_type(pk_type),
+            "pk_const_ref_type": cpp_types.const_ref_type(pk_type),
         })
 
     template_ctx = {

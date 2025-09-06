@@ -20,28 +20,28 @@ ScopedWrite Db::CreateWriter() {
 }
 
 {% for coll in collections %}
-absl::Status Guard::Get{{ coll.type }}({{ coll.primary_key_type }} {{ coll.primary_key_name }}, {{ coll.type }}& {{ coll.type_snake_case }}) const {
+absl::Status Guard::Get{{ coll.type }}({{ coll.pk_const_ref_type }} {{ coll.pk_name }}, {{ coll.type }}& {{ coll.type_snake_case }}) const {
   BytesConstView value;
-  RETURN_IF_ERROR(_layered_storage.Get({{ coll.enum_name }}, To{{ coll.type }}Key({{ coll.primary_key_name }}), value));
+  RETURN_IF_ERROR(_layered_storage.Get({{ coll.enum_name }}, To{{ coll.type }}Key({{ coll.pk_name }}), value));
   {{ coll.type_snake_case }} = {{ coll.type }}{value};
   return absl::OkStatus();
 }
 
-absl::Status ScopedWrite::Get{{ coll.type }}({{ coll.primary_key_type }} {{ coll.primary_key_name }}, {{ coll.type }}& {{ coll.type_snake_case }}) const {
+absl::Status ScopedWrite::Get{{ coll.type }}({{ coll.pk_const_ref_type }} {{ coll.pk_name }}, {{ coll.type }}& {{ coll.type_snake_case }}) const {
   BytesConstView value;
-  RETURN_IF_ERROR(_layered_storage.Get({{ coll.enum_name }}, To{{ coll.type }}Key({{ coll.primary_key_name }}), value));
+  RETURN_IF_ERROR(_layered_storage.Get({{ coll.enum_name }}, To{{ coll.type }}Key({{ coll.pk_name }}), value));
   {{ coll.type_snake_case }} = {{ coll.type }}{value};
   return absl::OkStatus();
 }
 
-absl::Status ScopedWrite::Put{{ coll.type }}({{ coll.primary_key_type }} {{ coll.primary_key_name }}, std::vector<uint8_t> obj) {
-  _temp_storage.Put({{ coll.enum_name }}, To{{ coll.type }}Key({{ coll.primary_key_name }}), std::move(obj));
+absl::Status ScopedWrite::Put{{ coll.type }}({{ coll.pk_const_ref_type }} {{ coll.pk_name }}, std::vector<uint8_t> obj) {
+  _temp_storage.Put({{ coll.enum_name }}, To{{ coll.type }}Key({{ coll.pk_name }}), std::move(obj));
   return absl::OkStatus();
 }
 
-absl::Status ScopedWrite::Update{{ coll.type }}({{ coll.primary_key_type }} {{ coll.primary_key_name }}, const MessagePatch& update) {
+absl::Status ScopedWrite::Update{{ coll.type }}({{ coll.pk_const_ref_type }} {{ coll.pk_name }}, const MessagePatch& update) {
   Bytes* ptr = nullptr;
-  RETURN_IF_ERROR(_layered_storage.EnsureInTempStorage({{ coll.enum_name }}, To{{ coll.type }}Key({{ coll.primary_key_name }}), &ptr));
+  RETURN_IF_ERROR(_layered_storage.EnsureInTempStorage({{ coll.enum_name }}, To{{ coll.type }}Key({{ coll.pk_name }}), &ptr));
   gendb::ApplyPatch<{{ coll.type }}>(update, *ptr);
   return absl::OkStatus();
 }

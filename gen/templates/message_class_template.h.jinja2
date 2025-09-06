@@ -34,7 +34,7 @@ class {{ table.class_name }} : private gendb::MessageBase {
 
   {% for field in fields %}
   bool has_{{ field.name }}() const { return HasField({{ field.enum_name }}); }
-  {% if field.cpp_type == 'std::string_view' %}
+  {% if field.cpp_type == 'std::string' %}
   std::string_view {{ field.name }}() const { return ReadStringField({{ field.enum_name }}, ""); }
   {% else %}
   {{ field.cpp_type }} {{ field.name }}() const { return ReadScalarField<{{ field.cpp_type }}>({{ field.enum_name }}, {{ field.default }}); }
@@ -59,10 +59,10 @@ class {{ table.class_name }}Builder : public gendb::MessageBuilder {
   {{ table.class_name }}Builder({{ table.class_name }}& obj) : MessageBuilder(obj) {}
 
   {% for field in fields %}
-  {% if field.cpp_type == 'std::string_view' %}
+  {% if field.cpp_type == 'std::string' %}
   void set_{{ field.name }}(std::string_view value) { AddStringField({{ table.class_name }}::{{ field.enum_name }}, value); }
   {% else %}
-  void set_{{ field.name }}({{ field.cpp_type }} value) { AddField<{{ field.cpp_type }}>({{ table.class_name }}::{{ field.enum_name }}, value); }
+  void set_{{ field.name }}({{ field.const_ref_type }} value) { AddField<{{ field.cpp_type }}>({{ table.class_name }}::{{ field.enum_name }}, value); }
   {% endif %}
   {% endfor %}
 
@@ -79,7 +79,7 @@ class {{ table.class_name }}PatchBuilder {
   // TODO: Add constructor with primary key fields.
 
   {% for field in fields %}
-  {{ table.class_name }}PatchBuilder&& set_{{ field.name }}({{ field.cpp_type }} value) && {
+  {{ table.class_name }}PatchBuilder&& set_{{ field.name }}({{ field.const_ref_type }} value) && {
     _builder.set_{{ field.name }}(value);
     SetFieldBit(modified, {{ table.class_name }}::{{ field.enum_name }});
     UnsetFieldBit(removed, {{ table.class_name }}::{{ field.enum_name }});

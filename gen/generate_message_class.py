@@ -1,51 +1,18 @@
 import argparse
 from pathlib import Path
+
 from jinja2 import Environment, FileSystemLoader
 from clang_format import clang_format
 import flatc
 import json
 import naming
+import cpp_types
 
 TEMPLATE_PATH = Path(__file__).parent / "templates" / "message_class_template.h.jinja2"
 
-def cpp_type(flat_type):
-    # Map FlatBuffer types to C++ types
-    mapping = {
-        "Uint": "uint32_t",
-        "Int": "int32_t",
-        "Float": "float",
-        "Bool": "bool",
-        "String": "std::string_view",
-        # Add more mappings as needed
-    }
-    return mapping[flat_type]
-
-def is_fixed_size(flat_type):
-    # Map FlatBuffer types to fixed size status
-    mapping = {
-        "Uint": True,
-        "Int": True,
-        "Float": True,
-        "Bool": True,
-        "String": False,
-        # Add more mappings as needed
-    }
-    return mapping[flat_type]
 
 def enum_name(field_name):
-    # Convert field name to PascalCase for enum
     return naming.PascalCase(field_name)
-
-def default_value(flat_type):
-    # Provide default values for C++ types
-    defaults = {
-        "uint32_t": "0",
-        "int32_t": "0",
-        "float": "0.0f",
-        "bool": "false",
-        "std::string_view": '""',
-    }
-    return defaults[flat_type]
 
 def main():
     parser = argparse.ArgumentParser(description="Generate C++ headers from all FlatBuffer schemas in a directory.")
@@ -66,18 +33,23 @@ def main():
             fixed_indices = []
             fixed_fields = []
             for idx, f in enumerate(table["fields"]):
-                t = cpp_type(f["type"]["base_type"])
-                is_fixed = is_fixed_size(f["type"]["base_type"])
+                base_type = f["type"]["base_type"]
+                t = cpp_types.cpp_type(base_type)
+                is_fixed = cpp_types.is_fixed_size(base_type)
                 fields.append({
                     "name": f["name"],
                     "cpp_type": t,
+                    "const_ref_type": cpp_types.const_ref_type(base_type),
+                    "ref_type": cpp_types.ref_type(base_type),
+                    "const_ref_type": cpp_types.const_ref_type(base_type),
                     "enum_name": enum_name(f["name"]),
-                    "default": default_value(t),
-                    "is_fixed_size": is_fixed
+                    "default": cpp_types.default_value(base_type),
+                    "is_fixed_size": is_fixed,
+                    "size": cpp_types.type_size(base_type)
                 })
                 if is_fixed:
                     fixed_indices.append(idx)
-                    fixed_fields.append({"idx": idx, "enum_name": enum_name(f["name"])})
+                    fixed_fields.append({"idx": idx, "enum_name": enum_name(f["name"])});
             # Compute K for bitmask
             K = (max(fixed_indices) // 32 + 1) if fixed_indices else 1
             namespace, class_name = naming.split_namespace_class(table["name"])

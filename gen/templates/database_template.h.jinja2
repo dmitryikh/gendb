@@ -28,19 +28,19 @@ enum CollectionId {
 
 // Collection keys getters.
 {% for coll in collections %}
-{% if coll.primary_key_type == 'string' %}
-inline BytesConstView To{{ coll.type }}Key(std::string_view {{ coll.primary_key_name }}) {
-    return {reinterpret_cast<const uint8_t*>({{ coll.primary_key_name }}.data()), {{ coll.primary_key_name }}.size()};
+{% if coll.pk_type == 'String' %}
+inline BytesConstView To{{ coll.type }}Key(std::string_view {{ coll.pk_name }}) {
+    return {reinterpret_cast<const uint8_t*>({{ coll.pk_name }}.data()), {{ coll.pk_name }}.size()};
 }
 {% else %}
-inline std::array<uint8_t, sizeof({{ coll.primary_key_type }})> To{{ coll.type }}Key({{ coll.primary_key_type }}  {{ coll.primary_key_name}}) {
-  std::array<uint8_t, sizeof({{ coll.primary_key_type }})> key_raw;
-  WriteScalarRaw(key_raw.data(), {{ coll.primary_key_name }});
+inline std::array<uint8_t, sizeof({{ coll.pk_cpp_type }})> To{{ coll.type }}Key({{ coll.pk_const_ref_type }}  {{ coll.pk_name}}) {
+  std::array<uint8_t, sizeof({{ coll.pk_cpp_type }})> key_raw;
+  WriteScalarRaw(key_raw.data(), {{ coll.pk_name }});
   return key_raw;
 }
 {% endif %}
 inline BytesConstView To{{ coll.type }}Key({{ coll.type }} {{ coll.type_snake_case }}) {
-  return {{ coll.type_snake_case }}.FieldRaw({{ coll.type }}::{{ coll.primary_key_enum }});
+  return {{ coll.type_snake_case }}.FieldRaw({{ coll.type }}::{{ coll.pk_enum }});
 }
 {% endfor %}
 
@@ -61,7 +61,7 @@ class Db {
 class Guard {
  public:
 {% for coll in collections %}
-  absl::Status Get{{ coll.type }}({{ coll.primary_key_type }} {{coll.primary_key_name}}, {{ coll.type }}& {{ coll.type_snake_case }}) const;
+  absl::Status Get{{ coll.type }}({{ coll.pk_const_ref_type }} {{coll.pk_name}}, {{ coll.type }}& {{ coll.type_snake_case }}) const;
 {% endfor %}
   ~Guard() = default;
  private:
@@ -80,9 +80,9 @@ class Guard {
 class ScopedWrite {
  public:
 {% for coll in collections %}
-  absl::Status Get{{ coll.type }}({{ coll.primary_key_type }} {{coll.primary_key_name}}, {{ coll.type }}& {{ coll.type_snake_case }}) const;
-  absl::Status Put{{ coll.type }}({{ coll.primary_key_type }} {{coll.primary_key_name}}, std::vector<uint8_t> obj);
-  absl::Status Update{{ coll.type }}({{ coll.primary_key_type }} {{coll.primary_key_name}}, const MessagePatch& update);
+  absl::Status Get{{ coll.type }}({{ coll.pk_const_ref_type }} {{coll.pk_name}}, {{ coll.type }}& {{ coll.type_snake_case }}) const;
+  absl::Status Put{{ coll.type }}({{ coll.pk_const_ref_type }} {{coll.pk_name}}, std::vector<uint8_t> {{ coll.type_snake_case }});
+  absl::Status Update{{ coll.type }}({{ coll.pk_const_ref_type }} {{coll.pk_name}}, const MessagePatch& update);
 {% endfor %}
 
   void Commit();
