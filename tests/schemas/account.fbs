@@ -1,6 +1,6 @@
 namespace gendb.tests;
 
-table AccountFb {
+table Account {
   account_id: int;
   trader_id: string;
   name: string;

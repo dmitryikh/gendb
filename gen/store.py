@@ -1,51 +1,50 @@
-from types import Type, Table
+
+from typing import List, Optional, Dict
+from fb_types import Message, Collection, Field
+
 class Store:
     """
     Central storage for the DB schema, types, and query info.
-    Provides helper methods to access Type/Field/Table data easily.
+    Provides helper methods to access Message/Field/Collection data easily.
     """
 
     def __init__(self):
-        self.fb_tables: Dict[str, FbTable] = {}
+        self.messages: Dict[str, Message] = {}
         self.collections: Dict[str, Collection] = {}
 
-    def add_fb_table(self, t: FbTable):
-        if t.name in self.fb_tables:
-            raise RuntimeError(f'{t.name} FB table already exists in store')
-        self.types[t.name] = t
+    def add_message(self, t: Message):
+        if t.name in self.messages:
+            raise RuntimeError(f'{t.name} message already exists in store')
+        self.messages[t.name] = t
 
-    def get_fb_table(self, type_name: str) -> Optional[Type]:
-        return self.types.get(type_name)
+    def get_message(self, type_name: str) -> Optional[Message]:
+        return self.messages.get(type_name)
 
-    def get_field(self, type_name: str, field_name: str) -> Optional[Field]:
-        t = self.get_type(type_name)
+    def get_field(self, message: str, field: str) -> Optional[Field]:
+        t = self.get_message(message)
         if not t:
             return None
         for f in t.fields:
-            if f.name == field_name:
+            if f.name == field:
                 return f
         return None
 
-    # --- Table helpers ---
-    def add_table(self, table: Table):
-        self.tables[table.name] = table
+    # --- Collection helpers ---
+    def add_collection(self, collection: Collection):
+        self.collections[collection.name] = collection
 
-    def get_table(self, table_name: str) -> Optional[Table]:
-        return self.tables.get(table_name)
+    def get_collection(self, collection_name: str) -> Optional[Collection]:
+        return self.collections.get(collection_name)
 
-    # --- Query helpers ---
-    def add_query(self, query: Query):
-        self.queries.append(query)
-
-    def get_query(self, func_name: str) -> Optional[Query]:
-        for q in self.queries:
-            if q.func_name == func_name:
-                return q
+    def get_collection_primary_keys(self, collection_name: str) -> Optional[List[str]]:
+        collection = self.get_collection(collection_name)
+        if collection:
+            return collection.primary_key
         return None
 
-    # Optional: convenience method to list all types/tables
-    def list_types(self) -> List[str]:
-        return list(self.types.keys())
+    # Optional: convenience method to list all messages
+    def list_messages(self) -> List[str]:
+        return list(self.messages.keys())
 
-    def list_tables(self) -> List[str]:
-        return list(self.tables.keys())
+    def list_collections(self) -> List[str]:
+        return list(self.collections.keys())

@@ -1,15 +1,19 @@
 types:
   fbs_files:
-    - account.fbs
-    - position.fbs
+    - tests/schemas/account.fbs
+    - tests/schemas/position.fbs
+  include_prefix: ""  # Optional prefix path for generated includes
 
-tables:
+options:
+  cpp_namespace: "gendb::tests"
+
+collections:
   - name: accounts
-    type: AccountFb
+    type: Account
     primary_key:
       - account_id
 
   - name: positions
-    type: PositionFb
+    type: Position
     primary_key:
       - position_id

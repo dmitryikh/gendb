@@ -1,6 +1,6 @@
 namespace gendb.tests;
 
-table PositionFb {
+table Position {
   position_id: int;
   account_id: int;
   volume: int;

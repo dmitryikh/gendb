@@ -8,7 +8,7 @@ TEST(DbTest, AddAndGetAccount) {
   Db db;
   {
     auto writer = db.CreateWriter();
-    AccountFbBuilder builder;
+    AccountBuilder builder;
     builder.set_account_id(1);
     builder.set_name("Alice");
     std::vector<uint8_t> buffer = builder.Build();
@@ -17,7 +17,7 @@ TEST(DbTest, AddAndGetAccount) {
   }
   {
     auto guard = db.SharedLock();
-    AccountFb account;
+    Account account;
     EXPECT_TRUE(guard.GetAccount(1, account).ok());
     EXPECT_EQ(account.account_id(), 1);
     EXPECT_EQ(account.name(), "Alice");
@@ -28,7 +28,7 @@ TEST(DbTest, AddAndGetPosition) {
   Db db;
   {
     auto writer = db.CreateWriter();
-    PositionFbBuilder builder;
+    PositionBuilder builder;
     builder.set_position_id(10);
     builder.set_account_id(1);
     builder.set_instrument("AAPL");
@@ -38,7 +38,7 @@ TEST(DbTest, AddAndGetPosition) {
   }
   {
     auto guard = db.SharedLock();
-    PositionFb position;
+    Position position;
     EXPECT_TRUE(guard.GetPosition(10, position).ok());
     EXPECT_EQ(position.position_id(), 10);
     EXPECT_EQ(position.account_id(), 1);
@@ -50,7 +50,7 @@ TEST(DbTest, UpdateAccountWithPatch) {
   Db db;
   {
     auto writer = db.CreateWriter();
-    AccountFbBuilder builder;
+    AccountBuilder builder;
     builder.set_account_id(2);
     builder.set_name("Bob");
     builder.set_balance(100.0f);
@@ -60,13 +60,13 @@ TEST(DbTest, UpdateAccountWithPatch) {
   }
   {
     auto writer = db.CreateWriter();
-    auto patch = AccountFbPatchBuilder().set_balance(200.0f).set_name("Robert").BuildPatch();
+    auto patch = AccountPatchBuilder().set_balance(200.0f).set_name("Robert").BuildPatch();
     EXPECT_TRUE(writer.UpdateAccount(2, patch).ok());
     writer.Commit();
   }
   {
     auto guard = db.SharedLock();
-    AccountFb account;
+    Account account;
     EXPECT_TRUE(guard.GetAccount(2, account).ok());
     EXPECT_EQ(account.balance(), 200.0f);
     EXPECT_EQ(account.name(), "Robert");
@@ -77,7 +77,7 @@ TEST(DbTest, UpdatePositionWithPatch) {
   Db db;
   {
     auto writer = db.CreateWriter();
-    PositionFbBuilder builder;
+    PositionBuilder builder;
     builder.set_position_id(20);
     builder.set_account_id(2);
     builder.set_instrument("GOOG");
@@ -88,14 +88,13 @@ TEST(DbTest, UpdatePositionWithPatch) {
   }
   {
     auto writer = db.CreateWriter();
-    auto patch =
-        PositionFbPatchBuilder().set_open_price(101.5f).set_instrument("MSFT").BuildPatch();
+    auto patch = PositionPatchBuilder().set_open_price(101.5f).set_instrument("MSFT").BuildPatch();
     EXPECT_TRUE(writer.UpdatePosition(20, patch).ok());
     writer.Commit();
   }
   {
     auto guard = db.SharedLock();
-    PositionFb position;
+    Position position;
     EXPECT_TRUE(guard.GetPosition(20, position).ok());
     EXPECT_EQ(position.open_price(), 101.5f);
     EXPECT_EQ(position.instrument(), "MSFT");
@@ -106,7 +105,7 @@ TEST(DbTest, NoChangesWithoutCommit) {
   Db db;
   {
     auto writer = db.CreateWriter();
-    AccountFbBuilder builder;
+    AccountBuilder builder;
     builder.set_account_id(3);
     builder.set_name("Charlie");
     std::vector<uint8_t> buffer = builder.Build();
@@ -115,7 +114,7 @@ TEST(DbTest, NoChangesWithoutCommit) {
   }
   {
     auto guard = db.SharedLock();
-    AccountFb account;
+    Account account;
     // Should not find the uncommitted account
     EXPECT_FALSE(guard.GetAccount(3, account).ok());
   }
@@ -125,7 +124,7 @@ TEST(DbTest, NoYetCommittedChangesNotVisibleFromOtherReaders) {
   Db db;
   {
     auto writer = db.CreateWriter();
-    AccountFbBuilder builder;
+    AccountBuilder builder;
     builder.set_account_id(5);
     builder.set_name("Eve");
     std::vector<uint8_t> buffer = builder.Build();
@@ -133,7 +132,7 @@ TEST(DbTest, NoYetCommittedChangesNotVisibleFromOtherReaders) {
     // Do not commit yet.
     {
       auto guard = db.SharedLock();
-      AccountFb account;
+      Account account;
       // Should not find the uncommitted account
       EXPECT_FALSE(guard.GetAccount(5, account).ok());
     }
@@ -141,7 +140,7 @@ TEST(DbTest, NoYetCommittedChangesNotVisibleFromOtherReaders) {
   }
   {
     auto guard = db.SharedLock();
-    AccountFb account;
+    Account account;
     // Now it's visible.
     EXPECT_TRUE(guard.GetAccount(5, account).ok());
     EXPECT_EQ(account.name(), "Eve");
@@ -152,13 +151,13 @@ TEST(DbTest, NoYetCommittedChangesVisibleInWriter) {
   Db db;
   {
     auto writer = db.CreateWriter();
-    AccountFbBuilder builder;
+    AccountBuilder builder;
     builder.set_account_id(4);
     builder.set_name("David");
     std::vector<uint8_t> buffer = builder.Build();
     EXPECT_TRUE(writer.PutAccount(4, buffer).ok());
 
-    AccountFb account;
+    Account account;
     EXPECT_TRUE(writer.GetAccount(4, account).ok());
     EXPECT_EQ(account.name(), "David");
   }

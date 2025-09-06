@@ -1,16 +1,18 @@
-
+// AUTO GENERATED. DO NOT EDIT.
+//
+#pragma once
 #include <cstdint>
 #include <mutex>
 #include <shared_mutex>
 
-#include "AccountFb.h"
-#include "PositionFb.h"
+#include "Account.h"
+#include "Position.h"
 #include "absl/status/status.h"
 #include "gendb/layered_storage.h"
 #include "gendb/message_base.h"
 #include "gendb/message_patch.h"
 
-namespace gendb::tests {
+ namespace gendb::tests {
 
 // Forward declarations.
 class Guard;
@@ -22,30 +24,26 @@ enum CollectionId {
 };
 
 // Collection keys getters.
-inline std::array<uint8_t, sizeof(uint32_t)> ToAccountKey(uint32_t account_id) {
-  std::array<uint8_t, sizeof(uint32_t)> key_raw;
+inline std::array<uint8_t, sizeof(int)> ToAccountKey(int  account_id) {
+  std::array<uint8_t, sizeof(int)> key_raw;
   WriteScalarRaw(key_raw.data(), account_id);
   return key_raw;
 }
-
-inline BytesConstView ToAccountKey(AccountFb account) {
-  return account.FieldRaw(AccountFb::AccountId);
+inline BytesConstView ToAccountKey(Account account) {
+  return account.FieldRaw(Account::AccountId);
 }
-
-inline std::array<uint8_t, sizeof(uint32_t)> ToPositionKey(uint32_t position_id) {
-  std::array<uint8_t, sizeof(uint32_t)> key_raw;
+inline std::array<uint8_t, sizeof(int)> ToPositionKey(int  position_id) {
+  std::array<uint8_t, sizeof(int)> key_raw;
   WriteScalarRaw(key_raw.data(), position_id);
   return key_raw;
 }
-
-inline BytesConstView ToPositionKey(PositionFb position) {
-  return position.FieldRaw(PositionFb::PositionId);
+inline BytesConstView ToPositionKey(Position position) {
+  return position.FieldRaw(Position::PositionId);
 }
 
 class Db {
  public:
   Guard SharedLock() const;
-
   ScopedWrite CreateWriter();
 
  private:
@@ -53,18 +51,15 @@ class Db {
   friend class ScopedWrite;
 
   std::mutex _writer_mutex;
-
   mutable std::shared_mutex _reader_mutex;
   Storage _storage;
 };
 
 class Guard {
  public:
-  absl::Status GetAccount(uint32_t account_id, AccountFb& account) const;
-  absl::Status GetPosition(uint32_t position_id, PositionFb& position) const;
-
+  absl::Status GetAccount(int account_id, Account& account) const;
+  absl::Status GetPosition(int position_id, Position& position) const;
   ~Guard() = default;
-
  private:
   friend class Db;
   Guard(const Db& db, std::shared_lock<std::shared_mutex> lock)
@@ -80,20 +75,14 @@ class Guard {
 
 class ScopedWrite {
  public:
-  absl::Status GetAccount(uint32_t account_id, AccountFb& account) const;
-  absl::Status GetPosition(uint32_t position_id, PositionFb& position) const;
-
-  absl::Status PutAccount(uint32_t account_id, std::vector<uint8_t> account);
-  absl::Status PutPosition(uint32_t position_id, std::vector<uint8_t> position);
-
-  absl::Status UpdateAccount(uint32_t account_id, const MessagePatch& update);
-  absl::Status UpdatePosition(uint32_t position_id, const MessagePatch& update);
-
-  //   absl::Status DeleteAccount(uint32_t account_id);
-  //   absl::Status DeletePosition(uint32_t position_id);
+  absl::Status GetAccount(int account_id, Account& account) const;
+  absl::Status PutAccount(int account_id, std::vector<uint8_t> obj);
+  absl::Status UpdateAccount(int account_id, const MessagePatch& update);
+  absl::Status GetPosition(int position_id, Position& position) const;
+  absl::Status PutPosition(int position_id, std::vector<uint8_t> obj);
+  absl::Status UpdatePosition(int position_id, const MessagePatch& update);
 
   void Commit();
-
   ~ScopedWrite() = default;
 
  private:
@@ -106,9 +95,8 @@ class ScopedWrite {
  private:
   Db& _db;
   std::unique_lock<std::mutex> _lock;
-
   gendb::Storage _temp_storage;
   gendb::LayeredStorage _layered_storage;
 };
 
-}  // namespace gendb::tests
+} // namespace gendb::tests

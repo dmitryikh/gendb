@@ -3,6 +3,7 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
 import flatc
 import json
+import naming
 
 TEMPLATE_PATH = Path(__file__).parent / "templates" / "message_class_template.h.jinja2"
 
@@ -32,7 +33,7 @@ def is_fixed_size(flat_type):
 
 def enum_name(field_name):
     # Convert field name to PascalCase for enum
-    return ''.join(word.capitalize() for word in field_name.split('_'))
+    return naming.PascalCase(field_name)
 
 def default_value(flat_type):
     # Provide default values for C++ types
@@ -44,16 +45,6 @@ def default_value(flat_type):
         "std::string_view": '""',
     }
     return defaults[flat_type]
-
-def split_namespace_class(full_name):
-    parts = full_name.split('.')
-    if len(parts) > 1:
-        namespace = '::'.join(parts[:-1])
-        class_name = parts[-1]
-    else:
-        namespace = ''
-        class_name = full_name
-    return namespace, class_name
 
 def main():
     parser = argparse.ArgumentParser(description="Generate C++ headers from all FlatBuffer schemas in a directory.")
@@ -87,10 +78,10 @@ def main():
                     fixed_fields.append({"idx": idx, "enum_name": enum_name(f["name"])})
             # Compute K for bitmask
             K = (max(fixed_indices) // 32 + 1) if fixed_indices else 1
-            namespace, class_name = split_namespace_class(table["name"])
+            namespace, class_name = naming.split_namespace_class(table["name"])
             table_data = {
                 "name": table["name"],
-                "namespace": namespace,
+                "namespace": naming.to_cpp_namespace(namespace),
                 "class_name": class_name,
                 "fields": fields,
                 "fixed_indices": fixed_indices,

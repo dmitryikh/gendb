@@ -1,0 +1,107 @@
+// AUTO GENERATED. DO NOT EDIT.
+//
+#pragma once
+#include <cstdint>
+#include <mutex>
+#include <shared_mutex>
+
+{% for include in includes %}
+#include "{{ include }}"
+{% endfor %}
+#include "absl/status/status.h"
+#include "gendb/layered_storage.h"
+#include "gendb/message_base.h"
+#include "gendb/message_patch.h"
+
+{% if namespace %} namespace {{ namespace }} {
+{% endif %}
+
+// Forward declarations.
+class Guard;
+class ScopedWrite;
+
+enum CollectionId {
+{% for coll in collections %}
+  {{ coll.enum_name }} = {{ loop.index0 }},
+{% endfor %}
+};
+
+// Collection keys getters.
+{% for coll in collections %}
+{% if coll.primary_key_type == 'string' %}
+inline BytesConstView To{{ coll.type }}Key(std::string_view {{ coll.primary_key_name }}) {
+    return {reinterpret_cast<const uint8_t*>({{ coll.primary_key_name }}.data()), {{ coll.primary_key_name }}.size()};
+}
+{% else %}
+inline std::array<uint8_t, sizeof({{ coll.primary_key_type }})> To{{ coll.type }}Key({{ coll.primary_key_type }}  {{ coll.primary_key_name}}) {
+  std::array<uint8_t, sizeof({{ coll.primary_key_type }})> key_raw;
+  WriteScalarRaw(key_raw.data(), {{ coll.primary_key_name }});
+  return key_raw;
+}
+{% endif %}
+inline BytesConstView To{{ coll.type }}Key({{ coll.type }} {{ coll.type_snake_case }}) {
+  return {{ coll.type_snake_case }}.FieldRaw({{ coll.type }}::{{ coll.primary_key_enum }});
+}
+{% endfor %}
+
+class Db {
+ public:
+  Guard SharedLock() const;
+  ScopedWrite CreateWriter();
+
+ private:
+  friend class Guard;
+  friend class ScopedWrite;
+
+  std::mutex _writer_mutex;
+  mutable std::shared_mutex _reader_mutex;
+  Storage _storage;
+};
+
+class Guard {
+ public:
+{% for coll in collections %}
+  absl::Status Get{{ coll.type }}({{ coll.primary_key_type }} {{coll.primary_key_name}}, {{ coll.type }}& {{ coll.type_snake_case }}) const;
+{% endfor %}
+  ~Guard() = default;
+ private:
+  friend class Db;
+  Guard(const Db& db, std::shared_lock<std::shared_mutex> lock)
+      : _db(db),
+        _lock(std::move(lock)),
+        _layered_storage(const_cast<Storage&>(_db._storage), /*temp_storage_ptr=*/nullptr) {}
+
+ private:
+  const Db& _db;
+  std::shared_lock<std::shared_mutex> _lock;
+  const gendb::LayeredStorage _layered_storage;
+};
+
+class ScopedWrite {
+ public:
+{% for coll in collections %}
+  absl::Status Get{{ coll.type }}({{ coll.primary_key_type }} {{coll.primary_key_name}}, {{ coll.type }}& {{ coll.type_snake_case }}) const;
+  absl::Status Put{{ coll.type }}({{ coll.primary_key_type }} {{coll.primary_key_name}}, std::vector<uint8_t> obj);
+  absl::Status Update{{ coll.type }}({{ coll.primary_key_type }} {{coll.primary_key_name}}, const MessagePatch& update);
+{% endfor %}
+
+  void Commit();
+  ~ScopedWrite() = default;
+
+ private:
+  friend class Db;
+  ScopedWrite(Db& db, std::unique_lock<std::mutex> lock)
+      : _db(const_cast<Db&>(db)),
+        _lock(std::move(lock)),
+        _layered_storage(_db._storage, &_temp_storage) {}
+
+ private:
+  Db& _db;
+  std::unique_lock<std::mutex> _lock;
+  gendb::Storage _temp_storage;
+  gendb::LayeredStorage _layered_storage;
+};
+
+{% if namespace %}
+} // namespace {{ namespace }}
+{% endif %}
