@@ -3,6 +3,7 @@
 #include "database.h"
 
 #include <cstdint>
+
 #include "Account.h"
 #include "Position.h"
 #include "absl/status/status.h"
@@ -39,7 +40,8 @@ absl::Status ScopedWrite::PutAccount(int account_id, std::vector<uint8_t> obj) {
 
 absl::Status ScopedWrite::UpdateAccount(int account_id, const MessagePatch& update) {
   Bytes* ptr = nullptr;
-  RETURN_IF_ERROR(_layered_storage.EnsureInTempStorage(AccountCollId, ToAccountKey(account_id), &ptr));
+  RETURN_IF_ERROR(
+      _layered_storage.EnsureInTempStorage(AccountCollId, ToAccountKey(account_id), &ptr));
   gendb::ApplyPatch<Account>(update, *ptr);
   return absl::OkStatus();
 }
@@ -64,7 +66,8 @@ absl::Status ScopedWrite::PutPosition(int position_id, std::vector<uint8_t> obj)
 
 absl::Status ScopedWrite::UpdatePosition(int position_id, const MessagePatch& update) {
   Bytes* ptr = nullptr;
-  RETURN_IF_ERROR(_layered_storage.EnsureInTempStorage(PositionCollId, ToPositionKey(position_id), &ptr));
+  RETURN_IF_ERROR(
+      _layered_storage.EnsureInTempStorage(PositionCollId, ToPositionKey(position_id), &ptr));
   gendb::ApplyPatch<Position>(update, *ptr);
   return absl::OkStatus();
 }

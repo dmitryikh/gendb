@@ -1,20 +1,19 @@
 // AUTO GENERATED. DO NOT EDIT.
 //
 #pragma once
-#include <cstdint>
 #include <array>
+#include <cstdint>
 #include <string_view>
 
+#include "gendb/bits.h"
 #include "gendb/message_base.h"
 #include "gendb/message_builder.h"
-#include "gendb/bits.h"
 #include "gendb/message_patch.h"
 
 namespace gendb::tests {
 // GeneratedClass
 class Position : private gendb::MessageBase {
  public:
-
   enum Field : int {
     AccountId = 1,
     Instrument = 2,
@@ -45,11 +44,10 @@ class Position : private gendb::MessageBase {
   bool has_volume() const { return HasField(Volume); }
   int32_t volume() const { return ReadScalarField<int32_t>(Volume, 0); }
 
-
   // MessageBase methods.
   using gendb::MessageBase::FieldCount;
-  using gendb::MessageBase::HasField;
   using gendb::MessageBase::GetFieldsMask;
+  using gendb::MessageBase::HasField;
   std::span<const uint8_t> FieldRaw(int field_id) const {
     return gendb::MessageBase::FieldRaw(field_id);
   }
@@ -156,4 +154,4 @@ class PositionPatchBuilder {
   gendb::Bitmask removed;
   PositionBuilder _builder;
 };
-} // namespace gendb::tests
+}  // namespace gendb::tests

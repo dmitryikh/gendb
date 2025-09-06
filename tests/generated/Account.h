@@ -1,20 +1,19 @@
 // AUTO GENERATED. DO NOT EDIT.
 //
 #pragma once
-#include <cstdint>
 #include <array>
+#include <cstdint>
 #include <string_view>
 
+#include "gendb/bits.h"
 #include "gendb/message_base.h"
 #include "gendb/message_builder.h"
-#include "gendb/bits.h"
 #include "gendb/message_patch.h"
 
 namespace gendb::tests {
 // GeneratedClass
 class Account : private gendb::MessageBase {
  public:
-
   enum Field : int {
     AccountId = 1,
     Address = 2,
@@ -54,11 +53,10 @@ class Account : private gendb::MessageBase {
   bool has_trader_id() const { return HasField(TraderId); }
   std::string_view trader_id() const { return ReadStringField(TraderId, ""); }
 
-
   // MessageBase methods.
   using gendb::MessageBase::FieldCount;
-  using gendb::MessageBase::HasField;
   using gendb::MessageBase::GetFieldsMask;
+  using gendb::MessageBase::HasField;
   std::span<const uint8_t> FieldRaw(int field_id) const {
     return gendb::MessageBase::FieldRaw(field_id);
   }
@@ -207,4 +205,4 @@ class AccountPatchBuilder {
   gendb::Bitmask removed;
   AccountBuilder _builder;
 };
-} // namespace gendb::tests
+}  // namespace gendb::tests

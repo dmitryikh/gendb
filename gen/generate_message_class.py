@@ -1,6 +1,7 @@
 import argparse
 from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
+from clang_format import clang_format
 import flatc
 import json
 import naming
@@ -57,6 +58,7 @@ def main():
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
+    generated_files = []
     for fbs_file in args.fbs_dir.glob("*.fbs"):
         schema = flatc.get_schema(fbs_file)
         for table in schema["objects"]:
@@ -91,7 +93,11 @@ def main():
             output_file = args.output_dir / f"{class_name}.h"
             cpp_code = template.render(table=table_data, fields=fields)
             output_file.write_text(cpp_code)
+            generated_files.append(output_file)
             print(f"Generated {output_file}")
+
+    # Run clang-format on generated files
+    clang_format(generated_files)
 
 if __name__ == "__main__":
     main()

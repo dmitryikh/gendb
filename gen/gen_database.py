@@ -4,6 +4,7 @@ from fb_types import Message, Field, Collection, Database
 from store import Store
 import flatc
 import naming
+from clang_format import clang_format
 
 
 def load_yaml_db(yaml_path):
@@ -144,6 +145,11 @@ def main():
     cpp_code = cpp_template.render(**template_ctx)
     header_path.write_text(header_code)
     cpp_path.write_text(cpp_code)
+
+
+    # Run clang-format on generated files using project root .clang-format
+    clang_format([header_path, cpp_path])
+
     print(f"Generated {header_path} and {cpp_path}")
 
 if __name__ == "__main__":

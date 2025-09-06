@@ -12,7 +12,7 @@
 #include "gendb/message_base.h"
 #include "gendb/message_patch.h"
 
- namespace gendb::tests {
+namespace gendb::tests {
 
 // Forward declarations.
 class Guard;
@@ -24,7 +24,7 @@ enum CollectionId {
 };
 
 // Collection keys getters.
-inline std::array<uint8_t, sizeof(int)> ToAccountKey(int  account_id) {
+inline std::array<uint8_t, sizeof(int)> ToAccountKey(int account_id) {
   std::array<uint8_t, sizeof(int)> key_raw;
   WriteScalarRaw(key_raw.data(), account_id);
   return key_raw;
@@ -32,7 +32,7 @@ inline std::array<uint8_t, sizeof(int)> ToAccountKey(int  account_id) {
 inline BytesConstView ToAccountKey(Account account) {
   return account.FieldRaw(Account::AccountId);
 }
-inline std::array<uint8_t, sizeof(int)> ToPositionKey(int  position_id) {
+inline std::array<uint8_t, sizeof(int)> ToPositionKey(int position_id) {
   std::array<uint8_t, sizeof(int)> key_raw;
   WriteScalarRaw(key_raw.data(), position_id);
   return key_raw;
@@ -60,6 +60,7 @@ class Guard {
   absl::Status GetAccount(int account_id, Account& account) const;
   absl::Status GetPosition(int position_id, Position& position) const;
   ~Guard() = default;
+
  private:
   friend class Db;
   Guard(const Db& db, std::shared_lock<std::shared_mutex> lock)
@@ -99,4 +100,4 @@ class ScopedWrite {
   gendb::LayeredStorage _layered_storage;
 };
 
-} // namespace gendb::tests
+}  // namespace gendb::tests
