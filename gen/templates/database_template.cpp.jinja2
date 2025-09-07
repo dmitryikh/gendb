@@ -8,6 +8,15 @@
 {% endfor %}
 #include "absl/status/status.h"
 #include "gendb/status.h"
+#include "gendb/bytes.h"
+#include "gendb/message_patch.h"
+#include "gendb/iterator.h"
+
+{% if indices|length > 0 %}
+#include <optional>
+#include "gendb/index.h"
+{% endif %}
+
 
 namespace {{ namespace }} {
 
@@ -34,22 +43,95 @@ absl::Status ScopedWrite::Get{{ coll.type }}({{ coll.pk_const_ref_type }} {{ col
   return absl::OkStatus();
 }
 
-absl::Status ScopedWrite::Put{{ coll.type }}({{ coll.pk_const_ref_type }} {{ coll.pk_name }}, std::vector<uint8_t> obj) {
-  _temp_storage.Put({{ coll.enum_name }}, To{{ coll.type }}Key({{ coll.pk_name }}), std::move(obj));
+absl::Status ScopedWrite::Put{{ coll.type }}({{ coll.pk_const_ref_type }} {{ coll.pk_name }}, Bytes {{ coll.type_snake_case }}) {
+  auto key = To{{ coll.type }}Key({{ coll.pk_name }});
+  {% for idx in indices%}
+  {% if idx.type == coll.type %}
+  MaybeUpdate{{ idx.name_pascal_case }}Index(key, {{ coll.type_snake_case }}, /*update=*/nullptr);
+  {% endif %}
+  {% endfor %}
+  _temp_storage.Put({{ coll.enum_name }}, key, std::move({{ coll.type_snake_case }}));
   return absl::OkStatus();
 }
 
 absl::Status ScopedWrite::Update{{ coll.type }}({{ coll.pk_const_ref_type }} {{ coll.pk_name }}, const MessagePatch& update) {
   Bytes* ptr = nullptr;
-  RETURN_IF_ERROR(_layered_storage.EnsureInTempStorage({{ coll.enum_name }}, To{{ coll.type }}Key({{ coll.pk_name }}), &ptr));
+  auto key = To{{ coll.type }}Key({{ coll.pk_name }});
+  RETURN_IF_ERROR(_layered_storage.EnsureInTempStorage({{ coll.enum_name }}, key, &ptr));
+  {% for idx in indices%}
+  {% if idx.type == coll.type %}
+  MaybeUpdate{{ idx.name_pascal_case }}Index(key, *ptr, &update);
+  {% endif %}
+  {% endfor %}
   gendb::ApplyPatch<{{ coll.type }}>(update, *ptr);
   return absl::OkStatus();
+}
+{% endfor %}
+
+
+{% for idx in indices %}
+gendb::Iterator<{{ idx.type }}> Guard::Get{{ idx.name_pascal_case }}Range({{ idx.key_cpp_type }} min_{{ idx.field }}, {{ idx.key_cpp_type }} max_{{ idx.field }}) const {
+  return gendb::MakeSecondaryIndexIterator<{{ idx.type }}, Indices::{{ idx.name_pascal_case }}IndexType>(
+      _layered_storage, {{ idx.type }}CollId, _db._indices.{{ idx.name }}.lower_bound(min_{{ idx.field }}),
+      _db._indices.{{ idx.name }}.lower_bound(max_{{ idx.field }}));
+}
+
+gendb::Iterator<{{ idx.type }}> Guard::Get{{ idx.name_pascal_case }}Equal({{ idx.key_cpp_type }} {{ idx.field }}) const {
+  return gendb::MakeSecondaryIndexIterator<{{ idx.type }}, Indices::{{ idx.name_pascal_case }}IndexType>(
+      _layered_storage, {{ idx.type }}CollId, _db._indices.{{ idx.name }}.lower_bound({{ idx.field }}),
+      _db._indices.{{ idx.name }}.upper_bound({{ idx.field }}));
+}
+
+gendb::Iterator<{{ idx.type }}> ScopedWrite::Get{{ idx.name_pascal_case }}Range({{ idx.key_cpp_type }} min_{{ idx.field }}, {{ idx.key_cpp_type }} max_{{ idx.field }}) const {
+  return gendb::MakeSecondaryIndexIterator<{{ idx.type }}, Indices::{{ idx.name_pascal_case }}IndexType>(
+      _layered_storage, {{ idx.type }}CollId, _db._indices.{{ idx.name }}.lower_bound(min_{{ idx.field }}),
+      _db._indices.{{ idx.name }}.lower_bound(max_{{ idx.field }}),
+      _temp_indices.{{ idx.name }}.lower_bound(min_{{ idx.field }}),
+      _temp_indices.{{ idx.name }}.lower_bound(max_{{ idx.field }}));
+}
+
+gendb::Iterator<{{ idx.type }}> ScopedWrite::Get{{ idx.name_pascal_case }}Equal({{ idx.key_cpp_type }} {{ idx.field }}) const {
+  return gendb::MakeSecondaryIndexIterator<{{ idx.type }}, Indices::{{ idx.name_pascal_case }}IndexType>(
+      _layered_storage, {{ idx.type }}CollId, _db._indices.{{ idx.name }}.lower_bound({{ idx.field }}),
+      _db._indices.{{ idx.name }}.upper_bound({{ idx.field }}), _temp_indices.{{ idx.name }}.lower_bound({{ idx.field }}),
+      _temp_indices.{{ idx.name }}.upper_bound({{ idx.field }}));
+}
+
+void ScopedWrite::MaybeUpdate{{ idx.name_pascal_case }}Index(std::array<uint8_t, sizeof({{ idx.value_cpp_type }})> key,
+                                               gendb::BytesConstView {{ idx.type_snake_case }}_buffer,
+                                               const MessagePatch* update) {
+  std::optional<{{ idx.key_cpp_type }}> {{ idx.field }}_before = std::nullopt;
+  std::optional<{{ idx.key_cpp_type }}> {{ idx.field }}_after = std::nullopt;
+  if (update != nullptr  && !DoModifyField(*update, {{ idx.type }}::{{ idx.field_enum }})) {
+    // This is update op which doesn't touch the indexed field.
+    return;
+  }
+  {{ idx.type }} {{ idx.type_snake_case }}{{'{'}}{{ idx.type_snake_case }}_buffer};
+  if ({{ idx.type_snake_case }}.has_{{ idx.field }}()) {
+    {{ idx.field }}_before = {{ idx.type_snake_case }}.{{ idx.field }}();
+  }
+  if (update != nullptr) {
+    {{ idx.type }} {{ idx.type_snake_case }}_update{update->buffer};
+    if ({{ idx.type_snake_case }}_update.has_{{ idx.field }}()) {
+      {{ idx.field }}_after = {{ idx.type_snake_case }}_update.{{ idx.field }}();
+    }
+  }
+  if ({{ idx.field }}_before.has_value()) {
+    _temp_indices.{{ idx.name }}.Insert({{ idx.field }}_before.value(), key,
+                                        /*is_deleted=*/update != nullptr);
+  }
+  if ({{ idx.field }}_after.has_value()) {
+    _temp_indices.{{ idx.name }}.Insert({{ idx.field }}_after.value(), key);
+  }
 }
 {% endfor %}
 
 void ScopedWrite::Commit() {
   std::unique_lock lock(_db._reader_mutex);
   _layered_storage.MergeTempStorage();
+{% if indices|length > 0 %}
+  _db._indices.MergeTempIndices(std::move(_temp_indices));
+{% endif %}
 }
 
 }  // namespace {{ namespace }}

@@ -1,6 +1,6 @@
 
 from typing import List, Optional, Dict
-from fb_types import Message, Collection, Field
+from fb_types import Message, Collection, Field, Index
 
 class Store:
     """
@@ -11,6 +11,7 @@ class Store:
     def __init__(self):
         self.messages: Dict[str, Message] = {}
         self.collections: Dict[str, Collection] = {}
+        self.indices: Dict[str, Index] = {}
 
     def add_message(self, t: Message):
         if t.name in self.messages:
@@ -41,6 +42,16 @@ class Store:
         if collection:
             return collection.primary_key
         return None
+
+    # --- Index helpers ---
+    def add_index(self, index: Index):
+        self.indices[index.name] = index
+
+    def get_index(self, index_name: str) -> Optional[Index]:
+        return self.indices.get(index_name)
+
+    def list_indices(self) -> List[str]:
+        return list(self.indices.keys())
 
     # Optional: convenience method to list all messages
     def list_messages(self) -> List[str]:

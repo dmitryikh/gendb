@@ -23,3 +23,14 @@ collections:
     type: Config
     primary_key:
       - config_name
+
+indices:
+  - name: account_by_age
+    collection: accounts
+    fields:
+      - age
+
+  - name: position_by_account_id
+    collection: positions
+    fields:
+      - account_id

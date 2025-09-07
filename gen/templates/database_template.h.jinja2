@@ -8,6 +8,13 @@
 {% for include in includes %}
 #include "{{ include }}"
 {% endfor %}
+
+#include "gendb/bytes.h"
+{% if indices|length > 0 %}
+#include "gendb/index.h"
+#include "gendb/iterator.h"
+{% endif %}
+
 #include "absl/status/status.h"
 #include "gendb/layered_storage.h"
 #include "gendb/message_base.h"
@@ -44,6 +51,21 @@ inline BytesConstView To{{ coll.type }}Key({{ coll.type }} {{ coll.type_snake_ca
 }
 {% endfor %}
 
+{% if indices|length > 0 %}
+struct Indices {
+{% for idx in indices %}
+  using {{ idx.name_pascal_case }}IndexType = {{ idx.index_class }};
+  {{ idx.name_pascal_case }}IndexType {{ idx.name }};
+{% endfor %}
+
+  void MergeTempIndices(Indices&& temp_indices) {
+{% for idx in indices %}
+    {{ idx.name }}.MergeTempIndex(std::move(temp_indices.{{ idx.name }}));
+{% endfor %}
+  }
+};
+{% endif %}
+
 class Db {
  public:
   Guard SharedLock() const;
@@ -56,12 +78,19 @@ class Db {
   std::mutex _writer_mutex;
   mutable std::shared_mutex _reader_mutex;
   Storage _storage;
+{% if indices|length > 0 %}
+  Indices _indices;
+{% endif %}
 };
 
 class Guard {
  public:
 {% for coll in collections %}
   absl::Status Get{{ coll.type }}({{ coll.pk_const_ref_type }} {{coll.pk_name}}, {{ coll.type }}& {{ coll.type_snake_case }}) const;
+{% endfor %}
+{% for idx in indices %}
+  gendb::Iterator<{{ idx.type }}> Get{{ idx.name_pascal_case }}Range({{ idx.key_cpp_type }} min_{{ idx.field}}, {{ idx.key_cpp_type }} max_{{ idx.field }}) const;
+  gendb::Iterator<{{ idx.type }}> Get{{ idx.name_pascal_case }}Equal({{ idx.key_cpp_type }} {{ idx.field }}) const;
 {% endfor %}
   ~Guard() = default;
  private:
@@ -84,6 +113,10 @@ class ScopedWrite {
   absl::Status Put{{ coll.type }}({{ coll.pk_const_ref_type }} {{coll.pk_name}}, std::vector<uint8_t> {{ coll.type_snake_case }});
   absl::Status Update{{ coll.type }}({{ coll.pk_const_ref_type }} {{coll.pk_name}}, const MessagePatch& update);
 {% endfor %}
+{% for idx in indices %}
+  gendb::Iterator<{{ idx.type }}> Get{{ idx.name_pascal_case }}Range({{ idx.key_cpp_type }} min_{{ idx.field}}, {{ idx.key_cpp_type }} max_{{ idx.field }}) const;
+  gendb::Iterator<{{ idx.type }}> Get{{ idx.name_pascal_case }}Equal({{ idx.key_cpp_type }} {{ idx.field }}) const;
+{% endfor %}
 
   void Commit();
   ~ScopedWrite() = default;
@@ -95,10 +128,20 @@ class ScopedWrite {
         _lock(std::move(lock)),
         _layered_storage(_db._storage, &_temp_storage) {}
 
+  // Index update helpers
+{% for idx in indices %}
+  void MaybeUpdate{{ idx.name_pascal_case }}Index(std::array<uint8_t, sizeof({{ idx.value_cpp_type }})> key,
+                                    gendb::BytesConstView {{ idx.type|lower }}_buffer,
+                                    const MessagePatch* update);
+{% endfor %}
+
  private:
   Db& _db;
   std::unique_lock<std::mutex> _lock;
   gendb::Storage _temp_storage;
+{% if indices|length > 0 %}
+  Indices _temp_indices;
+{% endif %}
   gendb::LayeredStorage _layered_storage;
 };
 

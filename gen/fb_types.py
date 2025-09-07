@@ -10,6 +10,13 @@ class Field:
     optional: bool = False
     default: Optional[Union[int, float, str]] = None
 
+
+@dataclass
+class Index:
+    name: str
+    collection: str
+    field: str
+
 @dataclass
 class Message:
     name: str                  # e.g., "AccountFb"
@@ -26,5 +33,6 @@ class Collection:
 @dataclass
 class Database:
     name: str                  # e.g., "main"
-    namespace: str          # e.g., "gendb.main"
+    namespace: str             # e.g., "gendb.main"
     collections: List[Collection] = field(default_factory=list)
+    indices: List[Index] = field(default_factory=list)

@@ -1,6 +1,6 @@
 import yaml
 from pathlib import Path
-from fb_types import Message, Field, Collection, Database
+from fb_types import Message, Field, Collection, Database, Index
 from store import Store
 import flatc
 import naming
@@ -60,6 +60,14 @@ def build_store_from_yaml(db_cfg):
             primary_key=col["primary_key"] if isinstance(col["primary_key"], list) else [col["primary_key"]]
         )
         store.add_collection(collection)
+    # Load indices
+    for idx in db_cfg.get("indices", []):
+        index = Index(
+            name=idx["name"],
+            collection=idx["collection"],
+            field=idx["fields"][0] if isinstance(idx["fields"], list) else idx["fields"]
+        )
+        store.add_index(index)
     return store
 
 
@@ -108,18 +116,39 @@ def main():
             "type_snake_case": naming.snake_case(col.type),
             "enum_name": naming.PascalCase(col.type) + "CollId",
             "pk_name": col.primary_key[0],
-            # Primary key enum: PascalCase of primary key field
-            # TODO: start using common store for message & db generators
             "pk_enum": naming.PascalCase(col.primary_key[0]),
             "pk_type": pk_type,
             "pk_cpp_type": cpp_types.cpp_type(pk_type),
             "pk_const_ref_type": cpp_types.const_ref_type(pk_type),
         })
 
+    # Compose indices info
+    indices = []
+    for idx in store.indices.values():
+        collection = store.get_collection(idx.collection)
+        msg = store.get_message(collection.type)
+        key_type = store.get_field(collection.type, idx.field).type
+        value_type = store.get_field(collection.type, collection.primary_key[0]).type
+        indices.append({
+            "name": idx.name,
+            "name_pascal_case": naming.PascalCase(idx.name),
+            "collection": idx.collection,
+            "type": collection.type,
+            "type_snake_case": naming.snake_case(collection.type),
+            "field": idx.field,
+            "field_enum": naming.PascalCase(idx.field),
+            "key_type": key_type,
+            "key_cpp_type": cpp_types.cpp_type(key_type),
+            "value_cpp_type": cpp_types.cpp_type(value_type),
+            "index_class": f"gendb::Index</*{idx.field}*/ {cpp_types.cpp_type(key_type)}, std::array<uint8_t, sizeof({cpp_types.cpp_type(value_type)})>>",
+            "primary_key": collection.primary_key[0],
+        })
+
     template_ctx = {
         "namespace": namespace,
         "includes": includes,
-        "collections": collections
+        "collections": collections,
+        "indices": indices
     }
 
     # Output dir
