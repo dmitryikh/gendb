@@ -31,6 +31,8 @@ struct IndexRecord {
 template <typename SecKey, typename PrimKey>
 class Index {
  public:
+  using Container = std::set<IndexRecord<SecKey, PrimKey>>;
+
   auto lower_bound(const SecKey& key) const {
     auto it = _index.lower_bound({key, PrimKey{}});
     return it;
@@ -67,7 +69,7 @@ class Index {
     temp_index._index.clear();
   }
 
-  std::set<IndexRecord<SecKey, PrimKey>> _index;
+  Container _index;
 };
 
 template <typename SecKey, typename PrimKey, typename Functor>
@@ -95,26 +97,46 @@ void ForEachEqual(const Index<SecKey, PrimKey>& index, const SecKey& key, Functo
   }
 }
 
-template <typename V>
+// SingleSetIterator: iterates through a single iterator range, no merging
+template <typename IndexT>
+class SingleSetIterator {
+ public:
+  using ValueT = typename IndexT::Container::value_type;
+  using Iter = typename IndexT::Container::const_iterator;
+
+  SingleSetIterator(Iter begin, Iter end) : it_(begin), end_(end) {}
+
+  bool Valid() const { return it_ != end_; }
+  const ValueT& Value() const { return *it_; }
+  void Next() {
+    if (Valid()) ++it_;
+  }
+
+ private:
+  Iter it_;
+  Iter end_;
+};
+
+template <typename IndexT>
 class MergedSetIterator {
  public:
-  using Set = std::set<V>;
-  using Iter = typename Set::const_iterator;
+  using ValueT = typename IndexT::Container::value_type;
+  using Iter = typename IndexT::Container::const_iterator;
 
   MergedSetIterator(Iter m1_begin, Iter m1_end, Iter m2_begin, Iter m2_end)
       : _m1_it{m1_begin}, _m1_end{m1_end}, _m2_it{m2_begin}, _m2_end{m2_end} {}
 
-  bool valid() const { return _m1_it != _m1_end || _m2_it != _m2_end; }
+  bool Valid() const { return _m1_it != _m1_end || _m2_it != _m2_end; }
 
-  const V& value() const {
+  const ValueT& Value() const {
     if (_m2_it != _m2_end && (_m1_it == _m1_end || (*_m2_it) <= (*_m1_it)))
       return *_m2_it;
     else
       return *_m1_it;
   }
 
-  void next() {
-    if (!valid()) return;
+  void Next() {
+    if (!Valid()) return;
     if (_m1_it != _m1_end && _m2_it != _m2_end && (*_m1_it) == (*_m2_it)) {
       ++_m1_it;
       ++_m2_it;

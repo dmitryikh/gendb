@@ -198,7 +198,7 @@ TEST(DbTest, GetAccountByAgeRange) {
     auto guard = db.SharedLock();
     auto it = guard.GetAccountByAgeRange(21, 31);
     std::vector<std::string> names;
-    while (it.IsValid()) {
+    while (it.Valid()) {
       auto account = it.Value();
       names.emplace_back(account.name());
       it.Next();
@@ -236,7 +236,7 @@ TEST(DbTest, GetAccountByAgeEqual) {
     auto guard = db.SharedLock();
     auto it = guard.GetAccountByAgeEqual(40);
     std::vector<std::string> names;
-    while (it.IsValid()) {
+    while (it.Valid()) {
       auto account = it.Value();
       names.emplace_back(account.name());
       it.Next();

@@ -2,6 +2,8 @@
 //
 #include "database.h"
 
+#include <sys/types.h>
+
 #include <cstdint>
 #include <optional>
 
@@ -45,7 +47,34 @@ absl::Status ScopedWrite::PutAccount(uint64_t account_id, Bytes account) {
   return absl::OkStatus();
 }
 
-void ScopedWrite::MaybeUpdateAccountByAgeIndex(gendb::BytesConstView key,
+gendb::Iterator<Account> Guard::GetAccountByAgeRange(int32_t min_age, int32_t max_age) const {
+  return gendb::MakeSecondaryIndexIterator<Account, Indices::AccountByAgeIndexType>(
+      _layered_storage, AccountCollId, _db._indices.account_by_age.lower_bound(min_age),
+      _db._indices.account_by_age.lower_bound(max_age));
+}
+
+gendb::Iterator<Account> Guard::GetAccountByAgeEqual(int32_t age) const {
+  return gendb::MakeSecondaryIndexIterator<Account, Indices::AccountByAgeIndexType>(
+      _layered_storage, AccountCollId, _db._indices.account_by_age.lower_bound(age),
+      _db._indices.account_by_age.upper_bound(age));
+}
+
+gendb::Iterator<Account> ScopedWrite::GetAccountByAgeRange(int32_t min_age, int32_t max_age) const {
+  return gendb::MakeSecondaryIndexIterator<Account, Indices::AccountByAgeIndexType>(
+      _layered_storage, AccountCollId, _db._indices.account_by_age.lower_bound(min_age),
+      _db._indices.account_by_age.lower_bound(max_age),
+      _temp_indices.account_by_age.lower_bound(min_age),
+      _temp_indices.account_by_age.lower_bound(max_age));
+}
+
+gendb::Iterator<Account> ScopedWrite::GetAccountByAgeEqual(int32_t age) const {
+  return gendb::MakeSecondaryIndexIterator<Account, Indices::AccountByAgeIndexType>(
+      _layered_storage, AccountCollId, _db._indices.account_by_age.lower_bound(age),
+      _db._indices.account_by_age.upper_bound(age), _temp_indices.account_by_age.lower_bound(age),
+      _temp_indices.account_by_age.upper_bound(age));
+}
+
+void ScopedWrite::MaybeUpdateAccountByAgeIndex(std::array<uint8_t, sizeof(uint64_t)> key,
                                                gendb::BytesConstView account_buffer,
                                                const MessagePatch* update) {
   std::optional<int32_t> age_before = std::nullopt;
@@ -66,12 +95,12 @@ void ScopedWrite::MaybeUpdateAccountByAgeIndex(gendb::BytesConstView key,
   }
   if (age_before.has_value()) {
     // TODO (perf): Avoid extra allocation on Bytes here.
-    _temp_indices.account_by_age.Insert(age_before.value(), Bytes{key.begin(), key.end()},
+    _temp_indices.account_by_age.Insert(age_before.value(), key,
                                         /*is_deleted=*/update != nullptr);
   }
   if (age_after.has_value()) {
     // TODO (perf): Avoid extra allocation on Bytes here.
-    _temp_indices.account_by_age.Insert(age_after.value(), Bytes{key.begin(), key.end()});
+    _temp_indices.account_by_age.Insert(age_after.value(), key);
   }
 }
 

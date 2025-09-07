@@ -53,7 +53,9 @@ inline BytesConstView ToConfigKey(Config config) {
 }
 
 struct Indices {
-  gendb::Index</*age*/ int32_t, Bytes> account_by_age;  // AccountByAge
+  using AccountByAgeIndexType =
+      gendb::Index</*age*/ int32_t, std::array<uint8_t, sizeof(uint64_t)>>;
+  AccountByAgeIndexType account_by_age;
 
   void MergeTempIndices(Indices&& temp_indices) {
     account_by_age.MergeTempIndex(std::move(temp_indices.account_by_age));
@@ -81,29 +83,8 @@ class Guard {
   absl::Status GetPosition(int32_t position_id, Position& position) const;
   absl::Status GetConfig(std::string_view config_name, Config& config) const;
 
-  gendb::Iterator<Account> GetAccountByAgeRange(int32_t min_age, int32_t max_age) const {
-    auto begin = _db._indices.account_by_age.lower_bound(min_age);
-    auto end = _db._indices.account_by_age.lower_bound(max_age);
-    // We don't need to merge the indices. m2 is dummy iterators.
-    auto m2_begin = _db._indices.account_by_age.end();
-    auto m2_end = _db._indices.account_by_age.end();
-    return {std::make_unique<gendb::SecondaryIndexIterator<Account, int32_t>>(
-        _layered_storage, AccountCollId,
-        gendb::MergedSetIterator<gendb::IndexRecord<int32_t, Bytes>>(begin, end, m2_begin,
-                                                                     m2_end))};
-  }
-
-  gendb::Iterator<Account> GetAccountByAgeEqual(int32_t age) const {
-    auto begin = _db._indices.account_by_age.lower_bound(age);
-    auto end = _db._indices.account_by_age.upper_bound(age);
-    // We don't need to merge the indices. m2 is dummy iterators.
-    auto m2_begin = _db._indices.account_by_age.end();
-    auto m2_end = _db._indices.account_by_age.end();
-    return {std::make_unique<gendb::SecondaryIndexIterator<Account, int32_t>>(
-        _layered_storage, AccountCollId,
-        gendb::MergedSetIterator<gendb::IndexRecord<int32_t, Bytes>>(begin, end, m2_begin,
-                                                                     m2_end))};
-  }
+  gendb::Iterator<Account> GetAccountByAgeRange(int32_t min_age, int32_t max_age) const;
+  gendb::Iterator<Account> GetAccountByAgeEqual(int32_t age) const;
 
   ~Guard() = default;
 
@@ -132,6 +113,9 @@ class ScopedWrite {
   absl::Status PutConfig(std::string_view config_name, std::vector<uint8_t> config);
   absl::Status UpdateConfig(std::string_view config_name, const MessagePatch& update);
 
+  gendb::Iterator<Account> GetAccountByAgeRange(int32_t min_age, int32_t max_age) const;
+  gendb::Iterator<Account> GetAccountByAgeEqual(int32_t age) const;
+
   void Commit();
   ~ScopedWrite() = default;
 
@@ -142,7 +126,8 @@ class ScopedWrite {
         _lock(std::move(lock)),
         _layered_storage(_db._storage, &_temp_storage) {}
 
-  void MaybeUpdateAccountByAgeIndex(gendb::BytesConstView key, gendb::BytesConstView account_buffer,
+  void MaybeUpdateAccountByAgeIndex(std::array<uint8_t, sizeof(uint64_t)> key,
+                                    gendb::BytesConstView account_buffer,
                                     const MessagePatch* update);
 
  private:
