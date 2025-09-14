@@ -1,0 +1,12 @@
+namespace gendb;
+
+enum MetadataType : uint { kUnknown = 0, kSequence }
+
+table MetadataValue {
+  type: MetadataType = kUnknown;
+  id: uint; 
+
+  int_value: int;
+  string_value: string;
+  float_value: string;
+}

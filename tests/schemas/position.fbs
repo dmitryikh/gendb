@@ -1,9 +1,20 @@
 namespace gendb.tests;
 
+enum Direction : uint { kUnknown = 0, kBuy, kSell }
+
 table Position {
   position_id: int;
   account_id: int;
   volume: int;
   instrument:string;
   open_price: float;
+  direction: Direction = kUnknown;
+}
+
+table ClosedPosition {
+  position_id: int;
+  account_id: int;
+  volume: int;
+  instrument:string;
+  profit: float;
 }

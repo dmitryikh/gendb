@@ -1,3 +1,4 @@
+
 // AUTO GENERATED. DO NOT EDIT.
 //
 #pragma once
@@ -10,27 +11,30 @@
 #include "gendb/message_builder.h"
 #include "gendb/message_patch.h"
 
+// Enum definitions
+
+// Message classes
 namespace gendb::tests {
 // GeneratedClass
 class Account : private gendb::MessageBase {
  public:
   enum Field : int {
     AccountId = 1,
-    Address = 2,
-    Age = 3,
-    Balance = 4,
-    ConfigName = 5,
+    TraderId = 2,
+    Name = 3,
+    Address = 4,
+    Age = 5,
     IsActive = 6,
-    Name = 7,
-    TraderId = 8,
+    Balance = 7,
+    ConfigName = 8,
     MaxFields
   };
 
   static constexpr std::array<uint32_t, 1> kFixedSizeFields = gendb::MakeConstexprFieldBitmask<1>({
       AccountId,
       Age,
-      Balance,
       IsActive,
+      Balance,
   });
 
   Account() = default;
@@ -38,20 +42,20 @@ class Account : private gendb::MessageBase {
 
   bool has_account_id() const { return HasField(AccountId); }
   uint64_t account_id() const { return ReadScalarField<uint64_t>(AccountId, 0ULL); }
+  bool has_trader_id() const { return HasField(TraderId); }
+  std::string_view trader_id() const { return ReadStringField(TraderId, ""); }
+  bool has_name() const { return HasField(Name); }
+  std::string_view name() const { return ReadStringField(Name, ""); }
   bool has_address() const { return HasField(Address); }
   std::string_view address() const { return ReadStringField(Address, ""); }
   bool has_age() const { return HasField(Age); }
   int32_t age() const { return ReadScalarField<int32_t>(Age, 0); }
+  bool has_is_active() const { return HasField(IsActive); }
+  bool is_active() const { return ReadScalarField<bool>(IsActive, false); }
   bool has_balance() const { return HasField(Balance); }
   float balance() const { return ReadScalarField<float>(Balance, 0.0f); }
   bool has_config_name() const { return HasField(ConfigName); }
   std::string_view config_name() const { return ReadStringField(ConfigName, ""); }
-  bool has_is_active() const { return HasField(IsActive); }
-  bool is_active() const { return ReadScalarField<bool>(IsActive, false); }
-  bool has_name() const { return HasField(Name); }
-  std::string_view name() const { return ReadStringField(Name, ""); }
-  bool has_trader_id() const { return HasField(TraderId); }
-  std::string_view trader_id() const { return ReadStringField(TraderId, ""); }
 
   // MessageBase methods.
   using gendb::MessageBase::FieldCount;
@@ -70,22 +74,22 @@ class AccountBuilder : public gendb::MessageBuilder {
   AccountBuilder(Account& obj) : MessageBuilder(obj) {}
 
   void set_account_id(uint64_t value) { AddField<uint64_t>(Account::AccountId, value); }
+  void set_trader_id(std::string_view value) { AddStringField(Account::TraderId, value); }
+  void set_name(std::string_view value) { AddStringField(Account::Name, value); }
   void set_address(std::string_view value) { AddStringField(Account::Address, value); }
   void set_age(int32_t value) { AddField<int32_t>(Account::Age, value); }
+  void set_is_active(bool value) { AddField<bool>(Account::IsActive, value); }
   void set_balance(float value) { AddField<float>(Account::Balance, value); }
   void set_config_name(std::string_view value) { AddStringField(Account::ConfigName, value); }
-  void set_is_active(bool value) { AddField<bool>(Account::IsActive, value); }
-  void set_name(std::string_view value) { AddStringField(Account::Name, value); }
-  void set_trader_id(std::string_view value) { AddStringField(Account::TraderId, value); }
 
   void clear_account_id() { ClearField(Account::AccountId); }
+  void clear_trader_id() { ClearField(Account::TraderId); }
+  void clear_name() { ClearField(Account::Name); }
   void clear_address() { ClearField(Account::Address); }
   void clear_age() { ClearField(Account::Age); }
+  void clear_is_active() { ClearField(Account::IsActive); }
   void clear_balance() { ClearField(Account::Balance); }
   void clear_config_name() { ClearField(Account::ConfigName); }
-  void clear_is_active() { ClearField(Account::IsActive); }
-  void clear_name() { ClearField(Account::Name); }
-  void clear_trader_id() { ClearField(Account::TraderId); }
 
   std::vector<uint8_t> Build() { return MessageBuilder::Build(); }
 };
@@ -105,6 +109,30 @@ class AccountPatchBuilder {
     SetFieldBit(removed, Account::AccountId);
     UnsetFieldBit(modified, Account::AccountId);
     _builder.clear_account_id();
+    return std::move(*this);
+  }
+  AccountPatchBuilder&& set_trader_id(std::string_view value) && {
+    _builder.set_trader_id(value);
+    SetFieldBit(modified, Account::TraderId);
+    UnsetFieldBit(removed, Account::TraderId);
+    return std::move(*this);
+  }
+  AccountPatchBuilder&& clear_trader_id() && {
+    SetFieldBit(removed, Account::TraderId);
+    UnsetFieldBit(modified, Account::TraderId);
+    _builder.clear_trader_id();
+    return std::move(*this);
+  }
+  AccountPatchBuilder&& set_name(std::string_view value) && {
+    _builder.set_name(value);
+    SetFieldBit(modified, Account::Name);
+    UnsetFieldBit(removed, Account::Name);
+    return std::move(*this);
+  }
+  AccountPatchBuilder&& clear_name() && {
+    SetFieldBit(removed, Account::Name);
+    UnsetFieldBit(modified, Account::Name);
+    _builder.clear_name();
     return std::move(*this);
   }
   AccountPatchBuilder&& set_address(std::string_view value) && {
@@ -131,6 +159,18 @@ class AccountPatchBuilder {
     _builder.clear_age();
     return std::move(*this);
   }
+  AccountPatchBuilder&& set_is_active(bool value) && {
+    _builder.set_is_active(value);
+    SetFieldBit(modified, Account::IsActive);
+    UnsetFieldBit(removed, Account::IsActive);
+    return std::move(*this);
+  }
+  AccountPatchBuilder&& clear_is_active() && {
+    SetFieldBit(removed, Account::IsActive);
+    UnsetFieldBit(modified, Account::IsActive);
+    _builder.clear_is_active();
+    return std::move(*this);
+  }
   AccountPatchBuilder&& set_balance(float value) && {
     _builder.set_balance(value);
     SetFieldBit(modified, Account::Balance);
@@ -153,42 +193,6 @@ class AccountPatchBuilder {
     SetFieldBit(removed, Account::ConfigName);
     UnsetFieldBit(modified, Account::ConfigName);
     _builder.clear_config_name();
-    return std::move(*this);
-  }
-  AccountPatchBuilder&& set_is_active(bool value) && {
-    _builder.set_is_active(value);
-    SetFieldBit(modified, Account::IsActive);
-    UnsetFieldBit(removed, Account::IsActive);
-    return std::move(*this);
-  }
-  AccountPatchBuilder&& clear_is_active() && {
-    SetFieldBit(removed, Account::IsActive);
-    UnsetFieldBit(modified, Account::IsActive);
-    _builder.clear_is_active();
-    return std::move(*this);
-  }
-  AccountPatchBuilder&& set_name(std::string_view value) && {
-    _builder.set_name(value);
-    SetFieldBit(modified, Account::Name);
-    UnsetFieldBit(removed, Account::Name);
-    return std::move(*this);
-  }
-  AccountPatchBuilder&& clear_name() && {
-    SetFieldBit(removed, Account::Name);
-    UnsetFieldBit(modified, Account::Name);
-    _builder.clear_name();
-    return std::move(*this);
-  }
-  AccountPatchBuilder&& set_trader_id(std::string_view value) && {
-    _builder.set_trader_id(value);
-    SetFieldBit(modified, Account::TraderId);
-    UnsetFieldBit(removed, Account::TraderId);
-    return std::move(*this);
-  }
-  AccountPatchBuilder&& clear_trader_id() && {
-    SetFieldBit(removed, Account::TraderId);
-    UnsetFieldBit(modified, Account::TraderId);
-    _builder.clear_trader_id();
     return std::move(*this);
   }
 

@@ -1,3 +1,4 @@
+
 // AUTO GENERATED. DO NOT EDIT.
 //
 #pragma once
@@ -10,6 +11,9 @@
 #include "gendb/message_builder.h"
 #include "gendb/message_patch.h"
 
+// Enum definitions
+
+// Message classes
 namespace gendb::tests {
 // GeneratedClass
 class Config : private gendb::MessageBase {

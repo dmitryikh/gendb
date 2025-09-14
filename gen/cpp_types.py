@@ -10,7 +10,7 @@ FLATBUF_TO_CPP = {
     "Short": "int16_t",
     "UShort": "uint16_t",
     "Int": "int32_t",
-    "Uint": "uint32_t",
+    "UInt": "uint32_t",
     "Long": "int64_t",
     "ULong": "uint64_t",
     "Float": "float",
@@ -28,7 +28,7 @@ FLATBUF_TO_REF = {
     "Short": "int16_t&",
     "UShort": "uint16_t&",
     "Int": "int32_t&",
-    "Uint": "uint32_t&",
+    "UInt": "uint32_t&",
     "Long": "int64_t&",
     "ULong": "uint64_t&",
     "Float": "float&",
@@ -46,7 +46,7 @@ FLATBUF_TO_CONST_REF = {
     "Short": "int16_t",
     "UShort": "uint16_t",
     "Int": "int32_t",
-    "Uint": "uint32_t",
+    "UInt": "uint32_t",
     "Long": "int64_t",
     "ULong": "uint64_t",
     "Float": "float",
@@ -64,7 +64,7 @@ FLATBUF_TYPE_SIZE = {
     "Short": 2,
     "UShort": 2,
     "Int": 4,
-    "Uint": 4,
+    "UInt": 4,
     "Long": 8,
     "ULong": 8,
     "Float": 4,
@@ -81,7 +81,7 @@ FLATBUF_TYPE_DEFAULTS = {
     "Short": "0",
     "UShort": "0",
     "Int": "0",
-    "Uint": "0",
+    "UInt": "0",
     "Long": "0LL",
     "ULong": "0ULL",
     "Float": "0.0f",
@@ -96,22 +96,37 @@ def default_value(flat_type: str) -> str:
 # Utilities for mapping FlatBuffer types to C++ types, reference types, const reference types, and sizes.
 
 
+
 def cpp_type(flat_type: str) -> str:
-    return FLATBUF_TO_CPP.get(flat_type, flat_type)
+    if flat_type not in FLATBUF_TO_CPP:
+        raise KeyError(f"cpp_type: Unknown FlatBuffer type '{flat_type}'. Supported types: {list(FLATBUF_TO_CPP.keys())}")
+    return FLATBUF_TO_CPP[flat_type]
+
 
 
 def ref_type(flat_type: str) -> str:
-    return FLATBUF_TO_REF.get(flat_type, flat_type)
+    if flat_type not in FLATBUF_TO_REF:
+        raise KeyError(f"ref_type: Unknown FlatBuffer type '{flat_type}'. Supported types: {list(FLATBUF_TO_REF.keys())}")
+    return FLATBUF_TO_REF[flat_type]
+
 
 
 def const_ref_type(flat_type: str) -> str:
-    return FLATBUF_TO_CONST_REF.get(flat_type, f"const {cpp_type(flat_type)}&")
+    if flat_type not in FLATBUF_TO_CONST_REF:
+        raise KeyError(f"const_ref_type: Unknown FlatBuffer type '{flat_type}'. Supported types: {list(FLATBUF_TO_CONST_REF.keys())}")
+    return FLATBUF_TO_CONST_REF[flat_type]
+
 
 
 def type_size(flat_type: str) -> Optional[int]:
-    return FLATBUF_TYPE_SIZE.get(flat_type)
+    if flat_type not in FLATBUF_TYPE_SIZE:
+        raise KeyError(f"type_size: Unknown FlatBuffer type '{flat_type}'. Supported types: {list(FLATBUF_TYPE_SIZE.keys())}")
+    return FLATBUF_TYPE_SIZE[flat_type]
 
 
 def is_fixed_size(flat_type: str) -> bool:
     sz = type_size(flat_type)
     return sz is not None
+
+def is_integral_type(flat_type: str) -> bool:
+    return flat_type in {"Bool", "Byte", "UByte", "Short", "UShort", "Int", "UInt", "Long", "ULong"}

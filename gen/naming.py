@@ -13,8 +13,11 @@ def split_namespace_class(full_name):
 def to_cpp_namespace(namespace):
     return namespace.replace('.', '::')
 
-def PascalCase(snake_str):
-    return ''.join(word.capitalize() for word in snake_str.split('_'))
+def PascalCase(name):
+    # If already PascalCase, return as is
+    if re.fullmatch(r'[A-Z][a-zA-Z0-9]*', name):
+        return name
+    return ''.join(word.capitalize() for word in name.split('_'))
 
 def snake_case(s):
     return '_'.join(word.lower() for word in re.findall(r'[A-Z][a-z]*', s))

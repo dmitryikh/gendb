@@ -1,3 +1,4 @@
+
 // AUTO GENERATED. DO NOT EDIT.
 //
 #pragma once
@@ -10,6 +11,22 @@
 #include "gendb/bits.h"
 #include "gendb/message_patch.h"
 
+// Enum definitions
+{% for enum_name, enum in enums.items() %}
+{% if enum.namespace %}namespace {{ enum.namespace.replace('.', '::') }} {
+{% endif %}
+enum class {{ enum_name }} : {{ enum.underlying_type }} {
+  {% for value_name, value in enum.vals %}
+  {{ value_name }} = {{ value }},
+  {% endfor %}
+};
+{% if enum.namespace %}
+} // namespace {{ enum.namespace.replace('.', '::') }}
+{% endif %}
+{% endfor %}
+
+// Message classes
+{% for table in tables %}
 {% if table.namespace %}namespace {{ table.namespace }} {
 {% endif %}
 // GeneratedClass
@@ -17,7 +34,7 @@ class {{ table.class_name }} : private gendb::MessageBase {
  public:
 
   enum Field : int {
-    {% for field in fields %}
+    {% for field in table.fields %}
     {{ field.enum_name }} = {{ loop.index }},
     {% endfor %}
     MaxFields
@@ -32,10 +49,12 @@ class {{ table.class_name }} : private gendb::MessageBase {
   {{ table.class_name }}() = default;
   {{ table.class_name }}(std::span<const uint8_t> span) : MessageBase(span) {}
 
-  {% for field in fields %}
+  {% for field in table.fields %}
   bool has_{{ field.name }}() const { return HasField({{ field.enum_name }}); }
   {% if field.cpp_type == 'std::string' %}
   std::string_view {{ field.name }}() const { return ReadStringField({{ field.enum_name }}, ""); }
+  {% elif field.is_enum %}
+  {{ field.full_cpp_type }} {{ field.name }}() const { return static_cast<{{ field.full_cpp_type }}>(ReadScalarField<{{ enums[field.enum_type].underlying_type }}>({{ field.enum_name }}, {{ field.default }})); }
   {% else %}
   {{ field.cpp_type }} {{ field.name }}() const { return ReadScalarField<{{ field.cpp_type }}>({{ field.enum_name }}, {{ field.default }}); }
   {% endif %}
@@ -58,15 +77,17 @@ class {{ table.class_name }}Builder : public gendb::MessageBuilder {
   {{ table.class_name }}Builder() : MessageBuilder() {}
   {{ table.class_name }}Builder({{ table.class_name }}& obj) : MessageBuilder(obj) {}
 
-  {% for field in fields %}
+  {% for field in table.fields %}
   {% if field.cpp_type == 'std::string' %}
   void set_{{ field.name }}(std::string_view value) { AddStringField({{ table.class_name }}::{{ field.enum_name }}, value); }
+  {% elif field.is_enum %}
+  void set_{{ field.name }}({{ field.full_cpp_type }} value) { AddField<{{ enums[field.enum_type].underlying_type }}>({{ table.class_name }}::{{ field.enum_name }}, static_cast<{{ enums[field.enum_type].underlying_type }}>(value)); }
   {% else %}
   void set_{{ field.name }}({{ field.const_ref_type }} value) { AddField<{{ field.cpp_type }}>({{ table.class_name }}::{{ field.enum_name }}, value); }
   {% endif %}
   {% endfor %}
 
-  {% for field in fields %}
+  {% for field in table.fields %}
   void clear_{{ field.name }}() { ClearField({{ table.class_name }}::{{ field.enum_name }}); }
   {% endfor %}
 
@@ -78,7 +99,7 @@ class {{ table.class_name }}PatchBuilder {
   {{ table.class_name }}PatchBuilder() = default;
   // TODO: Add constructor with primary key fields.
 
-  {% for field in fields %}
+  {% for field in table.fields %}
   {{ table.class_name }}PatchBuilder&& set_{{ field.name }}({{ field.const_ref_type }} value) && {
     _builder.set_{{ field.name }}(value);
     SetFieldBit(modified, {{ table.class_name }}::{{ field.enum_name }});
@@ -109,3 +130,4 @@ class {{ table.class_name }}PatchBuilder {
 {% if table.namespace %}
 } // namespace {{ table.namespace }}
 {% endif %}
+{% endfor %}

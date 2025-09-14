@@ -5,15 +5,15 @@
 #include <cstdint>
 #include <optional>
 
-#include "Account.h"
-#include "Config.h"
-#include "Position.h"
 #include "absl/status/status.h"
+#include "account.fbs.h"
+#include "config.fbs.h"
 #include "gendb/bytes.h"
 #include "gendb/index.h"
 #include "gendb/iterator.h"
 #include "gendb/message_patch.h"
 #include "gendb/status.h"
+#include "position.fbs.h"
 
 namespace gendb::tests {
 

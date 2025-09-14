@@ -4,13 +4,15 @@ find_package(GTest REQUIRED)
 
 
 # Message codegen
-add_codegen_target(
+gen_db_messages(
+    codegen
     ${CMAKE_SOURCE_DIR}/tests/schemas
     ${CMAKE_SOURCE_DIR}/tests/generated
 )
 
 # Database codegen
-add_db_codegen_target(
+gen_db_schema(
+    db_codegen
     ${CMAKE_SOURCE_DIR}/tests/schemas/db.yaml
     ${CMAKE_SOURCE_DIR}/tests/generated
 )

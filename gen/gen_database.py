@@ -1,3 +1,4 @@
+import os
 import yaml
 from pathlib import Path
 from fb_types import Message, Field, Collection, Database, Index
@@ -31,7 +32,7 @@ def message_from_flatc_obj(obj, include_prefix=""):
         ))
 
     namespace, name = naming.split_namespace_class(obj['name'])
-    cpp_include = f"{include_prefix}{name}.h"
+    cpp_include = os.path.basename(obj["declaration_file"]) + '.h'
     # Namespace: try to get from obj, fallback to empty
     return Message(
         name=name,

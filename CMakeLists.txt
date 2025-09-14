@@ -14,6 +14,12 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/lib
 )
 
+gen_db_messages(
+    gendb_lib_codegen
+    ${CMAKE_SOURCE_DIR}/lib/schemas
+    ${CMAKE_SOURCE_DIR}/lib/gendb/generated
+)
+
 find_package(absl REQUIRED)
 # Main library
 add_library(gendb_lib
@@ -31,6 +37,7 @@ add_library(gendb_lib
 )
 target_include_directories(gendb_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/lib)
 target_link_libraries(gendb_lib PUBLIC absl::inlined_vector absl::hash absl::span absl::status)
+add_dependencies(gendb_lib gendb_lib_codegen)
 
 # Add your test sources here
 add_executable(gendb_tests
