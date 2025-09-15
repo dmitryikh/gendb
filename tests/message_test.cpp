@@ -22,31 +22,31 @@ class AccountPatchTest : public ::testing::Test {
 };
 
 TEST_F(AccountPatchTest, ModifyFixedSizeField) {
-  auto patch = AccountPatchBuilder().set_account_id(24).BuildPatch();
+  auto patch = AccountPatchBuilder().set_account_id(24).Build();
   EXPECT_TRUE(CanApplyPatchInplace<Account>(patch, buffer));
   EXPECT_TRUE(ApplyPatchInplace(patch, buffer));
   EXPECT_EQ(account.account_id(), 24);
 }
 
 TEST_F(AccountPatchTest, ModifyNonFixedSizeField) {
-  auto patch = AccountPatchBuilder().set_name("TestName").BuildPatch();
+  auto patch = AccountPatchBuilder().set_name("TestName").Build();
   EXPECT_FALSE(CanApplyPatchInplace<Account>(patch, buffer));
 }
 
 TEST_F(AccountPatchTest, RemoveFixedSizeField) {
-  auto patch = AccountPatchBuilder().clear_account_id().BuildPatch();
+  auto patch = AccountPatchBuilder().clear_account_id().Build();
   EXPECT_FALSE(CanApplyPatchInplace<Account>(patch, buffer));
 }
 
 TEST_F(AccountPatchTest, RemoveNonFixedSizeField) {
-  auto patch = AccountPatchBuilder().clear_name().BuildPatch();
+  auto patch = AccountPatchBuilder().clear_name().Build();
   EXPECT_TRUE(CanApplyPatchInplace<Account>(patch, buffer));
   EXPECT_TRUE(ApplyPatchInplace(patch, buffer));
   EXPECT_TRUE(account.name().empty());
 }
 
 TEST_F(AccountPatchTest, ModifyAndRemoveFields) {
-  auto patch = AccountPatchBuilder().set_age(31).set_balance(200.0f).clear_name().BuildPatch();
+  auto patch = AccountPatchBuilder().set_age(31).set_balance(200.0f).clear_name().Build();
   EXPECT_TRUE(CanApplyPatchInplace<Account>(patch, buffer));
   EXPECT_TRUE(ApplyPatchInplace(patch, buffer));
   EXPECT_EQ(account.age(), 31);
@@ -55,18 +55,17 @@ TEST_F(AccountPatchTest, ModifyAndRemoveFields) {
 }
 
 TEST_F(AccountPatchTest, ModifyAndRemoveExistingFields) {
-  auto patch =
-      AccountPatchBuilder().set_age(31).set_balance(200.0f).clear_account_id().BuildPatch();
+  auto patch = AccountPatchBuilder().set_age(31).set_balance(200.0f).clear_account_id().Build();
   EXPECT_FALSE(CanApplyPatchInplace<Account>(patch, buffer));
 }
 
 TEST_F(AccountPatchTest, ModifyNonFixedAndRemoveFixed) {
-  auto patch = AccountPatchBuilder().set_name("TestName").clear_account_id().BuildPatch();
+  auto patch = AccountPatchBuilder().set_name("TestName").clear_account_id().Build();
   EXPECT_FALSE(CanApplyPatchInplace<Account>(patch, buffer));
 }
 
 TEST_F(AccountPatchTest, ModifyAndRemoveNonFixed) {
-  auto patch = AccountPatchBuilder().set_name("TestName").clear_config_name().BuildPatch();
+  auto patch = AccountPatchBuilder().set_name("TestName").clear_config_name().Build();
   EXPECT_FALSE(CanApplyPatchInplace<Account>(patch, buffer));
 }
 
@@ -265,7 +264,7 @@ TEST(AccountTest, ApplyPatch_ModifyFixedField) {
   std::vector<uint8_t> buffer = builder.Build();
   Account account(buffer);
 
-  auto patch = AccountPatchBuilder().set_balance(200.0f).BuildPatch();
+  auto patch = AccountPatchBuilder().set_balance(200.0f).Build();
   std::vector<uint8_t> patched_buffer;
   ApplyPatch(patch, buffer, patched_buffer);
   Account patched(patched_buffer);
@@ -282,7 +281,7 @@ TEST(AccountTest, ApplyPatch_ModifyNonFixedField) {
   std::vector<uint8_t> buffer = builder.Build();
   Account account(buffer);
 
-  auto patch = AccountPatchBuilder().set_name("NewName").BuildPatch();
+  auto patch = AccountPatchBuilder().set_name("NewName").Build();
   std::vector<uint8_t> patched_buffer;
   ApplyPatch(patch, buffer, patched_buffer);
   Account patched(patched_buffer);
@@ -297,7 +296,7 @@ TEST(AccountTest, ApplyPatch_RemoveFixedField) {
   std::vector<uint8_t> buffer = builder.Build();
   Account account(buffer);
 
-  auto patch = AccountPatchBuilder().clear_age().BuildPatch();
+  auto patch = AccountPatchBuilder().clear_age().Build();
   std::vector<uint8_t> patched_buffer;
   ApplyPatch(patch, buffer, patched_buffer);
   Account patched(patched_buffer);
@@ -312,7 +311,7 @@ TEST(AccountTest, ApplyPatch_RemoveNonFixedField) {
   std::vector<uint8_t> buffer = builder.Build();
   Account account(buffer);
 
-  auto patch = AccountPatchBuilder().clear_name().BuildPatch();
+  auto patch = AccountPatchBuilder().clear_name().Build();
   std::vector<uint8_t> patched_buffer;
   ApplyPatch(patch, buffer, patched_buffer);
   Account patched(patched_buffer);
@@ -329,7 +328,7 @@ TEST(AccountTest, ApplyPatch_ModifyAndRemoveFields) {
   std::vector<uint8_t> buffer = builder.Build();
   Account account(buffer);
 
-  auto patch = AccountPatchBuilder().set_balance(200.0f).clear_name().BuildPatch();
+  auto patch = AccountPatchBuilder().set_balance(200.0f).clear_name().Build();
   std::vector<uint8_t> patched_buffer;
   ApplyPatch(patch, buffer, patched_buffer);
   Account patched(patched_buffer);
@@ -419,14 +418,13 @@ TEST(PositionTest, PatchDirectionEnum) {
 
   // Change direction and check
   std::vector<uint8_t> patched_buffer;
-  ApplyPatch(PositionPatchBuilder{}.set_direction(Direction::kSell).BuildPatch(), buffer,
+  ApplyPatch(PositionPatchBuilder{}.set_direction(Direction::kSell).Build(), buffer,
              patched_buffer);
   Position patched{patched_buffer};
   EXPECT_EQ(patched.direction(), Direction::kSell);
 
   std::vector<uint8_t> patched_buffer2;
-  ApplyPatch(PositionPatchBuilder{}.clear_direction().BuildPatch(), patched_buffer,
-             patched_buffer2);
+  ApplyPatch(PositionPatchBuilder{}.clear_direction().Build(), patched_buffer, patched_buffer2);
   Position cleared{patched_buffer2};
   EXPECT_EQ(cleared.direction(), Direction::kUnknown);
   EXPECT_FALSE(cleared.has_direction());

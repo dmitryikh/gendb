@@ -39,6 +39,11 @@ class Index:
     field: str
 
 @dataclass
+class Sequence:
+    name: str
+    metadata_id: int
+
+@dataclass
 class Message:
     full_name: str                  # e.g., "gendb.main.AccountFb"
     cpp_include: str               # e.g., "tests/generated/AccountFb.h"

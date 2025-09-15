@@ -65,7 +65,7 @@ TEST(DbTest, UpdateAccountWithPatch) {
   }
   {
     auto writer = db.CreateWriter();
-    auto patch = AccountPatchBuilder().set_balance(200.0f).set_name("Robert").BuildPatch();
+    auto patch = AccountPatchBuilder().set_balance(200.0f).set_name("Robert").Build();
     EXPECT_TRUE(writer.UpdateAccount(2, patch).ok());
     writer.Commit();
   }
@@ -93,7 +93,7 @@ TEST(DbTest, UpdatePositionWithPatch) {
   }
   {
     auto writer = db.CreateWriter();
-    auto patch = PositionPatchBuilder().set_open_price(101.5f).set_instrument("MSFT").BuildPatch();
+    auto patch = PositionPatchBuilder().set_open_price(101.5f).set_instrument("MSFT").Build();
     EXPECT_TRUE(writer.UpdatePosition(20, patch).ok());
     writer.Commit();
   }

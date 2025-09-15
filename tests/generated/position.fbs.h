@@ -71,17 +71,47 @@ class ClosedPositionBuilder : public gendb::MessageBuilder {
   ClosedPositionBuilder() : MessageBuilder() {}
   ClosedPositionBuilder(ClosedPosition& obj) : MessageBuilder(obj) {}
 
-  void set_position_id(int32_t value) { AddField<int32_t>(ClosedPosition::PositionId, value); }
-  void set_account_id(int32_t value) { AddField<int32_t>(ClosedPosition::AccountId, value); }
-  void set_volume(int32_t value) { AddField<int32_t>(ClosedPosition::Volume, value); }
-  void set_instrument(std::string_view value) { AddStringField(ClosedPosition::Instrument, value); }
-  void set_profit(float value) { AddField<float>(ClosedPosition::Profit, value); }
+  ClosedPositionBuilder& set_position_id(int32_t value) {
+    AddField<int32_t>(ClosedPosition::PositionId, value);
+    return *this;
+  }
+  ClosedPositionBuilder& set_account_id(int32_t value) {
+    AddField<int32_t>(ClosedPosition::AccountId, value);
+    return *this;
+  }
+  ClosedPositionBuilder& set_volume(int32_t value) {
+    AddField<int32_t>(ClosedPosition::Volume, value);
+    return *this;
+  }
+  ClosedPositionBuilder& set_instrument(std::string_view value) {
+    AddStringField(ClosedPosition::Instrument, value);
+    return *this;
+  }
+  ClosedPositionBuilder& set_profit(float value) {
+    AddField<float>(ClosedPosition::Profit, value);
+    return *this;
+  }
 
-  void clear_position_id() { ClearField(ClosedPosition::PositionId); }
-  void clear_account_id() { ClearField(ClosedPosition::AccountId); }
-  void clear_volume() { ClearField(ClosedPosition::Volume); }
-  void clear_instrument() { ClearField(ClosedPosition::Instrument); }
-  void clear_profit() { ClearField(ClosedPosition::Profit); }
+  ClosedPositionBuilder& clear_position_id() {
+    ClearField(ClosedPosition::PositionId);
+    return *this;
+  }
+  ClosedPositionBuilder& clear_account_id() {
+    ClearField(ClosedPosition::AccountId);
+    return *this;
+  }
+  ClosedPositionBuilder& clear_volume() {
+    ClearField(ClosedPosition::Volume);
+    return *this;
+  }
+  ClosedPositionBuilder& clear_instrument() {
+    ClearField(ClosedPosition::Instrument);
+    return *this;
+  }
+  ClosedPositionBuilder& clear_profit() {
+    ClearField(ClosedPosition::Profit);
+    return *this;
+  }
 
   std::vector<uint8_t> Build() { return MessageBuilder::Build(); }
 };
@@ -152,7 +182,7 @@ class ClosedPositionPatchBuilder {
     return std::move(*this);
   }
 
-  gendb::MessagePatch BuildPatch() && {
+  gendb::MessagePatch Build() && {
     gendb::MessagePatch patch;
     patch.modified = std::move(modified);
     patch.removed = std::move(removed);
@@ -222,21 +252,55 @@ class PositionBuilder : public gendb::MessageBuilder {
   PositionBuilder() : MessageBuilder() {}
   PositionBuilder(Position& obj) : MessageBuilder(obj) {}
 
-  void set_position_id(int32_t value) { AddField<int32_t>(Position::PositionId, value); }
-  void set_account_id(int32_t value) { AddField<int32_t>(Position::AccountId, value); }
-  void set_volume(int32_t value) { AddField<int32_t>(Position::Volume, value); }
-  void set_instrument(std::string_view value) { AddStringField(Position::Instrument, value); }
-  void set_open_price(float value) { AddField<float>(Position::OpenPrice, value); }
-  void set_direction(gendb::tests::Direction value) {
+  PositionBuilder& set_position_id(int32_t value) {
+    AddField<int32_t>(Position::PositionId, value);
+    return *this;
+  }
+  PositionBuilder& set_account_id(int32_t value) {
+    AddField<int32_t>(Position::AccountId, value);
+    return *this;
+  }
+  PositionBuilder& set_volume(int32_t value) {
+    AddField<int32_t>(Position::Volume, value);
+    return *this;
+  }
+  PositionBuilder& set_instrument(std::string_view value) {
+    AddStringField(Position::Instrument, value);
+    return *this;
+  }
+  PositionBuilder& set_open_price(float value) {
+    AddField<float>(Position::OpenPrice, value);
+    return *this;
+  }
+  PositionBuilder& set_direction(gendb::tests::Direction value) {
     AddField<uint32_t>(Position::Direction, static_cast<uint32_t>(value));
+    return *this;
   }
 
-  void clear_position_id() { ClearField(Position::PositionId); }
-  void clear_account_id() { ClearField(Position::AccountId); }
-  void clear_volume() { ClearField(Position::Volume); }
-  void clear_instrument() { ClearField(Position::Instrument); }
-  void clear_open_price() { ClearField(Position::OpenPrice); }
-  void clear_direction() { ClearField(Position::Direction); }
+  PositionBuilder& clear_position_id() {
+    ClearField(Position::PositionId);
+    return *this;
+  }
+  PositionBuilder& clear_account_id() {
+    ClearField(Position::AccountId);
+    return *this;
+  }
+  PositionBuilder& clear_volume() {
+    ClearField(Position::Volume);
+    return *this;
+  }
+  PositionBuilder& clear_instrument() {
+    ClearField(Position::Instrument);
+    return *this;
+  }
+  PositionBuilder& clear_open_price() {
+    ClearField(Position::OpenPrice);
+    return *this;
+  }
+  PositionBuilder& clear_direction() {
+    ClearField(Position::Direction);
+    return *this;
+  }
 
   std::vector<uint8_t> Build() { return MessageBuilder::Build(); }
 };
@@ -319,7 +383,7 @@ class PositionPatchBuilder {
     return std::move(*this);
   }
 
-  gendb::MessagePatch BuildPatch() && {
+  gendb::MessagePatch Build() && {
     gendb::MessagePatch patch;
     patch.modified = std::move(modified);
     patch.removed = std::move(removed);

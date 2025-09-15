@@ -65,21 +65,47 @@ class MetadataValueBuilder : public gendb::MessageBuilder {
   MetadataValueBuilder() : MessageBuilder() {}
   MetadataValueBuilder(MetadataValue& obj) : MessageBuilder(obj) {}
 
-  void set_type(gendb::MetadataType value) {
+  MetadataValueBuilder& set_type(gendb::MetadataType value) {
     AddField<uint32_t>(MetadataValue::Type, static_cast<uint32_t>(value));
+    return *this;
   }
-  void set_id(uint32_t value) { AddField<uint32_t>(MetadataValue::Id, value); }
-  void set_int_value(int32_t value) { AddField<int32_t>(MetadataValue::IntValue, value); }
-  void set_string_value(std::string_view value) {
+  MetadataValueBuilder& set_id(uint32_t value) {
+    AddField<uint32_t>(MetadataValue::Id, value);
+    return *this;
+  }
+  MetadataValueBuilder& set_int_value(int32_t value) {
+    AddField<int32_t>(MetadataValue::IntValue, value);
+    return *this;
+  }
+  MetadataValueBuilder& set_string_value(std::string_view value) {
     AddStringField(MetadataValue::StringValue, value);
+    return *this;
   }
-  void set_float_value(float value) { AddField<float>(MetadataValue::FloatValue, value); }
+  MetadataValueBuilder& set_float_value(float value) {
+    AddField<float>(MetadataValue::FloatValue, value);
+    return *this;
+  }
 
-  void clear_type() { ClearField(MetadataValue::Type); }
-  void clear_id() { ClearField(MetadataValue::Id); }
-  void clear_int_value() { ClearField(MetadataValue::IntValue); }
-  void clear_string_value() { ClearField(MetadataValue::StringValue); }
-  void clear_float_value() { ClearField(MetadataValue::FloatValue); }
+  MetadataValueBuilder& clear_type() {
+    ClearField(MetadataValue::Type);
+    return *this;
+  }
+  MetadataValueBuilder& clear_id() {
+    ClearField(MetadataValue::Id);
+    return *this;
+  }
+  MetadataValueBuilder& clear_int_value() {
+    ClearField(MetadataValue::IntValue);
+    return *this;
+  }
+  MetadataValueBuilder& clear_string_value() {
+    ClearField(MetadataValue::StringValue);
+    return *this;
+  }
+  MetadataValueBuilder& clear_float_value() {
+    ClearField(MetadataValue::FloatValue);
+    return *this;
+  }
 
   std::vector<uint8_t> Build() { return MessageBuilder::Build(); }
 };
@@ -150,7 +176,7 @@ class MetadataValuePatchBuilder {
     return std::move(*this);
   }
 
-  gendb::MessagePatch BuildPatch() && {
+  gendb::MessagePatch Build() && {
     gendb::MessagePatch patch;
     patch.modified = std::move(modified);
     patch.removed = std::move(removed);

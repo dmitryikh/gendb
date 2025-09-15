@@ -161,6 +161,9 @@ public:
   gendb::Iterator<{{ idx.type }}> Get{{ idx.name_pascal_case }}Equal({{ idx.key_cpp_type }} {{ idx.field }}) const;
 {% endfor %}
 
+{% for seq in sequences %}
+  absl::Status Next{{ seq.name|replace('_', ' ')|title|replace(' ', '') }}(uint64_t& next_id);
+{% endfor %}
   void Commit();
   ~ScopedWrite() = default;
 

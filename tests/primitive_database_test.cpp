@@ -38,7 +38,7 @@ TEST(PrimitiveDbTest, UpdateMessageAWithPatch) {
   }
   {
     auto writer = db.CreateWriter();
-    auto patch = MessageAPatchBuilder().set_data("updated").BuildPatch();
+    auto patch = MessageAPatchBuilder().set_data("updated").Build();
     EXPECT_TRUE(writer.UpdateMessageA(KeyEnum::kSecondValue, patch).ok());
     writer.Commit();
   }

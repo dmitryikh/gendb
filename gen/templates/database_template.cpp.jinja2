@@ -144,6 +144,25 @@ void ScopedWrite::MaybeUpdate{{ idx.name_pascal_case }}Index(std::array<uint8_t,
 }
 {% endfor %}
 
+{% for seq in sequences %}
+absl::Status ScopedWrite::Next{{ seq.name|replace('_', ' ')|title|replace(' ', '') }}(uint64_t& next_id) {
+  MetadataValue value;
+  MetadataValueKey key{.type = MetadataType::kSequence, .id = {{ seq.metadata_id }}};
+  auto status = GetMetadataValue(key, value);
+  if (status.code() == absl::StatusCode::kNotFound) {
+    RETURN_IF_ERROR(PutMetadataValue(key, MetadataValueBuilder().set_int_value(1).Build()));
+    next_id = 1;
+  } else if (!status.ok()) {
+    return status;
+  } else {
+    int new_next_id = value.int_value() + 1;
+    RETURN_IF_ERROR(UpdateMetadataValue(key, MetadataValuePatchBuilder().set_int_value(new_next_id).Build()));
+    next_id = new_next_id;
+  }
+  return absl::OkStatus();
+}
+{% endfor %}
+
 void ScopedWrite::Commit() {
   std::unique_lock lock(_db._reader_mutex);
   _layered_storage.MergeTempStorage();

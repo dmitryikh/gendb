@@ -79,16 +79,16 @@ class {{table.name}}Builder : public gendb::MessageBuilder {
 
   {% for field in table.fields %}
   {% if field.cpp_type == 'std::string' %}
-  void set_{{field.name}}(std::string_view value) { AddStringField({{ table.name }}::{{ field.name | pascalcase }}, value); }
+  {{table.name}}Builder& set_{{field.name}}(std::string_view value) { AddStringField({{ table.name }}::{{ field.name | pascalcase }}, value); return *this; }
   {% elif field.field_kind == FieldKind.ENUM %}
-  void set_{{field.name}}({{ field.cpp_type }} value) { AddField<{{ field.underlying_type }}>({{ table.name }}::{{ field.name | pascalcase }}, static_cast<{{ field.underlying_type }}>(value)); }
+  {{table.name}}Builder& set_{{field.name}}({{ field.cpp_type }} value) { AddField<{{ field.underlying_type }}>({{ table.name }}::{{ field.name | pascalcase }}, static_cast<{{ field.underlying_type }}>(value)); return *this; }
   {% else %}
-  void set_{{field.name}}({{ field.const_ref_type }} value) { AddField<{{ field.cpp_type }}>({{ table.name }}::{{ field.name | pascalcase }}, value); }
+  {{table.name}}Builder& set_{{field.name}}({{ field.const_ref_type }} value) { AddField<{{ field.cpp_type }}>({{ table.name }}::{{ field.name | pascalcase }}, value); return *this; }
   {% endif %}
   {% endfor %}
 
   {% for field in table.fields %}
-  void clear_{{field.name}}() { ClearField({{ table.name }}::{{ field.name | pascalcase }}); }
+  {{table.name}}Builder& clear_{{field.name}}() { ClearField({{ table.name }}::{{ field.name | pascalcase }}); return *this; }
   {% endfor %}
 
   std::vector<uint8_t> Build() { return MessageBuilder::Build(); }
@@ -114,7 +114,7 @@ class {{table.name}}PatchBuilder {
   }
   {% endfor %}
 
-  gendb::MessagePatch BuildPatch() && {
+  gendb::MessagePatch Build() && {
     gendb::MessagePatch patch;
     patch.modified = std::move(modified);
     patch.removed = std::move(removed);

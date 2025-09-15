@@ -25,6 +25,12 @@ collections:
     primary_key:
       - config_name
 
+sequences:
+  - name: account_id_sequence
+    metadata_id: 1
+  - name: position_id_sequence
+    metadata_id: 2
+
 indices:
   - name: account_by_age
     collection: accounts

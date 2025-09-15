@@ -73,23 +73,71 @@ class AccountBuilder : public gendb::MessageBuilder {
   AccountBuilder() : MessageBuilder() {}
   AccountBuilder(Account& obj) : MessageBuilder(obj) {}
 
-  void set_account_id(uint64_t value) { AddField<uint64_t>(Account::AccountId, value); }
-  void set_trader_id(std::string_view value) { AddStringField(Account::TraderId, value); }
-  void set_name(std::string_view value) { AddStringField(Account::Name, value); }
-  void set_address(std::string_view value) { AddStringField(Account::Address, value); }
-  void set_age(int32_t value) { AddField<int32_t>(Account::Age, value); }
-  void set_is_active(bool value) { AddField<bool>(Account::IsActive, value); }
-  void set_balance(float value) { AddField<float>(Account::Balance, value); }
-  void set_config_name(std::string_view value) { AddStringField(Account::ConfigName, value); }
+  AccountBuilder& set_account_id(uint64_t value) {
+    AddField<uint64_t>(Account::AccountId, value);
+    return *this;
+  }
+  AccountBuilder& set_trader_id(std::string_view value) {
+    AddStringField(Account::TraderId, value);
+    return *this;
+  }
+  AccountBuilder& set_name(std::string_view value) {
+    AddStringField(Account::Name, value);
+    return *this;
+  }
+  AccountBuilder& set_address(std::string_view value) {
+    AddStringField(Account::Address, value);
+    return *this;
+  }
+  AccountBuilder& set_age(int32_t value) {
+    AddField<int32_t>(Account::Age, value);
+    return *this;
+  }
+  AccountBuilder& set_is_active(bool value) {
+    AddField<bool>(Account::IsActive, value);
+    return *this;
+  }
+  AccountBuilder& set_balance(float value) {
+    AddField<float>(Account::Balance, value);
+    return *this;
+  }
+  AccountBuilder& set_config_name(std::string_view value) {
+    AddStringField(Account::ConfigName, value);
+    return *this;
+  }
 
-  void clear_account_id() { ClearField(Account::AccountId); }
-  void clear_trader_id() { ClearField(Account::TraderId); }
-  void clear_name() { ClearField(Account::Name); }
-  void clear_address() { ClearField(Account::Address); }
-  void clear_age() { ClearField(Account::Age); }
-  void clear_is_active() { ClearField(Account::IsActive); }
-  void clear_balance() { ClearField(Account::Balance); }
-  void clear_config_name() { ClearField(Account::ConfigName); }
+  AccountBuilder& clear_account_id() {
+    ClearField(Account::AccountId);
+    return *this;
+  }
+  AccountBuilder& clear_trader_id() {
+    ClearField(Account::TraderId);
+    return *this;
+  }
+  AccountBuilder& clear_name() {
+    ClearField(Account::Name);
+    return *this;
+  }
+  AccountBuilder& clear_address() {
+    ClearField(Account::Address);
+    return *this;
+  }
+  AccountBuilder& clear_age() {
+    ClearField(Account::Age);
+    return *this;
+  }
+  AccountBuilder& clear_is_active() {
+    ClearField(Account::IsActive);
+    return *this;
+  }
+  AccountBuilder& clear_balance() {
+    ClearField(Account::Balance);
+    return *this;
+  }
+  AccountBuilder& clear_config_name() {
+    ClearField(Account::ConfigName);
+    return *this;
+  }
 
   std::vector<uint8_t> Build() { return MessageBuilder::Build(); }
 };
@@ -196,7 +244,7 @@ class AccountPatchBuilder {
     return std::move(*this);
   }
 
-  gendb::MessagePatch BuildPatch() && {
+  gendb::MessagePatch Build() && {
     gendb::MessagePatch patch;
     patch.modified = std::move(modified);
     patch.removed = std::move(removed);

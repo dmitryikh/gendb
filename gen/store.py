@@ -1,6 +1,6 @@
 
 from typing import List, Optional, Dict
-from fb_types import Message, Collection, Field, Index, Enum
+from fb_types import Message, Collection, Field, Index, Enum, Sequence
 
 class Store:
     """
@@ -13,6 +13,16 @@ class Store:
         self.collections: Dict[str, Collection] = {}
         self.indices: Dict[str, Index] = {}
         self.enums: Dict[str, Enum] = {}
+        self.sequences: Dict[str, Sequence] = {}
+
+    def add_sequence(self, sequence: Sequence):
+        self.sequences[sequence.name] = sequence
+
+    def get_sequence(self, sequence_name: str) -> Optional[Sequence]:
+        return self.sequences.get(sequence_name)
+
+    def list_sequences(self) -> List[str]:
+        return list(self.sequences.keys())
 
     def add_message(self, t: Message):
         if t.full_name in self.messages:

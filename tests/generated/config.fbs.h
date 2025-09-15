@@ -48,11 +48,23 @@ class ConfigBuilder : public gendb::MessageBuilder {
   ConfigBuilder() : MessageBuilder() {}
   ConfigBuilder(Config& obj) : MessageBuilder(obj) {}
 
-  void set_config_name(std::string_view value) { AddStringField(Config::ConfigName, value); }
-  void set_max_trade_volume(double value) { AddField<double>(Config::MaxTradeVolume, value); }
+  ConfigBuilder& set_config_name(std::string_view value) {
+    AddStringField(Config::ConfigName, value);
+    return *this;
+  }
+  ConfigBuilder& set_max_trade_volume(double value) {
+    AddField<double>(Config::MaxTradeVolume, value);
+    return *this;
+  }
 
-  void clear_config_name() { ClearField(Config::ConfigName); }
-  void clear_max_trade_volume() { ClearField(Config::MaxTradeVolume); }
+  ConfigBuilder& clear_config_name() {
+    ClearField(Config::ConfigName);
+    return *this;
+  }
+  ConfigBuilder& clear_max_trade_volume() {
+    ClearField(Config::MaxTradeVolume);
+    return *this;
+  }
 
   std::vector<uint8_t> Build() { return MessageBuilder::Build(); }
 };
@@ -87,7 +99,7 @@ class ConfigPatchBuilder {
     return std::move(*this);
   }
 
-  gendb::MessagePatch BuildPatch() && {
+  gendb::MessagePatch Build() && {
     gendb::MessagePatch patch;
     patch.modified = std::move(modified);
     patch.removed = std::move(removed);

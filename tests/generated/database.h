@@ -154,6 +154,8 @@ class ScopedWrite {
                                                         int32_t max_account_id) const;
   gendb::Iterator<Position> GetPositionByAccountIdEqual(int32_t account_id) const;
 
+  absl::Status NextAccountIdSequence(uint64_t& next_id);
+  absl::Status NextPositionIdSequence(uint64_t& next_id);
   void Commit();
   ~ScopedWrite() = default;
 

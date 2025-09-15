@@ -1,6 +1,6 @@
 import yaml
 from pathlib import Path
-from fb_types import Message, Field, Collection, Database, Index, FieldKind
+from fb_types import Message, Field, Collection, Database, Index, FieldKind, Sequence
 from store import Store
 import naming
 from clang_format import clang_format
@@ -50,6 +50,14 @@ def build_store_from_yaml(db_cfg):
             field=idx["fields"][0] if isinstance(idx["fields"], list) else idx["fields"]
         )
         store.add_index(index)
+
+    # Load sequences
+    for seq in db_cfg.get("sequences", []):
+        sequence = Sequence(
+            name=seq["name"],
+            metadata_id=seq["metadata_id"]
+        )
+        store.add_sequence(sequence)
     return store
 
 
@@ -151,11 +159,21 @@ def main():
             "primary_key": collection.primary_key[0],
         })
 
+    # Compose sequences info
+    sequences = []
+    for seq_name in store.list_sequences():
+        seq = store.get_sequence(seq_name)
+        sequences.append({
+            "name": seq.name,
+            "metadata_id": seq.metadata_id,
+        })
+
     template_ctx = {
         "namespace": namespace,
         "includes": includes,
         "collections": collections,
         "indices": indices,
+        "sequences": sequences,
         "generated_source_base_name": generated_source_base_name
     }
 

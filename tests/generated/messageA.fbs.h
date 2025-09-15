@@ -57,13 +57,23 @@ class MessageABuilder : public gendb::MessageBuilder {
   MessageABuilder() : MessageBuilder() {}
   MessageABuilder(MessageA& obj) : MessageBuilder(obj) {}
 
-  void set_key(gendb::tests::primitive::KeyEnum value) {
+  MessageABuilder& set_key(gendb::tests::primitive::KeyEnum value) {
     AddField<uint32_t>(MessageA::Key, static_cast<uint32_t>(value));
+    return *this;
   }
-  void set_data(std::string_view value) { AddStringField(MessageA::Data, value); }
+  MessageABuilder& set_data(std::string_view value) {
+    AddStringField(MessageA::Data, value);
+    return *this;
+  }
 
-  void clear_key() { ClearField(MessageA::Key); }
-  void clear_data() { ClearField(MessageA::Data); }
+  MessageABuilder& clear_key() {
+    ClearField(MessageA::Key);
+    return *this;
+  }
+  MessageABuilder& clear_data() {
+    ClearField(MessageA::Data);
+    return *this;
+  }
 
   std::vector<uint8_t> Build() { return MessageBuilder::Build(); }
 };
@@ -98,7 +108,7 @@ class MessageAPatchBuilder {
     return std::move(*this);
   }
 
-  gendb::MessagePatch BuildPatch() && {
+  gendb::MessagePatch Build() && {
     gendb::MessagePatch patch;
     patch.modified = std::move(modified);
     patch.removed = std::move(removed);
