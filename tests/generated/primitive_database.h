@@ -23,14 +23,14 @@ enum CollectionId {
 };
 
 // Collection keys getters.
-inline std::array<uint8_t, sizeof(gendb::tests::primitive::KeyEnum)> ToMessageAKey(
-    gendb::tests::primitive::KeyEnum key) {
-  std::array<uint8_t, sizeof(gendb::tests::primitive::KeyEnum)> key_raw;
-  internal::key_codec::EncodeTupleToView<gendb::tests::primitive::KeyEnum>({key}, key_raw);
+inline std::array<uint8_t, 4> ToMessageAKey(gendb::tests::primitive::KeyEnum key) {
+  std::array<uint8_t, 4> key_raw;
+  internal::key_codec::EncodeTupleToView<std::tuple<gendb::tests::primitive::KeyEnum>>({key},
+                                                                                       key_raw);
   return key_raw;
 }
-inline std::array<uint8_t, sizeof(gendb::tests::primitive::KeyEnum)> ToMessageAKey(
-    MessageA message_a) {
+
+inline std::array<uint8_t, 4> ToMessageAKey(MessageA message_a) {
   return ToMessageAKey(message_a.key());
 }
 

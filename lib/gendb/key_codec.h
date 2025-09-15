@@ -124,16 +124,16 @@ inline bool EncodeField(const std::string& v, BytesView& out) {
 
 // Encode tuple to BytesView
 template <typename Tuple, size_t... I>
-bool EncodeTupleToView(const Tuple& t, BytesView& out, std::index_sequence<I...>) {
+bool EncodeTupleToViewImpl(const Tuple& t, BytesView& out, std::index_sequence<I...>) {
   bool ok = true;
   auto try_encode = [&](const auto& value) { ok = ok && EncodeField(value, out); };
   (try_encode(std::get<I>(t)), ...);
   return ok;
 }
 
-template <typename... Ts>
-bool EncodeTupleToView(const std::tuple<Ts...>& t, BytesView out) {
-  return EncodeTupleToView(t, out, std::index_sequence_for<Ts...>{});
+template <typename Tuple>
+bool EncodeTupleToView(const Tuple& t, BytesView out) {
+  return EncodeTupleToViewImpl(t, out, std::make_index_sequence<std::tuple_size_v<Tuple>>{});
 }
 
 // Decode fields (allocation-free with string_view)
@@ -173,16 +173,17 @@ template <typename Tuple, size_t... I>
 Bytes EncodeTupleImpl(const Tuple& t, std::index_sequence<I...>) {
   size_t total = (FieldSize(std::get<I>(t)) + ...);
   Bytes out;
-  out.reserve(total);
+  out.resize(total);
+  BytesView view(out.data(), out.size());
 
-  (EncodeField(std::get<I>(t), out), ...);
+  (EncodeField(std::get<I>(t), view), ...);
 
   return out;
 }
 
-template <typename... Ts>
-Bytes EncodeTuple(const std::tuple<Ts...>& t) {
-  return EncodeTupleImpl(t, std::index_sequence_for<Ts...>{});
+template <typename Tuple>
+Bytes EncodeTuple(const Tuple& t) {
+  return EncodeTupleImpl(t, std::make_index_sequence<std::tuple_size_v<Tuple>>{});
 }
 
 template <typename Tuple, size_t... I>

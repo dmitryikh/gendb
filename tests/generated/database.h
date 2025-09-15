@@ -14,6 +14,7 @@
 #include "gendb/key_codec.h"
 #include "gendb/layered_storage.h"
 #include "gendb/message_patch.h"
+#include "metadata.fbs.h"
 #include "position.fbs.h"
 
 namespace gendb::tests {
@@ -23,33 +24,55 @@ class Guard;
 class ScopedWrite;
 
 enum CollectionId {
-  AccountCollId = 0,
-  PositionCollId = 1,
-  ConfigCollId = 2,
+  MetadataValueCollId = 0,
+  AccountCollId = 1,
+  PositionCollId = 2,
+  ConfigCollId = 3,
 };
 
 // Collection keys getters.
-inline std::array<uint8_t, sizeof(uint64_t)> ToAccountKey(uint64_t account_id) {
-  std::array<uint8_t, sizeof(uint64_t)> key_raw;
-  internal::key_codec::EncodeTupleToView<uint64_t>({account_id}, key_raw);
+struct MetadataValueKey {
+  gendb::MetadataType type;
+  uint32_t id;
+};
+
+inline std::array<uint8_t, 8> ToMetadataValueKey(const MetadataValueKey& key) {
+  std::array<uint8_t, 8> key_raw;
+  internal::key_codec::EncodeTupleToView<std::tuple<gendb::MetadataType, uint32_t>>(
+      {key.type, key.id}, key_raw);
   return key_raw;
 }
-inline std::array<uint8_t, sizeof(uint64_t)> ToAccountKey(Account account) {
+
+inline std::array<uint8_t, 8> ToMetadataValueKey(MetadataValue metadata_value) {
+  std::array<uint8_t, 8> key_raw;
+  internal::key_codec::EncodeTupleToView<std::tuple<gendb::MetadataType, uint32_t>>(
+      {metadata_value.type(), metadata_value.id()}, key_raw);
+  return key_raw;
+}
+inline std::array<uint8_t, 8> ToAccountKey(uint64_t account_id) {
+  std::array<uint8_t, 8> key_raw;
+  internal::key_codec::EncodeTupleToView<std::tuple<uint64_t>>({account_id}, key_raw);
+  return key_raw;
+}
+
+inline std::array<uint8_t, 8> ToAccountKey(Account account) {
   return ToAccountKey(account.account_id());
 }
-inline std::array<uint8_t, sizeof(int32_t)> ToPositionKey(int32_t position_id) {
-  std::array<uint8_t, sizeof(int32_t)> key_raw;
-  internal::key_codec::EncodeTupleToView<int32_t>({position_id}, key_raw);
+inline std::array<uint8_t, 4> ToPositionKey(int32_t position_id) {
+  std::array<uint8_t, 4> key_raw;
+  internal::key_codec::EncodeTupleToView<std::tuple<int32_t>>({position_id}, key_raw);
   return key_raw;
 }
-inline std::array<uint8_t, sizeof(int32_t)> ToPositionKey(Position position) {
+
+inline std::array<uint8_t, 4> ToPositionKey(Position position) {
   return ToPositionKey(position.position_id());
 }
-inline BytesConstView ToConfigKey(std::string_view config_name) {
-  return {reinterpret_cast<const uint8_t*>(config_name.data()), config_name.size()};
+inline Bytes ToConfigKey(std::string_view config_name) {
+  return internal::key_codec::EncodeTuple(std::make_tuple(config_name));
 }
-inline BytesConstView ToConfigKey(Config config) {
-  return config.FieldRaw(Config::ConfigName);
+
+inline Bytes ToConfigKey(Config config) {
+  return internal::key_codec::EncodeTuple(std::make_tuple(config.config_name()));
 }
 
 struct Indices {
@@ -83,6 +106,7 @@ class Db {
 
 class Guard {
  public:
+  absl::Status GetMetadataValue(const MetadataValueKey& key, MetadataValue& metadata_value) const;
   absl::Status GetAccount(uint64_t account_id, Account& account) const;
   absl::Status GetPosition(int32_t position_id, Position& position) const;
   absl::Status GetConfig(std::string_view config_name, Config& config) const;
@@ -108,6 +132,9 @@ class Guard {
 
 class ScopedWrite {
  public:
+  absl::Status GetMetadataValue(const MetadataValueKey& key, MetadataValue& metadata_value) const;
+  absl::Status PutMetadataValue(const MetadataValueKey& key, std::vector<uint8_t> metadata_value);
+  absl::Status UpdateMetadataValue(const MetadataValueKey& key, const MessagePatch& update);
   absl::Status GetAccount(uint64_t account_id, Account& account) const;
   absl::Status PutAccount(uint64_t account_id, std::vector<uint8_t> account);
   absl::Status UpdateAccount(uint64_t account_id, const MessagePatch& update);

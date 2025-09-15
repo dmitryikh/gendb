@@ -15,6 +15,11 @@ class Field:
     name: str
     type: str        # e.g., "int", "string", "gendb.tests.ConfigFb"
     field_kind: FieldKind
+    cpp_type: str
+    underlying_type: str # if FieldKind.ENUM, the c++ underlying type of the enum
+    const_ref_type: str # type in c++, which is used to pass the field value as a const reference
+    ref_type: str # type in c++, which is used to pass the field value as a reference (for modifications)
+    is_fixed_size: bool # if the size of the field is known at compile-time
     optional: bool = True
     default: Optional[Union[int, float, str]] = None
 

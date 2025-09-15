@@ -73,6 +73,20 @@ FLATBUF_TYPE_SIZE = {
     # Not supported: UType, Vector, Obj, Union, Array, Vector64
 }
 
+CPP_TYPE_SIZE = {
+    "bool": 1,
+    "uint8_t": 1,
+    "int8_t": 1,
+    "uint16_t": 2,
+    "int16_t": 2,
+    "uint32_t": 4,
+    "int32_t": 4,
+    "uint64_t": 8,
+    "int64_t": 8,
+    "float": 4,
+    "double": 8,
+}
+
 # Default values for FlatBuffer types
 FLATBUF_TYPE_DEFAULTS = {
     "Bool": "false",
@@ -117,11 +131,16 @@ def const_ref_type(flat_type: str) -> str:
     return FLATBUF_TO_CONST_REF[flat_type]
 
 
-
 def type_size(flat_type: str) -> Optional[int]:
     if flat_type not in FLATBUF_TYPE_SIZE:
         raise KeyError(f"type_size: Unknown FlatBuffer type '{flat_type}'. Supported types: {list(FLATBUF_TYPE_SIZE.keys())}")
     return FLATBUF_TYPE_SIZE[flat_type]
+
+
+def cpp_type_size(cpp_type: str) -> Optional[int]:
+    if cpp_type not in CPP_TYPE_SIZE:
+        raise KeyError(f"cpp_type_size: Unknown C++ type '{cpp_type}'. Supported types: {list(CPP_TYPE_SIZE.keys())}")
+    return CPP_TYPE_SIZE[cpp_type]
 
 
 def is_fixed_size(flat_type: str) -> bool:

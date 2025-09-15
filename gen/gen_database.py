@@ -93,31 +93,27 @@ def main():
     # Compose collections info
     collections = []
     for col in store.collections.values():
-        pk_field = store.get_field(col.type, col.primary_key[0])
-        pk_type = pk_field.type
-        if pk_field.field_kind == FieldKind.ENUM:
-            pk_cpp_type = naming.to_cpp_namespace(pk_field.type)
-            pk_const_ref_type = pk_cpp_type
-            pk_type_is_enum = True
-        elif pk_field.field_kind == FieldKind.SCALAR:
-            pk_cpp_type = cpp_types.cpp_type(pk_type)
-            pk_const_ref_type = cpp_types.const_ref_type(pk_type)
-            pk_type_is_enum = False
-        else:
-            raise ValueError(f"Unsupported primary key field kind: {pk_field.field_kind}")
-
         type = naming.split_namespace_class(col.type)[1]
+        pk_fields = []
+        pk_fixed_size = 0
+        for pk_name in col.primary_key:
+            pk_field = store.get_field(col.type, pk_name)
+            if pk_field.is_fixed_size and pk_fixed_size >= 0:
+                if pk_field.field_kind == FieldKind.SCALAR:
+                    pk_fixed_size += cpp_types.type_size(pk_field.type)
+                else:
+                    pk_fixed_size += cpp_types.cpp_type_size(pk_field.underlying_type)
+            elif not pk_field.is_fixed_size:
+                pk_fixed_size = -1
+            pk_fields.append(pk_field)
+
         collections.append({
             "name": col.name,
             "type": type,
             "type_snake_case": naming.snake_case(type),
             "enum_name": naming.PascalCase(type) + "CollId",
-            "pk_name": col.primary_key[0],
-            "pk_enum": naming.PascalCase(col.primary_key[0]),
-            "pk_type": pk_type,
-            "pk_cpp_type": pk_cpp_type,
-            "pk_const_ref_type": pk_const_ref_type,
-            "pk_type_is_enum": pk_type_is_enum,
+            "pk_fields": pk_fields,
+            "pk_fixed_size": pk_fixed_size, # -1 in case the size is not fixed
         })
 
     # Compose indices info

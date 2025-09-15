@@ -29,23 +29,38 @@ ScopedWrite Db::CreateWriter() {
 }
 
 {% for coll in collections %}
-absl::Status Guard::Get{{ coll.type | pascalcase}}({{ coll.pk_const_ref_type }} {{ coll.pk_name }}, {{coll.type}}& {{ coll.type_snake_case }}) const {
+absl::Status Guard::Get{{ coll.type | pascalcase}}(
+  {% if coll.pk_fields | length > 1 %}const {{ coll.type | pascalcase }}Key& key{% else %}{{ coll.pk_fields[0].const_ref_type }} {{ coll.pk_fields[0].name }}{% endif %},
+  {{ coll.type }}& {{ coll.type_snake_case }}
+) const {
   BytesConstView value;
-  RETURN_IF_ERROR(_layered_storage.Get({{ coll.enum_name }}, To{{ coll.type | pascalcase}}Key({{ coll.pk_name }}), value));
-  {{ coll.type_snake_case }} = {{coll.type}}{value};
+  RETURN_IF_ERROR(_layered_storage.Get(
+    {{ coll.enum_name }},
+    {% if coll.pk_fields | length > 1 %}To{{ coll.type | pascalcase }}Key(key){% else %}To{{ coll.type | pascalcase }}Key({{ coll.pk_fields[0].name }}){% endif %},
+    value));
+  {{ coll.type_snake_case }} = {{ coll.type }}{value};
   return absl::OkStatus();
 }
 
-absl::Status ScopedWrite::Get{{ coll.type | pascalcase}}({{ coll.pk_const_ref_type }} {{ coll.pk_name }}, {{ coll.type}}& {{ coll.type_snake_case }}) const {
+absl::Status ScopedWrite::Get{{ coll.type | pascalcase}}(
+  {% if coll.pk_fields | length > 1 %}const {{ coll.type | pascalcase }}Key& key{% else %}{{ coll.pk_fields[0].const_ref_type }} {{ coll.pk_fields[0].name }}{% endif %},
+  {{ coll.type }}& {{ coll.type_snake_case }}
+) const {
   BytesConstView value;
-  RETURN_IF_ERROR(_layered_storage.Get({{ coll.enum_name }}, To{{ coll.type | pascalcase}}Key({{ coll.pk_name }}), value));
-  {{ coll.type_snake_case }} = {{coll.type}}{value};
+  RETURN_IF_ERROR(_layered_storage.Get(
+    {{ coll.enum_name }},
+    {% if coll.pk_fields | length > 1 %}To{{ coll.type | pascalcase }}Key(key){% else %}To{{ coll.type | pascalcase }}Key({{ coll.pk_fields[0].name }}){% endif %},
+    value));
+  {{ coll.type_snake_case }} = {{ coll.type }}{value};
   return absl::OkStatus();
 }
 
-absl::Status ScopedWrite::Put{{ coll.type | pascalcase}}({{ coll.pk_const_ref_type }} {{ coll.pk_name }}, Bytes {{ coll.type_snake_case }}) {
-  auto key_ = To{{ coll.type | pascalcase}}Key({{ coll.pk_name }});
-  {% for idx in indices%}
+absl::Status ScopedWrite::Put{{ coll.type | pascalcase}}(
+  {% if coll.pk_fields | length > 1 %}const {{ coll.type | pascalcase }}Key& key{% else %}{{ coll.pk_fields[0].const_ref_type }} {{ coll.pk_fields[0].name }}{% endif %},
+  Bytes {{ coll.type_snake_case }}
+) {
+  auto key_ = {% if coll.pk_fields | length > 1 %}To{{ coll.type | pascalcase }}Key(key){% else %}To{{ coll.type | pascalcase }}Key({{ coll.pk_fields[0].name }}){% endif %};
+  {% for idx in indices %}
   {% if idx.type == coll.type %}
   MaybeUpdate{{ idx.name_pascal_case }}Index(key_, {{ coll.type_snake_case }}, /*update=*/nullptr);
   {% endif %}
@@ -54,16 +69,19 @@ absl::Status ScopedWrite::Put{{ coll.type | pascalcase}}({{ coll.pk_const_ref_ty
   return absl::OkStatus();
 }
 
-absl::Status ScopedWrite::Update{{ coll.type | pascalcase}}({{ coll.pk_const_ref_type }} {{ coll.pk_name }}, const MessagePatch& update) {
+absl::Status ScopedWrite::Update{{ coll.type | pascalcase}}(
+  {% if coll.pk_fields | length > 1 %}const {{ coll.type | pascalcase }}Key& key{% else %}{{ coll.pk_fields[0].const_ref_type }} {{ coll.pk_fields[0].name }}{% endif %},
+  const MessagePatch& update
+) {
   Bytes* ptr = nullptr;
-  auto key_ = To{{ coll.type | pascalcase}}Key({{ coll.pk_name }});
+  auto key_ = {% if coll.pk_fields | length > 1 %}To{{ coll.type | pascalcase }}Key(key){% else %}To{{ coll.type | pascalcase }}Key({{ coll.pk_fields[0].name }}){% endif %};
   RETURN_IF_ERROR(_layered_storage.EnsureInTempStorage({{ coll.enum_name }}, key_, &ptr));
-  {% for idx in indices%}
+  {% for idx in indices %}
   {% if idx.type == coll.type %}
   MaybeUpdate{{ idx.name_pascal_case }}Index(key_, *ptr, &update);
   {% endif %}
   {% endfor %}
-  gendb::ApplyPatch<{{coll.type}}>(update, *ptr);
+  gendb::ApplyPatch<{{ coll.type }}>(update, *ptr);
   return absl::OkStatus();
 }
 {% endfor %}

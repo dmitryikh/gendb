@@ -5,6 +5,7 @@ import flatc
 from pathlib import Path
 import cpp_types
 from fb_types import Message, Field, Enum, FieldKind
+import naming
 
 def __enum_from_flatc_obj(obj):
     return Enum(
@@ -35,11 +36,33 @@ def __message_from_flatc_obj(obj, enums: list[Enum], include_prefix=""):
             type_ = f["type"]["base_type"]
         else:
             raise ValueError(f"Unknown field type: {f['type']}")
+
+        if field_kind == FieldKind.ENUM:
+            cpp_type = naming.to_cpp_namespace(type_)
+            const_ref_type = cpp_type
+            ref_type = f'{cpp_type}&'
+            is_fixed = True
+            underlying_type = cpp_types.cpp_type(enums[f["type"]["index"]].underlying_type)
+        elif field_kind == FieldKind.SCALAR:
+            cpp_type = cpp_types.cpp_type(type_)
+            # TODO: support overwritten default values.
+            default = cpp_types.default_value(type_)
+            const_ref_type = cpp_types.const_ref_type(type_)
+            ref_type = cpp_types.ref_type(type_)
+            is_fixed = cpp_types.is_fixed_size(type_)
+            underlying_type = None
+            enum_type = None
+
         fields.append(Field(
             id = f.get("id", 0),
             name=f["name"],
             type=type_,
             field_kind=field_kind,
+            cpp_type=cpp_type,
+            underlying_type=underlying_type,
+            const_ref_type=const_ref_type,
+            ref_type=ref_type,
+            is_fixed_size=is_fixed,
             optional=True,  # All fields are optional
             default=default
         ))

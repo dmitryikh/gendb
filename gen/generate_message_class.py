@@ -40,35 +40,9 @@ def main():
             fixed_fields = []
             for f_name in store.list_fields(msg_name):
                 f = store.get_field(msg_name, f_name)
+                fields.append(f)
 
-                if f.field_kind == FieldKind.ENUM:
-                    cpp_type = naming.to_cpp_namespace(f.type)
-                    const_ref_type = cpp_type
-                    ref_type = f'{cpp_type}&'
-                    default = f.default
-                    is_fixed = True
-                    enum_type = f.type
-                elif f.field_kind == FieldKind.SCALAR:
-                    cpp_type = cpp_types.cpp_type(f.type)
-                    # TODO: support overwritten default values.
-                    default = cpp_types.default_value(f.type)
-                    const_ref_type = cpp_types.const_ref_type(f.type)
-                    ref_type = cpp_types.ref_type(f.type)
-                    is_fixed = cpp_types.is_fixed_size(f.type)
-                    enum_type = None
-
-                fields.append({
-                    "name": f.name,
-                    "cpp_type": cpp_type,
-                    "const_ref_type": const_ref_type,
-                    "ref_type": ref_type,
-                    "default": default,
-                    "is_fixed_size": is_fixed,
-                    "is_enum": bool(enum_type),
-                    "enum_type": enum_type,
-                })
-
-                if is_fixed:
+                if f.is_fixed_size:
                     fixed_indices.append(f.id)
                     fixed_fields.append({"idx": f.id, "name": f.name});
             K = (max(fixed_indices) // 32 + 1) if fixed_indices else 1
@@ -93,7 +67,7 @@ def main():
             }
         # Output file named after .fbs file
         output_file = args.output_dir / f"{fbs_file.name}.h"
-        cpp_code = template.render(tables=tables, enums=enums)
+        cpp_code = template.render(tables=tables, enums=enums, FieldKind=FieldKind)
         output_file.write_text(cpp_code)
         generated_files.append(output_file)
         print(f"Generated {output_file}")
