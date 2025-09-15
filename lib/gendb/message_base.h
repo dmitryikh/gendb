@@ -9,11 +9,9 @@
 #include <vector>
 
 #include "absl/container/inlined_vector.h"
-#include "gendb/message_patch.h"
+#include "gendb/bytes.h"
 
 namespace gendb {
-
-constexpr bool kLittleEndianArch = (std::endian::native == std::endian::little);
 
 enum class FieldType : uint8_t {
   None = 0,
@@ -105,26 +103,6 @@ template <>
 inline constexpr bool IsSupportedScalar<double> = true;
 
 constexpr inline int kMaxMessageSize = std::numeric_limits<uint16_t>::max();
-
-template <typename T>
-T ReadScalarRaw(const void* buffer) {
-  T value;
-  std::memcpy(&value, buffer, sizeof(value));
-  if constexpr (!kLittleEndianArch) {
-    // Convert from little endian to host order
-    value = std::byteswap(value);
-  }
-  return value;
-}
-
-template <typename T>
-void WriteScalarRaw(void* buffer, T value) {
-  if constexpr (!kLittleEndianArch) {
-    // Convert from host order to little endian
-    value = std::byteswap(value);
-  }
-  std::memcpy(buffer, &value, sizeof(value));
-}
 
 inline std::array<uint16_t, 1> kEmptyMessage = {0};
 

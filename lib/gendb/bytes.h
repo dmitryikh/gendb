@@ -1,5 +1,6 @@
 #pragma once
 
+#include <bit>
 #include <cstdint>
 #include <vector>
 
@@ -7,6 +8,8 @@
 #include "absl/types/span.h"
 
 namespace gendb {
+
+constexpr bool kLittleEndianArch = (std::endian::native == std::endian::little);
 
 using Bytes = std::vector<uint8_t>;
 using BytesView = std::span<uint8_t>;
@@ -33,5 +36,25 @@ struct BytesEqual {
     return std::equal(a.begin(), a.end(), b.begin(), b.end());
   }
 };
+
+template <typename T, std::endian Endianness = std::endian::little>
+T ReadScalarRaw(const void* buffer) {
+  T value;
+  std::memcpy(&value, buffer, sizeof(value));
+  if constexpr (Endianness != std::endian::native) {
+    // Convert from Endianness to host order.
+    value = std::byteswap(value);
+  }
+  return value;
+}
+
+template <typename T, std::endian Endianness = std::endian::little>
+void WriteScalarRaw(void* buffer, T value) {
+  if constexpr (Endianness != std::endian::native) {
+    // Convert from host order to Endianness.
+    value = std::byteswap(value);
+  }
+  std::memcpy(buffer, &value, sizeof(value));
+}
 
 }  // namespace gendb

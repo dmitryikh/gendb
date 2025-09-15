@@ -11,8 +11,8 @@
 #include "gendb/bytes.h"
 #include "gendb/index.h"
 #include "gendb/iterator.h"
+#include "gendb/key_codec.h"
 #include "gendb/layered_storage.h"
-#include "gendb/message_base.h"
 #include "gendb/message_patch.h"
 #include "position.fbs.h"
 
@@ -31,19 +31,19 @@ enum CollectionId {
 // Collection keys getters.
 inline std::array<uint8_t, sizeof(uint64_t)> ToAccountKey(uint64_t account_id) {
   std::array<uint8_t, sizeof(uint64_t)> key_raw;
-  WriteScalarRaw(key_raw.data(), account_id);
+  internal::key_codec::EncodeTupleToView<uint64_t>({account_id}, key_raw);
   return key_raw;
 }
-inline BytesConstView ToAccountKey(Account account) {
-  return account.FieldRaw(Account::AccountId);
+inline std::array<uint8_t, sizeof(uint64_t)> ToAccountKey(Account account) {
+  return ToAccountKey(account.account_id());
 }
 inline std::array<uint8_t, sizeof(int32_t)> ToPositionKey(int32_t position_id) {
   std::array<uint8_t, sizeof(int32_t)> key_raw;
-  WriteScalarRaw(key_raw.data(), position_id);
+  internal::key_codec::EncodeTupleToView<int32_t>({position_id}, key_raw);
   return key_raw;
 }
-inline BytesConstView ToPositionKey(Position position) {
-  return position.FieldRaw(Position::PositionId);
+inline std::array<uint8_t, sizeof(int32_t)> ToPositionKey(Position position) {
+  return ToPositionKey(position.position_id());
 }
 inline BytesConstView ToConfigKey(std::string_view config_name) {
   return {reinterpret_cast<const uint8_t*>(config_name.data()), config_name.size()};

@@ -17,8 +17,8 @@
 
 #include "absl/status/status.h"
 #include "gendb/layered_storage.h"
-#include "gendb/message_base.h"
 #include "gendb/message_patch.h"
+#include "gendb/key_codec.h"
 
 {% if namespace %} namespace {{ namespace }} {
 {% endif %}
@@ -39,16 +39,19 @@ enum CollectionId {
 inline BytesConstView To{{ coll.type }}Key(std::string_view {{ coll.pk_name }}) {
     return {reinterpret_cast<const uint8_t*>({{ coll.pk_name }}.data()), {{ coll.pk_name }}.size()};
 }
+inline BytesConstView To{{ coll.type }}Key({{ coll.type }} {{ coll.type_snake_case }}) {
+   return {{ coll.type_snake_case }}.FieldRaw({{ coll.type }}::{{ coll.pk_enum }});
+}
 {% else %}
 inline std::array<uint8_t, sizeof({{ coll.pk_cpp_type }})> To{{ coll.type }}Key({{ coll.pk_const_ref_type }}  {{ coll.pk_name}}) {
   std::array<uint8_t, sizeof({{ coll.pk_cpp_type }})> key_raw;
-  WriteScalarRaw(key_raw.data(), {{ coll.pk_name }});
+  internal::key_codec::EncodeTupleToView<{{ coll.pk_cpp_type }}>({{'{'}}{{ coll.pk_name }}{{'}'}}, key_raw);
   return key_raw;
 }
-{% endif %}
-inline BytesConstView To{{ coll.type }}Key({{ coll.type }} {{ coll.type_snake_case }}) {
-  return {{ coll.type_snake_case }}.FieldRaw({{ coll.type }}::{{ coll.pk_enum }});
+inline std::array<uint8_t, sizeof({{ coll.pk_cpp_type }})> To{{ coll.type }}Key({{ coll.type }} {{ coll.type_snake_case }}) {
+  return To{{coll.type}}Key({{ coll.type_snake_case }}.{{ coll.pk_name }}());
 }
+{% endif %}
 {% endfor %}
 
 {% if indices|length > 0 %}
