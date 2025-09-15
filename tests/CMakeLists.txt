@@ -34,3 +34,12 @@ target_link_libraries(database_test PRIVATE gendb_lib GTest::gtest_main GTest::g
 add_dependencies(database_test codegen db_codegen)
 add_test(NAME database_test COMMAND database_test)
 
+# Python tests (pytest)
+find_program(PYTHON_EXECUTABLE python3)
+if(PYTHON_EXECUTABLE)
+    add_test(
+        NAME python_tests
+        COMMAND ${PYTHON_EXECUTABLE} -m pytest ${CMAKE_SOURCE_DIR}/gen
+    )
+endif()
+

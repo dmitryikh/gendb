@@ -20,4 +20,19 @@ def PascalCase(name):
     return ''.join(word.capitalize() for word in name.split('_'))
 
 def snake_case(s):
-    return '_'.join(word.lower() for word in re.findall(r'[A-Z][a-z]*', s))
+    # If already snake_case, return as is
+    if re.fullmatch(r'[a-z][a-z0-9_]*', s):
+        return s
+    # Handle camelCase, PascalCase, and ALLCAPS
+    if '_' in s:
+        # If already contains underscores, split and process each part
+        parts = s.split('_')
+        words = []
+        for part in parts:
+            if part:
+                words += re.findall(r'[A-Z]+(?=[A-Z][a-z0-9]|[0-9]|$)|[A-Z][a-z0-9]*|[a-z]+|[0-9]+', part)
+        return '_'.join(word.lower() for word in words)
+    else:
+        # Split at transitions from lower to upper or upper to lower/number
+        words = re.findall(r'[A-Z]+(?=[A-Z][a-z0-9]|[0-9]|$)|[A-Z][a-z0-9]*|[a-z]+|[0-9]+', s)
+        return '_'.join(word.lower() for word in words)

@@ -30,33 +30,33 @@ enum class {{ enum_name }} : {{ enum.underlying_type }} {
 {% if table.namespace %}namespace {{ table.namespace }} {
 {% endif %}
 // GeneratedClass
-class {{ table.class_name }} : private gendb::MessageBase {
+class {{ table.name | pascalcase }} : private gendb::MessageBase {
  public:
 
   enum Field : int {
     {% for field in table.fields %}
-    {{ field.enum_name }} = {{ loop.index }},
+    {{ field.name | pascalcase }} = {{ loop.index }},
     {% endfor %}
     MaxFields
   };
 
   static constexpr std::array<uint32_t, {{ table.K }}> kFixedSizeFields = gendb::MakeConstexprFieldBitmask<{{ table.K }}>({
     {% for field in table.fixed_fields %}
-      {{ field.enum_name }},
+      {{ field.name | pascalcase }},
     {% endfor %}
   });
 
-  {{ table.class_name }}() = default;
-  {{ table.class_name }}(std::span<const uint8_t> span) : MessageBase(span) {}
+  {{ table.name | pascalcase }}() = default;
+  {{ table.name | pascalcase }}(std::span<const uint8_t> span) : MessageBase(span) {}
 
   {% for field in table.fields %}
-  bool has_{{ field.name }}() const { return HasField({{ field.enum_name }}); }
+  bool has_{{ field.name | snakecase }}() const { return HasField({{ field.name | pascalcase }}); }
   {% if field.cpp_type == 'std::string' %}
-  std::string_view {{ field.name }}() const { return ReadStringField({{ field.enum_name }}, ""); }
+  std::string_view {{ field.name | snakecase }}() const { return ReadStringField({{ field.name | pascalcase }}, ""); }
   {% elif field.is_enum %}
-  {{ field.full_cpp_type }} {{ field.name }}() const { return static_cast<{{ field.full_cpp_type }}>(ReadScalarField<{{ enums[field.enum_type].underlying_type }}>({{ field.enum_name }}, {{ field.default }})); }
+  {{ field.full_cpp_type }} {{ field.name | snakecase }}() const { return static_cast<{{ field.full_cpp_type }}>(ReadScalarField<{{ enums[field.enum_type].underlying_type }}>({{ field.name | pascalcase }}, {{ field.default }})); }
   {% else %}
-  {{ field.cpp_type }} {{ field.name }}() const { return ReadScalarField<{{ field.cpp_type }}>({{ field.enum_name }}, {{ field.default }}); }
+  {{ field.cpp_type }} {{ field.name | snakecase }}() const { return ReadScalarField<{{ field.cpp_type }}>({{ field.name | pascalcase }}, {{ field.default }}); }
   {% endif %}
   {% endfor %}
 
@@ -69,47 +69,47 @@ class {{ table.class_name }} : private gendb::MessageBase {
     return gendb::MessageBase::FieldRaw(field_id);
   }
 
-  friend class {{ table.class_name }}Builder;
+  friend class {{ table.name | pascalcase }}Builder;
 };
 
-class {{ table.class_name }}Builder : public gendb::MessageBuilder {
+class {{ table.name | pascalcase }}Builder : public gendb::MessageBuilder {
  public:
-  {{ table.class_name }}Builder() : MessageBuilder() {}
-  {{ table.class_name }}Builder({{ table.class_name }}& obj) : MessageBuilder(obj) {}
+  {{ table.name | pascalcase }}Builder() : MessageBuilder() {}
+  {{ table.name | pascalcase }}Builder({{ table.name | pascalcase }}& obj) : MessageBuilder(obj) {}
 
   {% for field in table.fields %}
   {% if field.cpp_type == 'std::string' %}
-  void set_{{ field.name }}(std::string_view value) { AddStringField({{ table.class_name }}::{{ field.enum_name }}, value); }
+  void set_{{ field.name | snakecase }}(std::string_view value) { AddStringField({{ table.name | pascalcase }}::{{ field.name | pascalcase }}, value); }
   {% elif field.is_enum %}
-  void set_{{ field.name }}({{ field.full_cpp_type }} value) { AddField<{{ enums[field.enum_type].underlying_type }}>({{ table.class_name }}::{{ field.enum_name }}, static_cast<{{ enums[field.enum_type].underlying_type }}>(value)); }
+  void set_{{ field.name | snakecase }}({{ field.full_cpp_type }} value) { AddField<{{ enums[field.enum_type].underlying_type }}>({{ table.name | pascalcase }}::{{ field.name | pascalcase }}, static_cast<{{ enums[field.enum_type].underlying_type }}>(value)); }
   {% else %}
-  void set_{{ field.name }}({{ field.const_ref_type }} value) { AddField<{{ field.cpp_type }}>({{ table.class_name }}::{{ field.enum_name }}, value); }
+  void set_{{ field.name | snakecase }}({{ field.const_ref_type }} value) { AddField<{{ field.cpp_type }}>({{ table.name | pascalcase }}::{{ field.name | pascalcase }}, value); }
   {% endif %}
   {% endfor %}
 
   {% for field in table.fields %}
-  void clear_{{ field.name }}() { ClearField({{ table.class_name }}::{{ field.enum_name }}); }
+  void clear_{{ field.name | snakecase }}() { ClearField({{ table.name | pascalcase }}::{{ field.name | pascalcase }}); }
   {% endfor %}
 
   std::vector<uint8_t> Build() { return MessageBuilder::Build(); }
 };
 
-class {{ table.class_name }}PatchBuilder {
+class {{ table.name | pascalcase }}PatchBuilder {
  public:
-  {{ table.class_name }}PatchBuilder() = default;
+  {{ table.name | pascalcase }}PatchBuilder() = default;
   // TODO: Add constructor with primary key fields.
 
   {% for field in table.fields %}
-  {{ table.class_name }}PatchBuilder&& set_{{ field.name }}({{ field.const_ref_type }} value) && {
-    _builder.set_{{ field.name }}(value);
-    SetFieldBit(modified, {{ table.class_name }}::{{ field.enum_name }});
-    UnsetFieldBit(removed, {{ table.class_name }}::{{ field.enum_name }});
+  {{ table.name | pascalcase }}PatchBuilder&& set_{{ field.name | snakecase }}({{ field.const_ref_type }} value) && {
+    _builder.set_{{ field.name | snakecase }}(value);
+    SetFieldBit(modified, {{ table.name | pascalcase }}::{{ field.name | pascalcase }});
+    UnsetFieldBit(removed, {{ table.name | pascalcase }}::{{ field.name | pascalcase }});
     return std::move(*this);
   }
-  {{ table.class_name }}PatchBuilder&& clear_{{ field.name }}() && {
-    SetFieldBit(removed, {{ table.class_name }}::{{ field.enum_name }});
-    UnsetFieldBit(modified, {{ table.class_name }}::{{ field.enum_name }});
-    _builder.clear_{{ field.name }}();
+  {{ table.name | pascalcase }}PatchBuilder&& clear_{{ field.name | snakecase }}() && {
+    SetFieldBit(removed, {{ table.name | pascalcase }}::{{ field.name | pascalcase }});
+    UnsetFieldBit(modified, {{ table.name | pascalcase }}::{{ field.name | pascalcase }});
+    _builder.clear_{{ field.name | snakecase }}();
     return std::move(*this);
   }
   {% endfor %}
@@ -125,7 +125,7 @@ class {{ table.class_name }}PatchBuilder {
  private:
   gendb::Bitmask modified;
   gendb::Bitmask removed;
-  {{ table.class_name }}Builder _builder;
+  {{ table.name | pascalcase }}Builder _builder;
 };
 {% if table.namespace %}
 } // namespace {{ table.namespace }}
