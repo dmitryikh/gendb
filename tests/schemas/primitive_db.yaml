@@ -1,0 +1,14 @@
+types:
+  fbs_files:
+    - tests/schemas/messageA.fbs
+  include_prefix: ""
+
+options:
+  cpp_namespace: "gendb::tests::primitive"
+  generated_source_base_name: "primitive_database"
+
+collections:
+  - name: Table_A
+    type: gendb.tests.primitive.MessageA
+    primary_key:
+      - key

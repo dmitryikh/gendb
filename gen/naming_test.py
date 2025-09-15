@@ -19,10 +19,11 @@ def test_PascalCase_basic():
     assert naming.PascalCase('foo') == 'Foo'
     assert naming.PascalCase('foo_bar_baz') == 'FooBarBaz'
     assert naming.PascalCase('foo1_bar2') == 'Foo1Bar2'
-    assert naming.PascalCase('fooBar') == 'Foobar'  # Not camelCase aware
+    assert naming.PascalCase('fooBar') == 'FooBar'  # Not camelCase aware
     assert naming.PascalCase('FooBar') == 'FooBar'  # Already PascalCase
     assert naming.PascalCase('Foo') == 'Foo'        # Already PascalCase
     assert naming.PascalCase('') == ''
+    assert naming.PascalCase('messageA') == 'MessageA'
 
 
 def test_PascalCase_idempotent():

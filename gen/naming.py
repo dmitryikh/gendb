@@ -17,6 +17,9 @@ def PascalCase(name):
     # If already PascalCase, return as is
     if re.fullmatch(r'[A-Z][a-zA-Z0-9]*', name):
         return name
+    # If single word, just capitalize first letter
+    if '_' not in name and name.isalnum():
+        return name[0].upper() + name[1:]
     return ''.join(word.capitalize() for word in name.split('_'))
 
 def snake_case(s):

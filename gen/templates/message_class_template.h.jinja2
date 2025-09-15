@@ -15,7 +15,7 @@
 {% for enum in enums.values() %}
 {% if enum.namespace %}namespace {{ enum.namespace.replace('.', '::') }} {
 {% endif %}
-enum class {{ enum.name | pascalcase }} : {{ enum.underlying_type }} {
+enum class {{ enum.name }} : {{ enum.underlying_type }} {
   {% for value_name, value in enum.vals %}
   {{ value_name }} = {{ value }},
   {% endfor %}
@@ -30,7 +30,7 @@ enum class {{ enum.name | pascalcase }} : {{ enum.underlying_type }} {
 {% if table.namespace %}namespace {{ table.namespace }} {
 {% endif %}
 // GeneratedClass
-class {{ table.name | pascalcase }} : private gendb::MessageBase {
+class {{ table.name }} : private gendb::MessageBase {
  public:
 
   enum Field : int {
@@ -46,8 +46,8 @@ class {{ table.name | pascalcase }} : private gendb::MessageBase {
     {% endfor %}
   });
 
-  {{ table.name | pascalcase }}() = default;
-  {{ table.name | pascalcase }}(std::span<const uint8_t> span) : MessageBase(span) {}
+  {{ table.name }}() = default;
+  {{ table.name }}(std::span<const uint8_t> span) : MessageBase(span) {}
 
   {% for field in table.fields %}
   bool has_{{ field.name | snakecase }}() const { return HasField({{ field.name | pascalcase }}); }
@@ -75,20 +75,20 @@ class {{ table.name | pascalcase }} : private gendb::MessageBase {
 class {{ table.name | pascalcase }}Builder : public gendb::MessageBuilder {
  public:
   {{ table.name | pascalcase }}Builder() : MessageBuilder() {}
-  {{ table.name | pascalcase }}Builder({{ table.name | pascalcase }}& obj) : MessageBuilder(obj) {}
+  {{ table.name | pascalcase }}Builder({{ table.name }}& obj) : MessageBuilder(obj) {}
 
   {% for field in table.fields %}
   {% if field.cpp_type == 'std::string' %}
-  void set_{{ field.name | snakecase }}(std::string_view value) { AddStringField({{ table.name | pascalcase }}::{{ field.name | pascalcase }}, value); }
+  void set_{{ field.name | snakecase }}(std::string_view value) { AddStringField({{ table.name }}::{{ field.name | pascalcase }}, value); }
   {% elif field.is_enum %}
-  void set_{{ field.name | snakecase }}({{ field.cpp_type }} value) { AddField<{{ enums[field.enum_type].underlying_type }}>({{ table.name | pascalcase }}::{{ field.name | pascalcase }}, static_cast<{{ enums[field.enum_type].underlying_type }}>(value)); }
+  void set_{{ field.name | snakecase }}({{ field.cpp_type }} value) { AddField<{{ enums[field.enum_type].underlying_type }}>({{ table.name }}::{{ field.name | pascalcase }}, static_cast<{{ enums[field.enum_type].underlying_type }}>(value)); }
   {% else %}
-  void set_{{ field.name | snakecase }}({{ field.const_ref_type }} value) { AddField<{{ field.cpp_type }}>({{ table.name | pascalcase }}::{{ field.name | pascalcase }}, value); }
+  void set_{{ field.name | snakecase }}({{ field.const_ref_type }} value) { AddField<{{ field.cpp_type }}>({{ table.name }}::{{ field.name | pascalcase }}, value); }
   {% endif %}
   {% endfor %}
 
   {% for field in table.fields %}
-  void clear_{{ field.name | snakecase }}() { ClearField({{ table.name | pascalcase }}::{{ field.name | pascalcase }}); }
+  void clear_{{ field.name | snakecase }}() { ClearField({{ table.name }}::{{ field.name | pascalcase }}); }
   {% endfor %}
 
   std::vector<uint8_t> Build() { return MessageBuilder::Build(); }
@@ -102,13 +102,13 @@ class {{ table.name | pascalcase }}PatchBuilder {
   {% for field in table.fields %}
   {{ table.name | pascalcase }}PatchBuilder&& set_{{ field.name | snakecase }}({{ field.const_ref_type }} value) && {
     _builder.set_{{ field.name | snakecase }}(value);
-    SetFieldBit(modified, {{ table.name | pascalcase }}::{{ field.name | pascalcase }});
-    UnsetFieldBit(removed, {{ table.name | pascalcase }}::{{ field.name | pascalcase }});
+    SetFieldBit(modified, {{ table.name }}::{{ field.name | pascalcase }});
+    UnsetFieldBit(removed, {{ table.name }}::{{ field.name | pascalcase }});
     return std::move(*this);
   }
   {{ table.name | pascalcase }}PatchBuilder&& clear_{{ field.name | snakecase }}() && {
-    SetFieldBit(removed, {{ table.name | pascalcase }}::{{ field.name | pascalcase }});
-    UnsetFieldBit(modified, {{ table.name | pascalcase }}::{{ field.name | pascalcase }});
+    SetFieldBit(removed, {{ table.name }}::{{ field.name | pascalcase }});
+    UnsetFieldBit(modified, {{ table.name }}::{{ field.name | pascalcase }});
     _builder.clear_{{ field.name | snakecase }}();
     return std::move(*this);
   }

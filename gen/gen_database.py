@@ -1,11 +1,12 @@
 import yaml
 from pathlib import Path
-from fb_types import Message, Field, Collection, Database, Index
+from fb_types import Message, Field, Collection, Database, Index, FieldKind
 from store import Store
 import naming
 from clang_format import clang_format
 import cpp_types
 import flatc_to_store
+import schema_validator
 
 
 def load_yaml_db(yaml_path):
@@ -61,6 +62,13 @@ def main():
         col = store.get_collection(col_name)
         print(f"Collection: {col}")
 
+    errors = schema_validator.validate_names(store)
+    if errors:
+        print("Schema validation errors found:")
+        for error in errors:
+            print(f" - {error}")
+        raise ValueError("Schema validation failed")
+
     # --- Database code generation ---
     from jinja2 import Environment, FileSystemLoader
     template_dir = Path(__file__).parent / "templates"
@@ -73,6 +81,7 @@ def main():
     # Compose context for templates
     # Use namespace from first message, or fallback
     namespace = db_cfg.get("options", {}).get("cpp_namespace", "")
+    generated_source_base_name = db_cfg.get("options", {}).get("generated_source_base_name", "database")
 
     # Collect includes
     includes = []
@@ -84,7 +93,19 @@ def main():
     # Compose collections info
     collections = []
     for col in store.collections.values():
-        pk_type = store.get_field(col.type, col.primary_key[0]).type
+        pk_field = store.get_field(col.type, col.primary_key[0])
+        pk_type = pk_field.type
+        if pk_field.field_kind == FieldKind.ENUM:
+            pk_cpp_type = naming.to_cpp_namespace(pk_field.type)
+            pk_const_ref_type = pk_cpp_type
+            pk_type_is_enum = True
+        elif pk_field.field_kind == FieldKind.SCALAR:
+            pk_cpp_type = cpp_types.cpp_type(pk_type)
+            pk_const_ref_type = cpp_types.const_ref_type(pk_type)
+            pk_type_is_enum = False
+        else:
+            raise ValueError(f"Unsupported primary key field kind: {pk_field.field_kind}")
+
         type = naming.split_namespace_class(col.type)[1]
         collections.append({
             "name": col.name,
@@ -94,8 +115,9 @@ def main():
             "pk_name": col.primary_key[0],
             "pk_enum": naming.PascalCase(col.primary_key[0]),
             "pk_type": pk_type,
-            "pk_cpp_type": cpp_types.cpp_type(pk_type),
-            "pk_const_ref_type": cpp_types.const_ref_type(pk_type),
+            "pk_cpp_type": pk_cpp_type,
+            "pk_const_ref_type": pk_const_ref_type,
+            "pk_type_is_enum": pk_type_is_enum,
         })
 
     # Compose indices info
@@ -125,14 +147,15 @@ def main():
         "namespace": namespace,
         "includes": includes,
         "collections": collections,
-        "indices": indices
+        "indices": indices,
+        "generated_source_base_name": generated_source_base_name
     }
 
     # Output dir
     output_dir = Path(args.output_dir) if args.output_dir else Path("./tests/generated")
     output_dir.mkdir(parents=True, exist_ok=True)
-    header_path = output_dir / "database.h"
-    cpp_path = output_dir / "database.cpp"
+    header_path = output_dir / f"{generated_source_base_name}.h"
+    cpp_path = output_dir / f"{generated_source_base_name}.cpp"
 
     header_code = header_template.render(**template_ctx)
     cpp_code = cpp_template.render(**template_ctx)

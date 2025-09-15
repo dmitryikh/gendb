@@ -40,17 +40,17 @@ absl::Status ScopedWrite::GetAccount(uint64_t account_id, Account& account) cons
 }
 
 absl::Status ScopedWrite::PutAccount(uint64_t account_id, Bytes account) {
-  auto key = ToAccountKey(account_id);
-  MaybeUpdateAccountByAgeIndex(key, account, /*update=*/nullptr);
-  _temp_storage.Put(AccountCollId, key, std::move(account));
+  auto key_ = ToAccountKey(account_id);
+  MaybeUpdateAccountByAgeIndex(key_, account, /*update=*/nullptr);
+  _temp_storage.Put(AccountCollId, key_, std::move(account));
   return absl::OkStatus();
 }
 
 absl::Status ScopedWrite::UpdateAccount(uint64_t account_id, const MessagePatch& update) {
   Bytes* ptr = nullptr;
-  auto key = ToAccountKey(account_id);
-  RETURN_IF_ERROR(_layered_storage.EnsureInTempStorage(AccountCollId, key, &ptr));
-  MaybeUpdateAccountByAgeIndex(key, *ptr, &update);
+  auto key_ = ToAccountKey(account_id);
+  RETURN_IF_ERROR(_layered_storage.EnsureInTempStorage(AccountCollId, key_, &ptr));
+  MaybeUpdateAccountByAgeIndex(key_, *ptr, &update);
   gendb::ApplyPatch<Account>(update, *ptr);
   return absl::OkStatus();
 }
@@ -69,17 +69,17 @@ absl::Status ScopedWrite::GetPosition(int32_t position_id, Position& position) c
 }
 
 absl::Status ScopedWrite::PutPosition(int32_t position_id, Bytes position) {
-  auto key = ToPositionKey(position_id);
-  MaybeUpdatePositionByAccountIdIndex(key, position, /*update=*/nullptr);
-  _temp_storage.Put(PositionCollId, key, std::move(position));
+  auto key_ = ToPositionKey(position_id);
+  MaybeUpdatePositionByAccountIdIndex(key_, position, /*update=*/nullptr);
+  _temp_storage.Put(PositionCollId, key_, std::move(position));
   return absl::OkStatus();
 }
 
 absl::Status ScopedWrite::UpdatePosition(int32_t position_id, const MessagePatch& update) {
   Bytes* ptr = nullptr;
-  auto key = ToPositionKey(position_id);
-  RETURN_IF_ERROR(_layered_storage.EnsureInTempStorage(PositionCollId, key, &ptr));
-  MaybeUpdatePositionByAccountIdIndex(key, *ptr, &update);
+  auto key_ = ToPositionKey(position_id);
+  RETURN_IF_ERROR(_layered_storage.EnsureInTempStorage(PositionCollId, key_, &ptr));
+  MaybeUpdatePositionByAccountIdIndex(key_, *ptr, &update);
   gendb::ApplyPatch<Position>(update, *ptr);
   return absl::OkStatus();
 }
@@ -98,15 +98,15 @@ absl::Status ScopedWrite::GetConfig(std::string_view config_name, Config& config
 }
 
 absl::Status ScopedWrite::PutConfig(std::string_view config_name, Bytes config) {
-  auto key = ToConfigKey(config_name);
-  _temp_storage.Put(ConfigCollId, key, std::move(config));
+  auto key_ = ToConfigKey(config_name);
+  _temp_storage.Put(ConfigCollId, key_, std::move(config));
   return absl::OkStatus();
 }
 
 absl::Status ScopedWrite::UpdateConfig(std::string_view config_name, const MessagePatch& update) {
   Bytes* ptr = nullptr;
-  auto key = ToConfigKey(config_name);
-  RETURN_IF_ERROR(_layered_storage.EnsureInTempStorage(ConfigCollId, key, &ptr));
+  auto key_ = ToConfigKey(config_name);
+  RETURN_IF_ERROR(_layered_storage.EnsureInTempStorage(ConfigCollId, key_, &ptr));
   gendb::ApplyPatch<Config>(update, *ptr);
   return absl::OkStatus();
 }

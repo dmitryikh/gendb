@@ -1,0 +1,9 @@
+namespace gendb.tests.primitive;
+
+
+enum KeyEnum : uint { kUnknown = 0, kFirstValue, kSecondValue }
+
+table MessageA {
+  key: KeyEnum;
+  data: string;
+}

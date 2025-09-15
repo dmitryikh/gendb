@@ -35,7 +35,6 @@ def main():
         enums = {}
         for msg_name in store.list_messages():
             msg = store.get_message(msg_name)
-            # sorted_fields = sorted(table["fields"], key=lambda f: f.get("id", 0))
             fields = []
             fixed_indices = []
             fixed_fields = []

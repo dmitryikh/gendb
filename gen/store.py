@@ -40,6 +40,12 @@ class Store:
         return self.messages.get(full_name)
 
     def get_field(self, message: str, field: str) -> Optional[Field]:
+        ret = self.try_get_field(message, field)
+        if not ret:
+            raise RuntimeError(f"{field} field not found in {message} message")
+        return ret
+
+    def try_get_field(self, message: str, field: str) -> Optional[Field]:
         t = self.get_message(message)
         if not t:
             return None

@@ -1,6 +1,6 @@
 // AUTO GENERATED. DO NOT EDIT.
 //
-#include "database.h"
+#include "{{ generated_source_base_name }}.h"
 
 #include <cstdint>
 {% for include in includes %}
@@ -29,41 +29,41 @@ ScopedWrite Db::CreateWriter() {
 }
 
 {% for coll in collections %}
-absl::Status Guard::Get{{ coll.type }}({{ coll.pk_const_ref_type }} {{ coll.pk_name }}, {{ coll.type }}& {{ coll.type_snake_case }}) const {
+absl::Status Guard::Get{{ coll.type | pascalcase}}({{ coll.pk_const_ref_type }} {{ coll.pk_name }}, {{coll.type}}& {{ coll.type_snake_case }}) const {
   BytesConstView value;
-  RETURN_IF_ERROR(_layered_storage.Get({{ coll.enum_name }}, To{{ coll.type }}Key({{ coll.pk_name }}), value));
-  {{ coll.type_snake_case }} = {{ coll.type }}{value};
+  RETURN_IF_ERROR(_layered_storage.Get({{ coll.enum_name }}, To{{ coll.type | pascalcase}}Key({{ coll.pk_name }}), value));
+  {{ coll.type_snake_case }} = {{coll.type}}{value};
   return absl::OkStatus();
 }
 
-absl::Status ScopedWrite::Get{{ coll.type }}({{ coll.pk_const_ref_type }} {{ coll.pk_name }}, {{ coll.type }}& {{ coll.type_snake_case }}) const {
+absl::Status ScopedWrite::Get{{ coll.type | pascalcase}}({{ coll.pk_const_ref_type }} {{ coll.pk_name }}, {{ coll.type}}& {{ coll.type_snake_case }}) const {
   BytesConstView value;
-  RETURN_IF_ERROR(_layered_storage.Get({{ coll.enum_name }}, To{{ coll.type }}Key({{ coll.pk_name }}), value));
-  {{ coll.type_snake_case }} = {{ coll.type }}{value};
+  RETURN_IF_ERROR(_layered_storage.Get({{ coll.enum_name }}, To{{ coll.type | pascalcase}}Key({{ coll.pk_name }}), value));
+  {{ coll.type_snake_case }} = {{coll.type}}{value};
   return absl::OkStatus();
 }
 
-absl::Status ScopedWrite::Put{{ coll.type }}({{ coll.pk_const_ref_type }} {{ coll.pk_name }}, Bytes {{ coll.type_snake_case }}) {
-  auto key = To{{ coll.type }}Key({{ coll.pk_name }});
+absl::Status ScopedWrite::Put{{ coll.type | pascalcase}}({{ coll.pk_const_ref_type }} {{ coll.pk_name }}, Bytes {{ coll.type_snake_case }}) {
+  auto key_ = To{{ coll.type | pascalcase}}Key({{ coll.pk_name }});
   {% for idx in indices%}
   {% if idx.type == coll.type %}
-  MaybeUpdate{{ idx.name_pascal_case }}Index(key, {{ coll.type_snake_case }}, /*update=*/nullptr);
+  MaybeUpdate{{ idx.name_pascal_case }}Index(key_, {{ coll.type_snake_case }}, /*update=*/nullptr);
   {% endif %}
   {% endfor %}
-  _temp_storage.Put({{ coll.enum_name }}, key, std::move({{ coll.type_snake_case }}));
+  _temp_storage.Put({{ coll.enum_name }}, key_, std::move({{ coll.type_snake_case }}));
   return absl::OkStatus();
 }
 
-absl::Status ScopedWrite::Update{{ coll.type }}({{ coll.pk_const_ref_type }} {{ coll.pk_name }}, const MessagePatch& update) {
+absl::Status ScopedWrite::Update{{ coll.type | pascalcase}}({{ coll.pk_const_ref_type }} {{ coll.pk_name }}, const MessagePatch& update) {
   Bytes* ptr = nullptr;
-  auto key = To{{ coll.type }}Key({{ coll.pk_name }});
-  RETURN_IF_ERROR(_layered_storage.EnsureInTempStorage({{ coll.enum_name }}, key, &ptr));
+  auto key_ = To{{ coll.type | pascalcase}}Key({{ coll.pk_name }});
+  RETURN_IF_ERROR(_layered_storage.EnsureInTempStorage({{ coll.enum_name }}, key_, &ptr));
   {% for idx in indices%}
   {% if idx.type == coll.type %}
-  MaybeUpdate{{ idx.name_pascal_case }}Index(key, *ptr, &update);
+  MaybeUpdate{{ idx.name_pascal_case }}Index(key_, *ptr, &update);
   {% endif %}
   {% endfor %}
-  gendb::ApplyPatch<{{ coll.type }}>(update, *ptr);
+  gendb::ApplyPatch<{{coll.type}}>(update, *ptr);
   return absl::OkStatus();
 }
 {% endfor %}

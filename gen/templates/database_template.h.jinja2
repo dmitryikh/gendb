@@ -36,20 +36,20 @@ enum CollectionId {
 // Collection keys getters.
 {% for coll in collections %}
 {% if coll.pk_type == 'String' %}
-inline BytesConstView To{{ coll.type }}Key(std::string_view {{ coll.pk_name }}) {
+inline BytesConstView To{{ coll.type | pascalcase}}Key(std::string_view {{ coll.pk_name }}) {
     return {reinterpret_cast<const uint8_t*>({{ coll.pk_name }}.data()), {{ coll.pk_name }}.size()};
 }
-inline BytesConstView To{{ coll.type }}Key({{ coll.type }} {{ coll.type_snake_case }}) {
+inline BytesConstView To{{ coll.type | pascalcase}}Key({{ coll.type }} {{ coll.type_snake_case }}) {
    return {{ coll.type_snake_case }}.FieldRaw({{ coll.type }}::{{ coll.pk_enum }});
 }
 {% else %}
-inline std::array<uint8_t, sizeof({{ coll.pk_cpp_type }})> To{{ coll.type }}Key({{ coll.pk_const_ref_type }}  {{ coll.pk_name}}) {
+inline std::array<uint8_t, sizeof({{ coll.pk_cpp_type }})> To{{ coll.type | pascalcase }}Key({{ coll.pk_const_ref_type }}  {{ coll.pk_name}}) {
   std::array<uint8_t, sizeof({{ coll.pk_cpp_type }})> key_raw;
   internal::key_codec::EncodeTupleToView<{{ coll.pk_cpp_type }}>({{'{'}}{{ coll.pk_name }}{{'}'}}, key_raw);
   return key_raw;
 }
-inline std::array<uint8_t, sizeof({{ coll.pk_cpp_type }})> To{{ coll.type }}Key({{ coll.type }} {{ coll.type_snake_case }}) {
-  return To{{coll.type}}Key({{ coll.type_snake_case }}.{{ coll.pk_name }}());
+inline std::array<uint8_t, sizeof({{ coll.pk_cpp_type }})> To{{ coll.type | pascalcase}}Key({{ coll.type }} {{ coll.type_snake_case }}) {
+  return To{{ coll.type | pascalcase }}Key({{ coll.type_snake_case }}.{{ coll.pk_name | snakecase }}());
 }
 {% endif %}
 {% endfor %}
@@ -89,7 +89,7 @@ class Db {
 class Guard {
  public:
 {% for coll in collections %}
-  absl::Status Get{{ coll.type }}({{ coll.pk_const_ref_type }} {{coll.pk_name}}, {{ coll.type }}& {{ coll.type_snake_case }}) const;
+  absl::Status Get{{ coll.type | pascalcase}}({{ coll.pk_const_ref_type }} {{coll.pk_name}}, {{coll.type}}& {{coll.type_snake_case}}) const;
 {% endfor %}
 {% for idx in indices %}
   gendb::Iterator<{{ idx.type }}> Get{{ idx.name_pascal_case }}Range({{ idx.key_cpp_type }} min_{{ idx.field}}, {{ idx.key_cpp_type }} max_{{ idx.field }}) const;
@@ -112,9 +112,9 @@ class Guard {
 class ScopedWrite {
  public:
 {% for coll in collections %}
-  absl::Status Get{{ coll.type }}({{ coll.pk_const_ref_type }} {{coll.pk_name}}, {{ coll.type }}& {{ coll.type_snake_case }}) const;
-  absl::Status Put{{ coll.type }}({{ coll.pk_const_ref_type }} {{coll.pk_name}}, std::vector<uint8_t> {{ coll.type_snake_case }});
-  absl::Status Update{{ coll.type }}({{ coll.pk_const_ref_type }} {{coll.pk_name}}, const MessagePatch& update);
+  absl::Status Get{{ coll.type | pascalcase}}({{ coll.pk_const_ref_type }} {{coll.pk_name}}, {{ coll.type}}& {{ coll.type_snake_case }}) const;
+  absl::Status Put{{ coll.type | pascalcase}}({{ coll.pk_const_ref_type }} {{coll.pk_name}}, std::vector<uint8_t> {{ coll.type_snake_case }});
+  absl::Status Update{{ coll.type | pascalcase}}({{ coll.pk_const_ref_type }} {{coll.pk_name}}, const MessagePatch& update);
 {% endfor %}
 {% for idx in indices %}
   gendb::Iterator<{{ idx.type }}> Get{{ idx.name_pascal_case }}Range({{ idx.key_cpp_type }} min_{{ idx.field}}, {{ idx.key_cpp_type }} max_{{ idx.field }}) const;
