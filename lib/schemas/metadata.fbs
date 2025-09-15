@@ -8,5 +8,5 @@ table MetadataValue {
 
   int_value: int;
   string_value: string;
-  float_value: string;
+  float_value: float;
 }

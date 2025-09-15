@@ -30,6 +30,7 @@ class MetadataValue : private gendb::MessageBase {
       Type,
       Id,
       IntValue,
+      FloatValue,
   });
 
   MetadataValue() = default;
@@ -46,7 +47,7 @@ class MetadataValue : private gendb::MessageBase {
   bool has_string_value() const { return HasField(StringValue); }
   std::string_view string_value() const { return ReadStringField(StringValue, ""); }
   bool has_float_value() const { return HasField(FloatValue); }
-  std::string_view float_value() const { return ReadStringField(FloatValue, ""); }
+  float float_value() const { return ReadScalarField<float>(FloatValue, 0.0f); }
 
   // MessageBase methods.
   using gendb::MessageBase::FieldCount;
@@ -72,7 +73,7 @@ class MetadataValueBuilder : public gendb::MessageBuilder {
   void set_string_value(std::string_view value) {
     AddStringField(MetadataValue::StringValue, value);
   }
-  void set_float_value(std::string_view value) { AddStringField(MetadataValue::FloatValue, value); }
+  void set_float_value(float value) { AddField<float>(MetadataValue::FloatValue, value); }
 
   void clear_type() { ClearField(MetadataValue::Type); }
   void clear_id() { ClearField(MetadataValue::Id); }
@@ -136,7 +137,7 @@ class MetadataValuePatchBuilder {
     _builder.clear_string_value();
     return std::move(*this);
   }
-  MetadataValuePatchBuilder&& set_float_value(std::string_view value) && {
+  MetadataValuePatchBuilder&& set_float_value(float value) && {
     _builder.set_float_value(value);
     SetFieldBit(modified, MetadataValue::FloatValue);
     UnsetFieldBit(removed, MetadataValue::FloatValue);
