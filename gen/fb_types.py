@@ -52,6 +52,7 @@ class Collection:
     name: str                  # e.g., "accounts"
     type: str                  # link to Message.name
     primary_key: List[str]     # link to Message.fields[i].name(s)
+    private: bool = False      # whether write methods should be private
 
 @dataclass
 class Database:

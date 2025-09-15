@@ -146,12 +146,16 @@ class Guard {
 };
 
 class ScopedWrite {
- public:
 {% for coll in collections %}
+  {% if loop.first or coll.private != loop.previtem.private %}
+    {% set visibility = 'private' if coll.private else 'public' %}
+    {{ visibility }}:
+  {% endif %}
   absl::Status Get{{coll.type}}({% if coll.pk_fields | length > 1 %}const {{coll.type}}Key& key{% else %}{{ coll.pk_fields[0].const_ref_type }} {{coll.pk_fields[0].name}}{% endif %}, {{ coll.type}}& {{ coll.type_snake_case }}) const;
   absl::Status Put{{coll.type}}({% if coll.pk_fields | length > 1 %}const {{coll.type}}Key& key{% else %}{{ coll.pk_fields[0].const_ref_type }} {{coll.pk_fields[0].name}}{% endif %}, std::vector<uint8_t> {{ coll.type_snake_case }});
   absl::Status Update{{coll.type}}({% if coll.pk_fields | length > 1 %}const {{coll.type}}Key& key{% else %}{{ coll.pk_fields[0].const_ref_type }} {{coll.pk_fields[0].name}}{% endif %}, const MessagePatch& update);
 {% endfor %}
+public:
 {% for idx in indices %}
   gendb::Iterator<{{ idx.type }}> Get{{ idx.name_pascal_case }}Range({{ idx.key_cpp_type }} min_{{ idx.field}}, {{ idx.key_cpp_type }} max_{{ idx.field }}) const;
   gendb::Iterator<{{ idx.type }}> Get{{ idx.name_pascal_case }}Equal({{ idx.key_cpp_type }} {{ idx.field }}) const;

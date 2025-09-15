@@ -131,10 +131,12 @@ class Guard {
 };
 
 class ScopedWrite {
- public:
+ private:
   absl::Status GetMetadataValue(const MetadataValueKey& key, MetadataValue& metadata_value) const;
   absl::Status PutMetadataValue(const MetadataValueKey& key, std::vector<uint8_t> metadata_value);
   absl::Status UpdateMetadataValue(const MetadataValueKey& key, const MessagePatch& update);
+
+ public:
   absl::Status GetAccount(uint64_t account_id, Account& account) const;
   absl::Status PutAccount(uint64_t account_id, std::vector<uint8_t> account);
   absl::Status UpdateAccount(uint64_t account_id, const MessagePatch& update);
@@ -144,6 +146,8 @@ class ScopedWrite {
   absl::Status GetConfig(std::string_view config_name, Config& config) const;
   absl::Status PutConfig(std::string_view config_name, std::vector<uint8_t> config);
   absl::Status UpdateConfig(std::string_view config_name, const MessagePatch& update);
+
+ public:
   gendb::Iterator<Account> GetAccountByAgeRange(int32_t min_age, int32_t max_age) const;
   gendb::Iterator<Account> GetAccountByAgeEqual(int32_t age) const;
   gendb::Iterator<Position> GetPositionByAccountIdRange(int32_t min_account_id,

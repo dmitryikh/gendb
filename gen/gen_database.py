@@ -28,7 +28,8 @@ def build_store_from_yaml(db_cfg):
         collection = Collection(
             name=col["name"],
             type=col["type"],
-            primary_key=col["primary_key"] if isinstance(col["primary_key"], list) else [col["primary_key"]]
+            primary_key=col["primary_key"] if isinstance(col["primary_key"], list) else [col["primary_key"]],
+            private=col.get("private", False)
         )
         store.add_collection(collection)
     # Load indices
@@ -114,6 +115,7 @@ def main():
             "enum_name": naming.PascalCase(type) + "CollId",
             "pk_fields": pk_fields,
             "pk_fixed_size": pk_fixed_size, # -1 in case the size is not fixed
+            "private": col.private,
         })
 
     # Compose indices info

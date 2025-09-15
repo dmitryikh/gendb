@@ -15,6 +15,7 @@ collections:
     primary_key:
       - type
       - id
+    private: true
 
   - name: accounts
     type: gendb.tests.Account

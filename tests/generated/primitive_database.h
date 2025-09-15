@@ -72,6 +72,7 @@ class ScopedWrite {
   absl::Status PutMessageA(gendb::tests::primitive::KeyEnum key, std::vector<uint8_t> message_a);
   absl::Status UpdateMessageA(gendb::tests::primitive::KeyEnum key, const MessagePatch& update);
 
+ public:
   void Commit();
   ~ScopedWrite() = default;
 
