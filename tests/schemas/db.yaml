@@ -3,19 +3,12 @@ types:
     - tests/schemas/account.fbs
     - tests/schemas/position.fbs
     - tests/schemas/config.fbs
-    - lib/schemas/metadata.fbs
   include_prefix: ""  # Optional prefix path for generated includes
 
 options:
   cpp_namespace: "gendb::tests"
 
 collections:
-  - name: metadata
-    type: gendb.MetadataValue
-    primary_key:
-      - type
-      - id
-    private: true
 
   - name: accounts
     type: gendb.tests.Account

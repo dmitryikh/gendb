@@ -20,10 +20,20 @@ def build_store_from_yaml(db_cfg):
     include_prefix = db_cfg.get("types", {}).get("include_prefix", "")
     # Load all messages from fbs files
     fbs_files = db_cfg.get("types", {}).get("fbs_files", [])
-    for fbs_file in fbs_files:
+    # Add metadata.fbs as the first file
+    all_fbs_files = ["lib/schemas/metadata.fbs"] + [f for f in fbs_files if f != "lib/schemas/metadata.fbs"]
+    for fbs_file in all_fbs_files:
         flatc_to_store.load_fbs_to_store(store, Path(fbs_file))
 
     # Load collections
+    # Add metadata collection as the first collection
+    metadata_collection = Collection(
+        name="metadata",
+        type="gendb.MetadataValue",
+        primary_key=["type", "id"],
+        private=True
+    )
+    store.add_collection(metadata_collection)
     for col in db_cfg.get("collections", []):
         collection = Collection(
             name=col["name"],

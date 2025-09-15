@@ -11,6 +11,7 @@
 #include "gendb/layered_storage.h"
 #include "gendb/message_patch.h"
 #include "messageA.fbs.h"
+#include "metadata.fbs.h"
 
 namespace gendb::tests::primitive {
 
@@ -19,10 +20,29 @@ class Guard;
 class ScopedWrite;
 
 enum CollectionId {
-  MessageACollId = 0,
+  MetadataValueCollId = 0,
+  MessageACollId = 1,
 };
 
 // Collection keys getters.
+struct MetadataValueKey {
+  gendb::MetadataType type;
+  uint32_t id;
+};
+
+inline std::array<uint8_t, 8> ToMetadataValueKey(const MetadataValueKey& key) {
+  std::array<uint8_t, 8> key_raw;
+  internal::key_codec::EncodeTupleToView<std::tuple<gendb::MetadataType, uint32_t>>(
+      {key.type, key.id}, key_raw);
+  return key_raw;
+}
+
+inline std::array<uint8_t, 8> ToMetadataValueKey(MetadataValue metadata_value) {
+  std::array<uint8_t, 8> key_raw;
+  internal::key_codec::EncodeTupleToView<std::tuple<gendb::MetadataType, uint32_t>>(
+      {metadata_value.type(), metadata_value.id()}, key_raw);
+  return key_raw;
+}
 inline std::array<uint8_t, 4> ToMessageAKey(gendb::tests::primitive::KeyEnum key) {
   std::array<uint8_t, 4> key_raw;
   internal::key_codec::EncodeTupleToView<std::tuple<gendb::tests::primitive::KeyEnum>>({key},
@@ -50,6 +70,7 @@ class Db {
 
 class Guard {
  public:
+  absl::Status GetMetadataValue(const MetadataValueKey& key, MetadataValue& metadata_value) const;
   absl::Status GetMessageA(gendb::tests::primitive::KeyEnum key, MessageA& message_a) const;
   ~Guard() = default;
 
@@ -67,6 +88,11 @@ class Guard {
 };
 
 class ScopedWrite {
+ private:
+  absl::Status GetMetadataValue(const MetadataValueKey& key, MetadataValue& metadata_value) const;
+  absl::Status PutMetadataValue(const MetadataValueKey& key, std::vector<uint8_t> metadata_value);
+  absl::Status UpdateMetadataValue(const MetadataValueKey& key, const MessagePatch& update);
+
  public:
   absl::Status GetMessageA(gendb::tests::primitive::KeyEnum key, MessageA& message_a) const;
   absl::Status PutMessageA(gendb::tests::primitive::KeyEnum key, std::vector<uint8_t> message_a);
