@@ -37,7 +37,7 @@ enum CollectionId {
 {% for coll in collections %}
 {% if coll.pk_fields | length > 1 %}
 {# multifield primary key #}
-struct {{ coll.type | pascalcase }}Key {
+struct {{coll.type}}Key {
 {% for pk in coll.pk_fields %}
   {{ pk.const_ref_type }} {{ pk.name }};
 {% endfor %}
@@ -45,44 +45,44 @@ struct {{ coll.type | pascalcase }}Key {
 
 {% if coll.pk_fixed_size > 0 %}
   {% set tuple_type = "std::tuple<" + coll.pk_fields | map(attribute='cpp_type') | join(', ') + ">" %}
-inline std::array<uint8_t, {{coll.pk_fixed_size}}> To{{ coll.type | pascalcase }}Key(const {{ coll.type | pascalcase }}Key& key) {
+inline std::array<uint8_t, {{coll.pk_fixed_size}}> To{{coll.type}}Key(const {{coll.type}}Key& key) {
   std::array<uint8_t, {{ coll.pk_fixed_size }}> key_raw;
   internal::key_codec::EncodeTupleToView<{{ tuple_type }}>({{'{'}}{% for pk in coll.pk_fields %}key.{{ pk.name }}{% if not loop.last %}, {% endif %}{% endfor %}{{'}'}}, key_raw);
   return key_raw;
 }
 
-inline std::array<uint8_t, {{coll.pk_fixed_size}}> To{{ coll.type | pascalcase }}Key({{ coll.type }} {{ coll.type_snake_case }}) {
+inline std::array<uint8_t, {{coll.pk_fixed_size}}> To{{coll.type}}Key({{ coll.type }} {{ coll.type_snake_case }}) {
   std::array<uint8_t, {{ coll.pk_fixed_size }}> key_raw;
   internal::key_codec::EncodeTupleToView<{{ tuple_type }}>({{'{'}}{% for pk in coll.pk_fields %}{{ coll.type_snake_case }}.{{ pk.name }}(){% if not loop.last %}, {% endif %}{% endfor %}{{'}'}}, key_raw);
   return key_raw;
 }
 {% else %}
 {# multifield primary key with runtime length #}
-inline Bytes To{{ coll.type | pascalcase }}Key(const {{ coll.type | pascalcase }}Key& key) {
+inline Bytes To{{coll.type}}Key(const {{coll.type}}Key& key) {
   return internal::key_codec::EncodeTuple<{{ tuple_type }}>({{'{'}}{% for pk in coll.pk_fields %}key.{{ pk.name }}{% if not loop.last %}, {% endif %}{% endfor %}{{'}'}});
 }
 
-inline Bytes To{{ coll.type | pascalcase }}Key({{ coll.type }} {{ coll.type_snake_case }}) {
+inline Bytes To{{coll.type}}Key({{ coll.type }} {{ coll.type_snake_case }}) {
   return internal::key_codec::EncodeTuple<{{ tuple_type }}>({{'{'}}{% for pk in coll.pk_fields %}{{ coll.type_snake_case }}.{{ pk.name }}(){% if not loop.last %}, {% endif %}{% endfor %}{{'}'}});
 }
 {% endif %}  {# if coll.pk_fixed_size > 0 #}
 {% else %}   {# if coll.pk_fields | length > 1 #}
 {% if coll.pk_fixed_size > 0 %}
-inline std::array<uint8_t, {{ coll.pk_fixed_size }}> To{{ coll.type | pascalcase }}Key({{ coll.pk_fields[0].const_ref_type }} {{coll.pk_fields[0].name}}) {
+inline std::array<uint8_t, {{ coll.pk_fixed_size }}> To{{coll.type}}Key({{ coll.pk_fields[0].const_ref_type }} {{coll.pk_fields[0].name}}) {
   std::array<uint8_t, {{ coll.pk_fixed_size }}> key_raw;
   internal::key_codec::EncodeTupleToView<std::tuple<{{ coll.pk_fields[0].cpp_type }}>>({{'{'}}{{ coll.pk_fields[0].name }}{{'}'}}, key_raw);
   return key_raw;
 }
 
-inline std::array<uint8_t, {{ coll.pk_fixed_size }}> To{{coll.type | pascalcase}}Key({{ coll.type }} {{ coll.type_snake_case }}) {
-  return To{{ coll.type | pascalcase }}Key({{ coll.type_snake_case }}.{{coll.pk_fields[0].name}}());
+inline std::array<uint8_t, {{ coll.pk_fixed_size }}> To{{coll.type}}Key({{ coll.type }} {{ coll.type_snake_case }}) {
+  return To{{coll.type}}Key({{ coll.type_snake_case }}.{{coll.pk_fields[0].name}}());
 }
 {% else %} {# if coll.pk_fixed_size > 0 #}
-inline Bytes To{{ coll.type | pascalcase }}Key({{ coll.pk_fields[0].const_ref_type }} {{coll.pk_fields[0].name}}) {
+inline Bytes To{{coll.type}}Key({{ coll.pk_fields[0].const_ref_type }} {{coll.pk_fields[0].name}}) {
   return internal::key_codec::EncodeTuple(std::make_tuple({{ coll.pk_fields[0].name }}));
 }
 
-inline Bytes To{{ coll.type | pascalcase }}Key({{ coll.type }} {{ coll.type_snake_case }}) {
+inline Bytes To{{coll.type}}Key({{ coll.type }} {{ coll.type_snake_case }}) {
   return internal::key_codec::EncodeTuple(std::make_tuple({{ coll.type_snake_case }}.{{ coll.pk_fields[0].name }}()));
 }
 
@@ -125,7 +125,7 @@ class Db {
 class Guard {
  public:
 {% for coll in collections %}
-  absl::Status Get{{ coll.type | pascalcase}}({% if coll.pk_fields | length > 1 %}const {{ coll.type | pascalcase }}Key& key{% else %}{{ coll.pk_fields[0].const_ref_type }} {{coll.pk_fields[0].name}}{% endif %}, {{coll.type}}& {{coll.type_snake_case}}) const;
+  absl::Status Get{{coll.type}}({% if coll.pk_fields | length > 1 %}const {{coll.type}}Key& key{% else %}{{ coll.pk_fields[0].const_ref_type }} {{coll.pk_fields[0].name}}{% endif %}, {{coll.type}}& {{coll.type_snake_case}}) const;
 {% endfor %}
 {% for idx in indices %}
   gendb::Iterator<{{ idx.type }}> Get{{ idx.name_pascal_case }}Range({{ idx.key_cpp_type }} min_{{ idx.field}}, {{ idx.key_cpp_type }} max_{{ idx.field }}) const;
@@ -148,9 +148,9 @@ class Guard {
 class ScopedWrite {
  public:
 {% for coll in collections %}
-  absl::Status Get{{ coll.type | pascalcase}}({% if coll.pk_fields | length > 1 %}const {{ coll.type | pascalcase }}Key& key{% else %}{{ coll.pk_fields[0].const_ref_type }} {{coll.pk_fields[0].name}}{% endif %}, {{ coll.type}}& {{ coll.type_snake_case }}) const;
-  absl::Status Put{{ coll.type | pascalcase}}({% if coll.pk_fields | length > 1 %}const {{ coll.type | pascalcase }}Key& key{% else %}{{ coll.pk_fields[0].const_ref_type }} {{coll.pk_fields[0].name}}{% endif %}, std::vector<uint8_t> {{ coll.type_snake_case }});
-  absl::Status Update{{ coll.type | pascalcase}}({% if coll.pk_fields | length > 1 %}const {{ coll.type | pascalcase }}Key& key{% else %}{{ coll.pk_fields[0].const_ref_type }} {{coll.pk_fields[0].name}}{% endif %}, const MessagePatch& update);
+  absl::Status Get{{coll.type}}({% if coll.pk_fields | length > 1 %}const {{coll.type}}Key& key{% else %}{{ coll.pk_fields[0].const_ref_type }} {{coll.pk_fields[0].name}}{% endif %}, {{ coll.type}}& {{ coll.type_snake_case }}) const;
+  absl::Status Put{{coll.type}}({% if coll.pk_fields | length > 1 %}const {{coll.type}}Key& key{% else %}{{ coll.pk_fields[0].const_ref_type }} {{coll.pk_fields[0].name}}{% endif %}, std::vector<uint8_t> {{ coll.type_snake_case }});
+  absl::Status Update{{coll.type}}({% if coll.pk_fields | length > 1 %}const {{coll.type}}Key& key{% else %}{{ coll.pk_fields[0].const_ref_type }} {{coll.pk_fields[0].name}}{% endif %}, const MessagePatch& update);
 {% endfor %}
 {% for idx in indices %}
   gendb::Iterator<{{ idx.type }}> Get{{ idx.name_pascal_case }}Range({{ idx.key_cpp_type }} min_{{ idx.field}}, {{ idx.key_cpp_type }} max_{{ idx.field }}) const;

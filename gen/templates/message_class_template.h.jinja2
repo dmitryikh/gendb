@@ -69,13 +69,13 @@ class {{ table.name }} : private gendb::MessageBase {
     return gendb::MessageBase::FieldRaw(field_id);
   }
 
-  friend class {{ table.name | pascalcase }}Builder;
+  friend class {{table.name}}Builder;
 };
 
-class {{ table.name | pascalcase }}Builder : public gendb::MessageBuilder {
+class {{table.name}}Builder : public gendb::MessageBuilder {
  public:
-  {{ table.name | pascalcase }}Builder() : MessageBuilder() {}
-  {{ table.name | pascalcase }}Builder({{ table.name }}& obj) : MessageBuilder(obj) {}
+  {{table.name}}Builder() : MessageBuilder() {}
+  {{table.name}}Builder({{table.name}}& obj) : MessageBuilder(obj) {}
 
   {% for field in table.fields %}
   {% if field.cpp_type == 'std::string' %}
@@ -94,19 +94,19 @@ class {{ table.name | pascalcase }}Builder : public gendb::MessageBuilder {
   std::vector<uint8_t> Build() { return MessageBuilder::Build(); }
 };
 
-class {{ table.name | pascalcase }}PatchBuilder {
+class {{table.name}}PatchBuilder {
  public:
-  {{ table.name | pascalcase }}PatchBuilder() = default;
+  {{table.name}}PatchBuilder() = default;
   // TODO: Add constructor with primary key fields.
 
   {% for field in table.fields %}
-  {{ table.name | pascalcase }}PatchBuilder&& set_{{field.name}}({{ field.const_ref_type }} value) && {
+  {{table.name}}PatchBuilder&& set_{{field.name}}({{ field.const_ref_type }} value) && {
     _builder.set_{{field.name}}(value);
     SetFieldBit(modified, {{ table.name }}::{{ field.name | pascalcase }});
     UnsetFieldBit(removed, {{ table.name }}::{{ field.name | pascalcase }});
     return std::move(*this);
   }
-  {{ table.name | pascalcase }}PatchBuilder&& clear_{{field.name}}() && {
+  {{table.name}}PatchBuilder&& clear_{{field.name}}() && {
     SetFieldBit(removed, {{ table.name }}::{{ field.name | pascalcase }});
     UnsetFieldBit(modified, {{ table.name }}::{{ field.name | pascalcase }});
     _builder.clear_{{field.name}}();
@@ -125,7 +125,7 @@ class {{ table.name | pascalcase }}PatchBuilder {
  private:
   gendb::Bitmask modified;
   gendb::Bitmask removed;
-  {{ table.name | pascalcase }}Builder _builder;
+  {{table.name}}Builder _builder;
 };
 {% if table.namespace %}
 } // namespace {{ table.namespace }}
