@@ -10,7 +10,7 @@ def split_namespace_class(full_name):
         class_name = full_name
     return namespace, class_name
 
-def to_cpp_namespace(namespace):
+def to_cpp_namespace(namespace: str):
     return namespace.replace('.', '::')
 
 def PascalCase(name):

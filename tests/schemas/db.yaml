@@ -10,17 +10,17 @@ options:
 
 collections:
   - name: accounts
-    type: Account
+    type: gendb.tests.Account
     primary_key:
       - account_id
 
   - name: positions
-    type: Position
+    type: gendb.tests.Position
     primary_key:
       - position_id
 
   - name: configs
-    type: Config
+    type: gendb.tests.Config
     primary_key:
       - config_name
 

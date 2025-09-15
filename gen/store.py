@@ -1,25 +1,43 @@
 
 from typing import List, Optional, Dict
-from fb_types import Message, Collection, Field, Index
+from fb_types import Message, Collection, Field, Index, Enum
 
 class Store:
     """
     Central storage for the DB schema, types, and query info.
-    Provides helper methods to access Message/Field/Collection data easily.
+    Provides helper methods to access Message/Field/Collection/Enum data easily.
     """
 
     def __init__(self):
         self.messages: Dict[str, Message] = {}
         self.collections: Dict[str, Collection] = {}
         self.indices: Dict[str, Index] = {}
+        self.enums: Dict[str, Enum] = {}
 
     def add_message(self, t: Message):
-        if t.name in self.messages:
-            raise RuntimeError(f'{t.name} message already exists in store')
-        self.messages[t.name] = t
+        if t.full_name in self.messages:
+            raise RuntimeError(f'{t.full_name} message already exists in store')
+        self.messages[t.full_name] = t
 
-    def get_message(self, type_name: str) -> Optional[Message]:
-        return self.messages.get(type_name)
+    # --- Enum helpers ---
+    def add_enum(self, enum: Enum):
+        if enum.full_name in self.enums:
+            raise RuntimeError(f"{enum.full_name} enum already exists in store")
+        self.enums[enum.full_name] = enum
+
+    def get_enum(self, enum_name: str) -> Optional[Enum]:
+        return self.enums.get(enum_name)
+
+    def list_enums(self) -> List[str]:
+        return list(self.enums.keys())
+
+    def get_message(self, full_name: str) -> Optional[Message]:
+        if full_name not in self.messages:
+            raise RuntimeError(f"{full_name} message not found in store")
+        return self.messages.get(full_name)
+
+    def try_get_message(self, full_name: str) -> Optional[Message]:
+        return self.messages.get(full_name)
 
     def get_field(self, message: str, field: str) -> Optional[Field]:
         t = self.get_message(message)
@@ -29,6 +47,12 @@ class Store:
             if f.name == field:
                 return f
         return None
+
+    def list_fields(self, message: str) -> List[str]:
+        t = self.get_message(message)
+        if not t:
+            return []
+        return [f.name for f in t.fields]
 
     # --- Collection helpers ---
     def add_collection(self, collection: Collection):

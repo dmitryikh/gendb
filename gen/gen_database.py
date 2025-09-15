@@ -1,45 +1,16 @@
-import os
 import yaml
 from pathlib import Path
 from fb_types import Message, Field, Collection, Database, Index
 from store import Store
-import flatc
 import naming
 from clang_format import clang_format
 import cpp_types
+import flatc_to_store
 
 
 def load_yaml_db(yaml_path):
     with open(yaml_path, 'r') as f:
         return yaml.safe_load(f)
-
-
-def message_from_flatc_obj(obj, include_prefix=""):
-    # obj: dict from flatc schema
-    fields = []
-    for f in obj["fields"]:
-        base_type = f["type"]["base_type"]
-        # For custom types, use the name
-        is_array = base_type == "Vector"
-        optional = f.get("optional", False)
-        default = f.get("default_integer", None)
-        fields.append(Field(
-            name=f["name"],
-            type=base_type,
-            is_array=is_array,
-            optional=optional,
-            default=default
-        ))
-
-    namespace, name = naming.split_namespace_class(obj['name'])
-    cpp_include = os.path.basename(obj["declaration_file"]) + '.h'
-    # Namespace: try to get from obj, fallback to empty
-    return Message(
-        name=name,
-        namespace=namespace,
-        cpp_include=cpp_include,
-        fields=fields
-    )
 
 
 def build_store_from_yaml(db_cfg):
@@ -49,10 +20,8 @@ def build_store_from_yaml(db_cfg):
     # Load all messages from fbs files
     fbs_files = db_cfg.get("types", {}).get("fbs_files", [])
     for fbs_file in fbs_files:
-        schema = flatc.get_schema(fbs_file)
-        for obj in schema["objects"]:
-            msg = message_from_flatc_obj(obj, include_prefix)
-            store.add_message(msg)
+        flatc_to_store.load_fbs_to_store(store, Path(fbs_file))
+
     # Load collections
     for col in db_cfg.get("collections", []):
         collection = Collection(
@@ -82,6 +51,9 @@ def main():
     store = build_store_from_yaml(db_cfg)
     print(f"Loaded {len(store.messages)} messages and {len(store.collections)} collections.")
     # Optionally, print summary
+    for enum_name in store.list_enums():
+        enum = store.get_enum(enum_name)
+        print(f"Enum: {enum}")
     for msg_name in store.list_messages():
         msg = store.get_message(msg_name)
         print(f"Message: {msg}")
@@ -93,6 +65,8 @@ def main():
     from jinja2 import Environment, FileSystemLoader
     template_dir = Path(__file__).parent / "templates"
     env = Environment(loader=FileSystemLoader(str(template_dir)), trim_blocks=True, lstrip_blocks=True)
+    env.filters['pascalcase'] = naming.PascalCase
+    env.filters['snakecase'] = naming.snake_case
     header_template = env.get_template("database_template.h.jinja2")
     cpp_template = env.get_template("database_template.cpp.jinja2")
 
@@ -111,11 +85,12 @@ def main():
     collections = []
     for col in store.collections.values():
         pk_type = store.get_field(col.type, col.primary_key[0]).type
+        type = naming.split_namespace_class(col.type)[1]
         collections.append({
             "name": col.name,
-            "type": col.type,
-            "type_snake_case": naming.snake_case(col.type),
-            "enum_name": naming.PascalCase(col.type) + "CollId",
+            "type": type,
+            "type_snake_case": naming.snake_case(type),
+            "enum_name": naming.PascalCase(type) + "CollId",
             "pk_name": col.primary_key[0],
             "pk_enum": naming.PascalCase(col.primary_key[0]),
             "pk_type": pk_type,
@@ -130,12 +105,13 @@ def main():
         msg = store.get_message(collection.type)
         key_type = store.get_field(collection.type, idx.field).type
         value_type = store.get_field(collection.type, collection.primary_key[0]).type
+        col_type = naming.split_namespace_class(collection.type)[1]
         indices.append({
             "name": idx.name,
             "name_pascal_case": naming.PascalCase(idx.name),
             "collection": idx.collection,
-            "type": collection.type,
-            "type_snake_case": naming.snake_case(collection.type),
+            "type": col_type,
+            "type_snake_case": naming.snake_case(col_type),
             "field": idx.field,
             "field_enum": naming.PascalCase(idx.field),
             "key_type": key_type,

@@ -306,7 +306,7 @@ class PositionPatchBuilder {
     _builder.clear_open_price();
     return std::move(*this);
   }
-  PositionPatchBuilder&& set_direction(Direction value) && {
+  PositionPatchBuilder&& set_direction(gendb::tests::Direction value) && {
     _builder.set_direction(value);
     SetFieldBit(modified, Position::Direction);
     UnsetFieldBit(removed, Position::Direction);

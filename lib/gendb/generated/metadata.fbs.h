@@ -88,7 +88,7 @@ class MetadataValuePatchBuilder {
   MetadataValuePatchBuilder() = default;
   // TODO: Add constructor with primary key fields.
 
-  MetadataValuePatchBuilder&& set_type(MetadataType value) && {
+  MetadataValuePatchBuilder&& set_type(gendb::MetadataType value) && {
     _builder.set_type(value);
     SetFieldBit(modified, MetadataValue::Type);
     UnsetFieldBit(removed, MetadataValue::Type);

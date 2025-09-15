@@ -12,10 +12,10 @@
 #include "gendb/message_patch.h"
 
 // Enum definitions
-{% for enum_name, enum in enums.items() %}
+{% for enum in enums.values() %}
 {% if enum.namespace %}namespace {{ enum.namespace.replace('.', '::') }} {
 {% endif %}
-enum class {{ enum_name }} : {{ enum.underlying_type }} {
+enum class {{ enum.name | pascalcase }} : {{ enum.underlying_type }} {
   {% for value_name, value in enum.vals %}
   {{ value_name }} = {{ value }},
   {% endfor %}
@@ -54,7 +54,7 @@ class {{ table.name | pascalcase }} : private gendb::MessageBase {
   {% if field.cpp_type == 'std::string' %}
   std::string_view {{ field.name | snakecase }}() const { return ReadStringField({{ field.name | pascalcase }}, ""); }
   {% elif field.is_enum %}
-  {{ field.full_cpp_type }} {{ field.name | snakecase }}() const { return static_cast<{{ field.full_cpp_type }}>(ReadScalarField<{{ enums[field.enum_type].underlying_type }}>({{ field.name | pascalcase }}, {{ field.default }})); }
+  {{ field.cpp_type }} {{ field.name | snakecase }}() const { return static_cast<{{ field.cpp_type }}>(ReadScalarField<{{ enums[field.enum_type].underlying_type }}>({{ field.name | pascalcase }}, {{ field.default }})); }
   {% else %}
   {{ field.cpp_type }} {{ field.name | snakecase }}() const { return ReadScalarField<{{ field.cpp_type }}>({{ field.name | pascalcase }}, {{ field.default }}); }
   {% endif %}
@@ -81,7 +81,7 @@ class {{ table.name | pascalcase }}Builder : public gendb::MessageBuilder {
   {% if field.cpp_type == 'std::string' %}
   void set_{{ field.name | snakecase }}(std::string_view value) { AddStringField({{ table.name | pascalcase }}::{{ field.name | pascalcase }}, value); }
   {% elif field.is_enum %}
-  void set_{{ field.name | snakecase }}({{ field.full_cpp_type }} value) { AddField<{{ enums[field.enum_type].underlying_type }}>({{ table.name | pascalcase }}::{{ field.name | pascalcase }}, static_cast<{{ enums[field.enum_type].underlying_type }}>(value)); }
+  void set_{{ field.name | snakecase }}({{ field.cpp_type }} value) { AddField<{{ enums[field.enum_type].underlying_type }}>({{ table.name | pascalcase }}::{{ field.name | pascalcase }}, static_cast<{{ enums[field.enum_type].underlying_type }}>(value)); }
   {% else %}
   void set_{{ field.name | snakecase }}({{ field.const_ref_type }} value) { AddField<{{ field.cpp_type }}>({{ table.name | pascalcase }}::{{ field.name | pascalcase }}, value); }
   {% endif %}

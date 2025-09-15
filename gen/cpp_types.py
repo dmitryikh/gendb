@@ -130,3 +130,8 @@ def is_fixed_size(flat_type: str) -> bool:
 
 def is_integral_type(flat_type: str) -> bool:
     return flat_type in {"Bool", "Byte", "UByte", "Short", "UShort", "Int", "UInt", "Long", "ULong"}
+
+def is_scalar_type(flat_type: str) -> bool:
+    if is_integral_type(flat_type):
+        return True
+    return flat_type in {"Float", "Double", "String"}
