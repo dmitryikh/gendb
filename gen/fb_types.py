@@ -41,6 +41,9 @@ class Index:
 @dataclass
 class Sequence:
     name: str
+    type: str
+    cpp_type: str
+    ref_type: str
     metadata_id: int
 
 @dataclass

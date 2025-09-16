@@ -52,10 +52,13 @@ def build_store_from_yaml(db_cfg):
         store.add_index(index)
 
     # Load sequences
-    for seq in db_cfg.get("sequences", []):
+    for idx, seq in enumerate(db_cfg.get("sequences", [])):
         sequence = Sequence(
             name=seq["name"],
-            metadata_id=seq["metadata_id"]
+            metadata_id=idx,
+            type=seq["type"],
+            cpp_type=cpp_types.cpp_type(seq["type"]),
+            ref_type=cpp_types.ref_type(seq["type"]),
         )
         store.add_sequence(sequence)
     return store
@@ -80,6 +83,9 @@ def main():
     for col_name in store.list_collections():
         col = store.get_collection(col_name)
         print(f"Collection: {col}")
+    for seq_name in store.list_sequences():
+        seq = store.get_sequence(seq_name)
+        print(f"Sequence: {seq}")
 
     errors = schema_validator.validate_names(store)
     if errors:
@@ -163,10 +169,7 @@ def main():
     sequences = []
     for seq_name in store.list_sequences():
         seq = store.get_sequence(seq_name)
-        sequences.append({
-            "name": seq.name,
-            "metadata_id": seq.metadata_id,
-        })
+        sequences.append(seq)
 
     template_ctx = {
         "namespace": namespace,

@@ -27,9 +27,9 @@ collections:
 
 sequences:
   - name: account_id_sequence
-    metadata_id: 1
+    type: ULong
   - name: position_id_sequence
-    metadata_id: 2
+    type: Int
 
 indices:
   - name: account_by_age

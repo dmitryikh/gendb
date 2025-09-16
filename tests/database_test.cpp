@@ -3,7 +3,9 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include "account.fbs.h"
 #include "metadata.fbs.h"
+#include "position.fbs.h"
 
 using namespace gendb::tests;
 
@@ -373,4 +375,106 @@ TEST(DbTest, PositionByAccountIdIndex_UncommittedVisibleToWriter) {
     EXPECT_EQ(position.account_id(), 51);
     EXPECT_EQ(position.instrument(), "GOOG");
   }
+}
+
+TEST(DbTest, NextAccountIdSequence) {
+  Db db;
+  {
+    auto writer = db.CreateWriter();
+    uint64_t next_id = 0;
+    // Should start from 1
+    EXPECT_TRUE(writer.NextAccountIdSequence(next_id).ok());
+    EXPECT_EQ(next_id, 1);
+    // Add an account
+    EXPECT_TRUE(
+        writer
+            .PutAccount(next_id, AccountBuilder().set_account_id(next_id).set_name("First").Build())
+            .ok());
+    writer.Commit();
+  }
+
+  // Next should be incremented
+  {
+    auto writer2 = db.CreateWriter();
+    uint64_t next_id2 = 0;
+    EXPECT_TRUE(writer2.NextAccountIdSequence(next_id2).ok());
+    EXPECT_EQ(next_id2, 2);
+    // Add another account
+    EXPECT_TRUE(
+        writer2
+            .PutAccount(next_id2,
+                        AccountBuilder().set_account_id(next_id2).set_name("Second").Build())
+            .ok());
+    writer2.Commit();
+  }
+
+  {
+    // Next should be incremented again
+    auto writer3 = db.CreateWriter();
+    uint64_t next_id3 = 0;
+    EXPECT_TRUE(writer3.NextAccountIdSequence(next_id3).ok());
+    EXPECT_EQ(next_id3, 3);
+  }
+}
+
+TEST(DbTest, NextPositionIdSequence) {
+  Db db;
+  {
+    auto writer = db.CreateWriter();
+    int32_t next_id = 0;
+    // Should start from 1
+    EXPECT_TRUE(writer.NextPositionIdSequence(next_id).ok());
+    EXPECT_EQ(next_id, 1);
+    // Add a position
+    EXPECT_TRUE(
+        writer
+            .PutPosition(next_id,
+                         PositionBuilder().set_position_id(next_id).set_account_id(1).Build())
+            .ok());
+    writer.Commit();
+  }
+
+  // Next should be incremented
+  {
+    auto writer2 = db.CreateWriter();
+    int32_t next_id2 = 0;
+    EXPECT_TRUE(writer2.NextPositionIdSequence(next_id2).ok());
+    EXPECT_EQ(next_id2, 2);
+    // Add another position
+    EXPECT_TRUE(
+        writer2
+            .PutPosition(next_id2,
+                         PositionBuilder().set_position_id(next_id2).set_account_id(2).Build())
+            .ok());
+    writer2.Commit();
+  }
+
+  // Next should be incremented again
+  {
+    auto writer3 = db.CreateWriter();
+    int32_t next_id3 = 0;
+    EXPECT_TRUE(writer3.NextPositionIdSequence(next_id3).ok());
+    EXPECT_EQ(next_id3, 3);
+  }
+}
+
+TEST(DbTest, NextAccountIdSequence_NotCommitted) {
+  Db db;
+  {
+    auto writer = db.CreateWriter();
+    uint64_t next_id = 0;
+    EXPECT_TRUE(writer.NextAccountIdSequence(next_id).ok());
+    EXPECT_EQ(next_id, 1);
+    EXPECT_TRUE(
+        writer
+            .PutAccount(next_id,
+                        AccountBuilder().set_account_id(next_id).set_name("Uncommitted").Build())
+            .ok());
+    // Do not commit
+  }
+  // Sequence should not be incremented
+  auto writer2 = db.CreateWriter();
+  uint64_t next_id2 = 0;
+  EXPECT_TRUE(writer2.NextAccountIdSequence(next_id2).ok());
+  EXPECT_EQ(next_id2, 1);
 }

@@ -258,7 +258,8 @@ void ScopedWrite::MaybeUpdatePositionByAccountIdIndex(std::array<uint8_t, sizeof
 
 absl::Status ScopedWrite::NextAccountIdSequence(uint64_t& next_id) {
   MetadataValue value;
-  MetadataValueKey key{.type = MetadataType::kSequence, .id = 1};
+  MetadataValueKey key{.type = MetadataType::kSequence,
+                       .id = static_cast<uint32_t>(SequenceMetadataId::AccountIdSequence)};
   auto status = GetMetadataValue(key, value);
   if (status.code() == absl::StatusCode::kNotFound) {
     RETURN_IF_ERROR(PutMetadataValue(key, MetadataValueBuilder().set_int_value(1).Build()));
@@ -273,9 +274,10 @@ absl::Status ScopedWrite::NextAccountIdSequence(uint64_t& next_id) {
   }
   return absl::OkStatus();
 }
-absl::Status ScopedWrite::NextPositionIdSequence(uint64_t& next_id) {
+absl::Status ScopedWrite::NextPositionIdSequence(int32_t& next_id) {
   MetadataValue value;
-  MetadataValueKey key{.type = MetadataType::kSequence, .id = 2};
+  MetadataValueKey key{.type = MetadataType::kSequence,
+                       .id = static_cast<uint32_t>(SequenceMetadataId::PositionIdSequence)};
   auto status = GetMetadataValue(key, value);
   if (status.code() == absl::StatusCode::kNotFound) {
     RETURN_IF_ERROR(PutMetadataValue(key, MetadataValueBuilder().set_int_value(1).Build()));

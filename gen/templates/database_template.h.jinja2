@@ -27,6 +27,14 @@
 class Guard;
 class ScopedWrite;
 
+{% if sequences | length > 0 %}
+enum class SequenceMetadataId : uint32_t {
+{% for seq in sequences %}
+  {{ seq.name | pascalcase }} = {{ seq.metadata_id }},
+{% endfor %}
+};
+{% endif %}
+
 enum CollectionId {
 {% for coll in collections %}
   {{ coll.enum_name }} = {{ loop.index0 }},
@@ -162,7 +170,7 @@ public:
 {% endfor %}
 
 {% for seq in sequences %}
-  absl::Status Next{{ seq.name|replace('_', ' ')|title|replace(' ', '') }}(uint64_t& next_id);
+  absl::Status Next{{ seq.name | pascalcase }}({{seq.ref_type}} next_id);
 {% endfor %}
   void Commit();
   ~ScopedWrite() = default;

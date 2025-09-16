@@ -145,9 +145,9 @@ void ScopedWrite::MaybeUpdate{{ idx.name_pascal_case }}Index(std::array<uint8_t,
 {% endfor %}
 
 {% for seq in sequences %}
-absl::Status ScopedWrite::Next{{ seq.name|replace('_', ' ')|title|replace(' ', '') }}(uint64_t& next_id) {
+absl::Status ScopedWrite::Next{{ seq.name | pascalcase }}({{seq.ref_type}} next_id) {
   MetadataValue value;
-  MetadataValueKey key{.type = MetadataType::kSequence, .id = {{ seq.metadata_id }}};
+  MetadataValueKey key{.type = MetadataType::kSequence, .id = static_cast<uint32_t>(SequenceMetadataId::{{ seq.name | pascalcase }})};
   auto status = GetMetadataValue(key, value);
   if (status.code() == absl::StatusCode::kNotFound) {
     RETURN_IF_ERROR(PutMetadataValue(key, MetadataValueBuilder().set_int_value(1).Build()));

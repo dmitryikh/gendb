@@ -23,6 +23,11 @@ namespace gendb::tests {
 class Guard;
 class ScopedWrite;
 
+enum class SequenceMetadataId : uint32_t {
+  AccountIdSequence = 0,
+  PositionIdSequence = 1,
+};
+
 enum CollectionId {
   MetadataValueCollId = 0,
   AccountCollId = 1,
@@ -155,7 +160,7 @@ class ScopedWrite {
   gendb::Iterator<Position> GetPositionByAccountIdEqual(int32_t account_id) const;
 
   absl::Status NextAccountIdSequence(uint64_t& next_id);
-  absl::Status NextPositionIdSequence(uint64_t& next_id);
+  absl::Status NextPositionIdSequence(int32_t& next_id);
   void Commit();
   ~ScopedWrite() = default;
 

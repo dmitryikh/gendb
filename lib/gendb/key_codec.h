@@ -95,14 +95,14 @@ inline size_t FieldSize(std::string_view s) {
 
 // Encode fields (no extra allocations, BytesView version)
 template <typename T>
-inline bool EncodeField(const T& v, BytesView out)
+inline bool EncodeField(const T& v, BytesView& out)
   requires std::is_integral_v<T>
 {
   return WriteInteger(v, out);
 }
 
 template <typename T>
-inline bool EncodeField(const T& v, BytesView out)
+inline bool EncodeField(const T& v, BytesView& out)
   requires std::is_enum_v<T>
 {
   using U = std::underlying_type_t<T>;
