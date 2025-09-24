@@ -2,6 +2,7 @@
 
 #include "account.fbs.h"
 #include "gendb/message_patch.h"
+#include "lib/message_matchers.h"
 #include "lib/parse_text.h"
 #include "position.fbs.h"
 
@@ -304,37 +305,41 @@ TEST(AccountTest, ApplyPatch_RemoveFixedField) {
 }
 
 TEST(AccountTest, ApplyPatch_RemoveNonFixedField) {
-  AccountBuilder builder;
-  builder.set_account_id(42);
-  builder.set_name("OldName");
-  std::vector<uint8_t> buffer = builder.Build();
+  std::vector<uint8_t> buffer = ParseText<Account>(R"m(
+    account_id: 42
+    name: "OldName"
+  )m");
   Account account(buffer);
 
   auto patch = AccountPatchBuilder().clear_name().Build();
   std::vector<uint8_t> patched_buffer;
   ApplyPatch(patch, buffer, patched_buffer);
   Account patched(patched_buffer);
-  EXPECT_TRUE(patched.name().empty());
-  EXPECT_EQ(patched.account_id(), 42);
+  EXPECT_THAT(patched, MessageEqual<Account>(R"m(
+    account_id: 42
+    name: ""
+  )m"));
 }
 
 TEST(AccountTest, ApplyPatch_ModifyAndRemoveFields) {
-  AccountBuilder builder;
-  builder.set_account_id(42);
-  builder.set_age(30);
-  builder.set_balance(100.0f);
-  builder.set_name("OldName");
-  std::vector<uint8_t> buffer = builder.Build();
+  std::vector<uint8_t> buffer = ParseText<Account>(R"m(
+    account_id: 42
+    age: 30
+    balance: 100.0
+    name: "OldName"
+  )m");
   Account account(buffer);
 
   auto patch = AccountPatchBuilder().set_balance(200.0f).clear_name().Build();
   std::vector<uint8_t> patched_buffer;
   ApplyPatch(patch, buffer, patched_buffer);
   Account patched(patched_buffer);
-  EXPECT_EQ(patched.balance(), 200.0f);
-  EXPECT_TRUE(patched.name().empty());
-  EXPECT_EQ(patched.account_id(), 42);
-  EXPECT_EQ(patched.age(), 30);
+
+  EXPECT_THAT(patched, MessageEqual<Account>(R"m(
+    account_id: 42
+    age: 30
+    balance: 200.0
+  )m"));
 }
 
 TEST(ClosedPositionTest, SetGetFields) {
@@ -472,6 +477,77 @@ TEST(ClosedPositionTest, ParseTextGeneric) {
   EXPECT_EQ(position.volume(), 1000);
   EXPECT_EQ(position.instrument(), "EURUSD");
   EXPECT_EQ(position.profit(), 150.75f);
+}
+
+// Demonstration tests for the new message matchers
+TEST(MessageMatcherTest, MessageEqual_ExactMatch) {
+  auto buffer = ParseText<Account>(R"m(
+    account_id: 123
+    name: "John Doe"
+    age: 25
+    balance: 500.0
+    is_active: true
+  )m");
+  Account account(buffer);
+
+  // This should pass - exact match
+  EXPECT_THAT(account, MessageEqual<Account>(R"m(
+    account_id: 123
+    name: "John Doe"
+    age: 25
+    balance: 500.0
+    is_active: true
+  )m"));
+}
+
+TEST(MessageMatcherTest, MessageEqual_MissingFieldFails) {
+  auto buffer = ParseText<Account>(R"m(
+    account_id: 123
+    name: "John Doe"
+    age: 25
+    balance: 500.0
+    is_active: true
+  )m");
+  Account account(buffer);
+
+  // This should fail because MessageEqual expects exact match,
+  // but the account has more fields than specified in the matcher
+  EXPECT_THAT(account, ::testing::Not(MessageEqual<Account>(R"m(
+    account_id: 123
+    name: "John Doe"
+  )m")));
+}
+
+TEST(MessageMatcherTest, MessageEqualPartially_ExtraFieldsAllowed) {
+  auto buffer = ParseText<Account>(R"m(
+    account_id: 123
+    name: "John Doe"
+    age: 25
+    balance: 500.0
+    is_active: true
+  )m");
+  Account account(buffer);
+
+  // This should pass because MessageEqualPartially allows extra fields
+  EXPECT_THAT(account, MessageEqualPartially<Account>(R"m(
+    account_id: 123
+    name: "John Doe"
+  )m"));
+}
+
+TEST(MessageMatcherTest, MessageEqualPartially_WrongValueFails) {
+  auto buffer = ParseText<Account>(R"m(
+    account_id: 123
+    name: "John Doe"
+    age: 25
+  )m");
+  Account account(buffer);
+
+  // This should fail because the name doesn't match
+  EXPECT_THAT(account, ::testing::Not(MessageEqualPartially<Account>(R"m(
+    account_id: 123
+    name: "Jane Doe"
+  )m")));
 }
 
 int main(int argc, char **argv) {
