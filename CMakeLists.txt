@@ -43,6 +43,7 @@ add_dependencies(gendb_lib gendb_lib_codegen)
 add_executable(gendb_tests
     lib/gendb/message_format_test.cpp
     lib/gendb/bits_test.cpp
+    lib/gendb/storage_test.cpp
 )
 target_link_libraries(gendb_tests PRIVATE gendb_lib GTest::gtest_main)
 add_test(NAME gendb_tests COMMAND gendb_tests)
