@@ -1,6 +1,7 @@
 [requires]
 gtest/1.14.0
 abseil/20250512.1
+rocksdb/9.7.4
 
 [generators]
 CMakeDeps

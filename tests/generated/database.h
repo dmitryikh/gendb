@@ -105,7 +105,7 @@ class Db {
 
   std::mutex _writer_mutex;
   mutable std::shared_mutex _reader_mutex;
-  Storage _storage;
+  MemoryStorage _storage;
   Indices _indices;
 };
 
@@ -127,7 +127,7 @@ class Guard {
   Guard(const Db& db, std::shared_lock<std::shared_mutex> lock)
       : _db(db),
         _lock(std::move(lock)),
-        _layered_storage(const_cast<Storage&>(_db._storage), /*temp_storage_ptr=*/nullptr) {}
+        _layered_storage(const_cast<MemoryStorage&>(_db._storage), /*temp_storage_ptr=*/nullptr) {}
 
  private:
   const Db& _db;
@@ -182,7 +182,7 @@ class ScopedWrite {
  private:
   Db& _db;
   std::unique_lock<std::mutex> _lock;
-  gendb::Storage _temp_storage;
+  gendb::MemoryStorage _temp_storage;
   Indices _temp_indices;
   gendb::LayeredStorage _layered_storage;
 };

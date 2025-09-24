@@ -21,6 +21,8 @@ gen_db_messages(
 )
 
 find_package(absl REQUIRED)
+find_package(RocksDB REQUIRED)
+
 # Main library
 add_library(gendb_lib
     lib/gendb/message_base.h
@@ -32,11 +34,12 @@ add_library(gendb_lib
     lib/gendb/message_patch.h
     lib/gendb/message_patch.cpp
     lib/gendb/storage.h
+    lib/gendb/storage.cpp
     lib/gendb/layered_storage.h
     lib/gendb/layered_storage.cpp
 )
 target_include_directories(gendb_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/lib)
-target_link_libraries(gendb_lib PUBLIC absl::inlined_vector absl::hash absl::span absl::status)
+target_link_libraries(gendb_lib PUBLIC absl::inlined_vector absl::hash absl::span absl::status absl::strings RocksDB::rocksdb)
 add_dependencies(gendb_lib gendb_lib_codegen)
 
 # Add your test sources here
@@ -44,16 +47,12 @@ add_executable(gendb_tests
     lib/gendb/message_format_test.cpp
     lib/gendb/bits_test.cpp
     lib/gendb/storage_test.cpp
+    lib/gendb/rocksdb_storage_test.cpp
 )
 target_link_libraries(gendb_tests PRIVATE gendb_lib GTest::gtest_main)
 add_test(NAME gendb_tests COMMAND gendb_tests)
 
 add_subdirectory(tests)
-
-
-# Example executable (add your .cpp files here)
-# add_executable(gendb_example src/main.cpp)
-# target_link_libraries(gendb_example PRIVATE gendb_lib)
 
 # GoogleTest setup for unit tests
 enable_testing()

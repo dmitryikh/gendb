@@ -14,6 +14,10 @@ class LayeredStorage {
   // The key is looked up in both the temporary and main storage.
   absl::Status Get(size_t collection_id, BytesConstView key, BytesConstView& value) const;
 
+  // Delete a key from the specified collection
+  // The deletion is marked in temporary storage if available, otherwise deleted from main storage
+  absl::Status Delete(size_t collection_id, BytesConstView key);
+
   // Merge the temporary storage into the main storage.
   // The temporary storage is cleared after the merge.
   void MergeTempStorage();
