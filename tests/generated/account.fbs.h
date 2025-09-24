@@ -4,6 +4,7 @@
 #pragma once
 #include <array>
 #include <cstdint>
+#include <span>
 #include <string_view>
 
 #include "gendb/bits.h"
@@ -38,29 +39,27 @@ class Account : private gendb::MessageBase {
       Balance,
   });
 
-  // Reflection metadata for ParseText
-  struct FieldInfo {
-    const char* name;
-    int field_id;
-    enum Type { SCALAR, STRING, ENUM } type;
-    enum ScalarType { UINT64, INT32, BOOL, FLOAT, UNKNOWN_SCALAR } scalar_type;
-    const char* enum_name;
-    const gendb::EnumValueInfo* enum_values;
-    size_t enum_values_count;
-  };
-
-  static constexpr std::array<FieldInfo, 8> kFieldsInfo = {
-      FieldInfo{"account_id", AccountId, FieldInfo::SCALAR, FieldInfo::UINT64, nullptr, nullptr, 0},
-      FieldInfo{"trader_id", TraderId, FieldInfo::STRING, FieldInfo::UNKNOWN_SCALAR, nullptr,
-                nullptr, 0},
-      FieldInfo{"name", Name, FieldInfo::STRING, FieldInfo::UNKNOWN_SCALAR, nullptr, nullptr, 0},
-      FieldInfo{"address", Address, FieldInfo::STRING, FieldInfo::UNKNOWN_SCALAR, nullptr, nullptr,
-                0},
-      FieldInfo{"age", Age, FieldInfo::SCALAR, FieldInfo::INT32, nullptr, nullptr, 0},
-      FieldInfo{"is_active", IsActive, FieldInfo::SCALAR, FieldInfo::BOOL, nullptr, nullptr, 0},
-      FieldInfo{"balance", Balance, FieldInfo::SCALAR, FieldInfo::FLOAT, nullptr, nullptr, 0},
-      FieldInfo{"config_name", ConfigName, FieldInfo::STRING, FieldInfo::UNKNOWN_SCALAR, nullptr,
-                nullptr, 0},
+  // Field reflection metadata using common FieldInfo struct
+  static constexpr std::array<gendb::FieldInfo, 8> kFieldsInfo = {
+      gendb::FieldInfo{"account_id", AccountId, gendb::FieldInfo::SCALAR, gendb::FieldInfo::UINT64,
+                       "", std::span<const gendb::EnumValueInfo>()},
+      gendb::FieldInfo{"trader_id", TraderId, gendb::FieldInfo::STRING,
+                       gendb::FieldInfo::UNKNOWN_SCALAR, "",
+                       std::span<const gendb::EnumValueInfo>()},
+      gendb::FieldInfo{"name", Name, gendb::FieldInfo::STRING, gendb::FieldInfo::UNKNOWN_SCALAR, "",
+                       std::span<const gendb::EnumValueInfo>()},
+      gendb::FieldInfo{"address", Address, gendb::FieldInfo::STRING,
+                       gendb::FieldInfo::UNKNOWN_SCALAR, "",
+                       std::span<const gendb::EnumValueInfo>()},
+      gendb::FieldInfo{"age", Age, gendb::FieldInfo::SCALAR, gendb::FieldInfo::INT32, "",
+                       std::span<const gendb::EnumValueInfo>()},
+      gendb::FieldInfo{"is_active", IsActive, gendb::FieldInfo::SCALAR, gendb::FieldInfo::BOOL, "",
+                       std::span<const gendb::EnumValueInfo>()},
+      gendb::FieldInfo{"balance", Balance, gendb::FieldInfo::SCALAR, gendb::FieldInfo::FLOAT, "",
+                       std::span<const gendb::EnumValueInfo>()},
+      gendb::FieldInfo{"config_name", ConfigName, gendb::FieldInfo::STRING,
+                       gendb::FieldInfo::UNKNOWN_SCALAR, "",
+                       std::span<const gendb::EnumValueInfo>()},
   };
 
   Account() = default;

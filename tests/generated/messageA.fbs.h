@@ -4,6 +4,7 @@
 #pragma once
 #include <array>
 #include <cstdint>
+#include <span>
 #include <string_view>
 
 #include "gendb/bits.h"
@@ -22,10 +23,10 @@ enum class KeyEnum : uint32_t {
 }  // namespace gendb::tests::primitive
 
 // Enum value arrays for reflection
-static constexpr gendb::EnumValueInfo kKeyEnumValues[] = {
-    {"kUnknown", 0},
-    {"kFirstValue", 1},
-    {"kSecondValue", 2},
+static constexpr std::array<gendb::EnumValueInfo, 3> kKeyEnumValues = {
+    gendb::EnumValueInfo{"kUnknown", 0},
+    gendb::EnumValueInfo{"kFirstValue", 1},
+    gendb::EnumValueInfo{"kSecondValue", 2},
 };
 
 // Message classes
@@ -39,22 +40,13 @@ class MessageA : private gendb::MessageBase {
       Key,
   });
 
-  // Reflection metadata for ParseText
-  struct FieldInfo {
-    const char* name;
-    int field_id;
-    enum Type { SCALAR, STRING, ENUM } type;
-    enum ScalarType { UINT64, INT32, BOOL, FLOAT, UNKNOWN_SCALAR } scalar_type;
-    const char* enum_name;
-    const gendb::EnumValueInfo* enum_values;
-    size_t enum_values_count;
-  };
-
-  static constexpr std::array<FieldInfo, 2> kFieldsInfo = {
-      FieldInfo{"key", Key, FieldInfo::ENUM, FieldInfo::UNKNOWN_SCALAR,
-                "gendb::tests::primitive::KeyEnum", kKeyEnumValues,
-                sizeof(kKeyEnumValues) / sizeof(gendb::EnumValueInfo)},
-      FieldInfo{"data", Data, FieldInfo::STRING, FieldInfo::UNKNOWN_SCALAR, nullptr, nullptr, 0},
+  // Field reflection metadata using common FieldInfo struct
+  static constexpr std::array<gendb::FieldInfo, 2> kFieldsInfo = {
+      gendb::FieldInfo{"key", Key, gendb::FieldInfo::ENUM, gendb::FieldInfo::UNKNOWN_SCALAR,
+                       "gendb::tests::primitive::KeyEnum",
+                       std::span<const gendb::EnumValueInfo>(kKeyEnumValues)},
+      gendb::FieldInfo{"data", Data, gendb::FieldInfo::STRING, gendb::FieldInfo::UNKNOWN_SCALAR, "",
+                       std::span<const gendb::EnumValueInfo>()},
   };
 
   MessageA() = default;

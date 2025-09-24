@@ -4,6 +4,7 @@
 #pragma once
 #include <array>
 #include <cstdint>
+#include <span>
 #include <string_view>
 
 #include "gendb/bits.h"
@@ -22,10 +23,10 @@ enum class Direction : uint32_t {
 }  // namespace gendb::tests
 
 // Enum value arrays for reflection
-static constexpr gendb::EnumValueInfo kDirectionValues[] = {
-    {"kUnknown", 0},
-    {"kBuy", 1},
-    {"kSell", 2},
+static constexpr std::array<gendb::EnumValueInfo, 3> kDirectionValues = {
+    gendb::EnumValueInfo{"kUnknown", 0},
+    gendb::EnumValueInfo{"kBuy", 1},
+    gendb::EnumValueInfo{"kSell", 2},
 };
 
 // Message classes
@@ -49,25 +50,19 @@ class ClosedPosition : private gendb::MessageBase {
       Profit,
   });
 
-  // Reflection metadata for ParseText
-  struct FieldInfo {
-    const char* name;
-    int field_id;
-    enum Type { SCALAR, STRING, ENUM } type;
-    enum ScalarType { UINT64, INT32, BOOL, FLOAT, UNKNOWN_SCALAR } scalar_type;
-    const char* enum_name;
-    const gendb::EnumValueInfo* enum_values;
-    size_t enum_values_count;
-  };
-
-  static constexpr std::array<FieldInfo, 5> kFieldsInfo = {
-      FieldInfo{"position_id", PositionId, FieldInfo::SCALAR, FieldInfo::INT32, nullptr, nullptr,
-                0},
-      FieldInfo{"account_id", AccountId, FieldInfo::SCALAR, FieldInfo::INT32, nullptr, nullptr, 0},
-      FieldInfo{"volume", Volume, FieldInfo::SCALAR, FieldInfo::INT32, nullptr, nullptr, 0},
-      FieldInfo{"instrument", Instrument, FieldInfo::STRING, FieldInfo::UNKNOWN_SCALAR, nullptr,
-                nullptr, 0},
-      FieldInfo{"profit", Profit, FieldInfo::SCALAR, FieldInfo::FLOAT, nullptr, nullptr, 0},
+  // Field reflection metadata using common FieldInfo struct
+  static constexpr std::array<gendb::FieldInfo, 5> kFieldsInfo = {
+      gendb::FieldInfo{"position_id", PositionId, gendb::FieldInfo::SCALAR, gendb::FieldInfo::INT32,
+                       "", std::span<const gendb::EnumValueInfo>()},
+      gendb::FieldInfo{"account_id", AccountId, gendb::FieldInfo::SCALAR, gendb::FieldInfo::INT32,
+                       "", std::span<const gendb::EnumValueInfo>()},
+      gendb::FieldInfo{"volume", Volume, gendb::FieldInfo::SCALAR, gendb::FieldInfo::INT32, "",
+                       std::span<const gendb::EnumValueInfo>()},
+      gendb::FieldInfo{"instrument", Instrument, gendb::FieldInfo::STRING,
+                       gendb::FieldInfo::UNKNOWN_SCALAR, "",
+                       std::span<const gendb::EnumValueInfo>()},
+      gendb::FieldInfo{"profit", Profit, gendb::FieldInfo::SCALAR, gendb::FieldInfo::FLOAT, "",
+                       std::span<const gendb::EnumValueInfo>()},
   };
 
   ClosedPosition() = default;
@@ -247,28 +242,22 @@ class Position : private gendb::MessageBase {
       Direction,
   });
 
-  // Reflection metadata for ParseText
-  struct FieldInfo {
-    const char* name;
-    int field_id;
-    enum Type { SCALAR, STRING, ENUM } type;
-    enum ScalarType { UINT64, INT32, BOOL, FLOAT, UNKNOWN_SCALAR } scalar_type;
-    const char* enum_name;
-    const gendb::EnumValueInfo* enum_values;
-    size_t enum_values_count;
-  };
-
-  static constexpr std::array<FieldInfo, 6> kFieldsInfo = {
-      FieldInfo{"position_id", PositionId, FieldInfo::SCALAR, FieldInfo::INT32, nullptr, nullptr,
-                0},
-      FieldInfo{"account_id", AccountId, FieldInfo::SCALAR, FieldInfo::INT32, nullptr, nullptr, 0},
-      FieldInfo{"volume", Volume, FieldInfo::SCALAR, FieldInfo::INT32, nullptr, nullptr, 0},
-      FieldInfo{"instrument", Instrument, FieldInfo::STRING, FieldInfo::UNKNOWN_SCALAR, nullptr,
-                nullptr, 0},
-      FieldInfo{"open_price", OpenPrice, FieldInfo::SCALAR, FieldInfo::FLOAT, nullptr, nullptr, 0},
-      FieldInfo{"direction", Direction, FieldInfo::ENUM, FieldInfo::UNKNOWN_SCALAR,
-                "gendb::tests::Direction", kDirectionValues,
-                sizeof(kDirectionValues) / sizeof(gendb::EnumValueInfo)},
+  // Field reflection metadata using common FieldInfo struct
+  static constexpr std::array<gendb::FieldInfo, 6> kFieldsInfo = {
+      gendb::FieldInfo{"position_id", PositionId, gendb::FieldInfo::SCALAR, gendb::FieldInfo::INT32,
+                       "", std::span<const gendb::EnumValueInfo>()},
+      gendb::FieldInfo{"account_id", AccountId, gendb::FieldInfo::SCALAR, gendb::FieldInfo::INT32,
+                       "", std::span<const gendb::EnumValueInfo>()},
+      gendb::FieldInfo{"volume", Volume, gendb::FieldInfo::SCALAR, gendb::FieldInfo::INT32, "",
+                       std::span<const gendb::EnumValueInfo>()},
+      gendb::FieldInfo{"instrument", Instrument, gendb::FieldInfo::STRING,
+                       gendb::FieldInfo::UNKNOWN_SCALAR, "",
+                       std::span<const gendb::EnumValueInfo>()},
+      gendb::FieldInfo{"open_price", OpenPrice, gendb::FieldInfo::SCALAR, gendb::FieldInfo::FLOAT,
+                       "", std::span<const gendb::EnumValueInfo>()},
+      gendb::FieldInfo{"direction", Direction, gendb::FieldInfo::ENUM,
+                       gendb::FieldInfo::UNKNOWN_SCALAR, "gendb::tests::Direction",
+                       std::span<const gendb::EnumValueInfo>(kDirectionValues)},
   };
 
   Position() = default;

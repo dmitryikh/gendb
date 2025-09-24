@@ -4,6 +4,7 @@
 #pragma once
 #include <array>
 #include <cstdint>
+#include <span>
 #include <string_view>
 
 #include "gendb/bits.h"
@@ -25,22 +26,14 @@ class Config : private gendb::MessageBase {
       MaxTradeVolume,
   });
 
-  // Reflection metadata for ParseText
-  struct FieldInfo {
-    const char* name;
-    int field_id;
-    enum Type { SCALAR, STRING, ENUM } type;
-    enum ScalarType { UINT64, INT32, BOOL, FLOAT, UNKNOWN_SCALAR } scalar_type;
-    const char* enum_name;
-    const gendb::EnumValueInfo* enum_values;
-    size_t enum_values_count;
-  };
-
-  static constexpr std::array<FieldInfo, 2> kFieldsInfo = {
-      FieldInfo{"config_name", ConfigName, FieldInfo::STRING, FieldInfo::UNKNOWN_SCALAR, nullptr,
-                nullptr, 0},
-      FieldInfo{"max_trade_volume", MaxTradeVolume, FieldInfo::SCALAR, FieldInfo::UNKNOWN_SCALAR,
-                nullptr, nullptr, 0},
+  // Field reflection metadata using common FieldInfo struct
+  static constexpr std::array<gendb::FieldInfo, 2> kFieldsInfo = {
+      gendb::FieldInfo{"config_name", ConfigName, gendb::FieldInfo::STRING,
+                       gendb::FieldInfo::UNKNOWN_SCALAR, "",
+                       std::span<const gendb::EnumValueInfo>()},
+      gendb::FieldInfo{"max_trade_volume", MaxTradeVolume, gendb::FieldInfo::SCALAR,
+                       gendb::FieldInfo::UNKNOWN_SCALAR, "",
+                       std::span<const gendb::EnumValueInfo>()},
   };
 
   Config() = default;

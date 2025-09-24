@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "gendb/message_builder.h"
+#include "gendb/reflection.h"
 
 namespace gendb::tests {
 
@@ -42,18 +43,16 @@ struct ParsedField {
 };
 ParsedField ParseLine(const std::string& line);
 
-// Helper to parse enum values from string based on MessageType::FieldInfo
-template <typename MessageType>
-int ParseEnumValueGeneric(const typename MessageType::FieldInfo& field_info,
-                          std::string_view value) {
-  if (field_info.enum_values == nullptr || field_info.enum_values_count == 0) {
+// Helper to parse enum values from string based on gendb::FieldInfo
+inline int ParseEnumValueGeneric(const gendb::FieldInfo& field_info, std::string_view value) {
+  if (field_info.enum_values.empty()) {
     throw std::runtime_error("No enum values available for field: " + std::string(field_info.name));
   }
 
   std::string value_str(value);
-  for (size_t i = 0; i < field_info.enum_values_count; ++i) {
-    if (value_str == field_info.enum_values[i].name) {
-      return field_info.enum_values[i].value;
+  for (const auto& enum_val : field_info.enum_values) {
+    if (value_str == enum_val.name) {
+      return enum_val.value;
     }
   }
 
@@ -81,24 +80,24 @@ std::vector<uint8_t> ParseText(std::string_view text_data) {
 
         // Set the field based on its type using generic MessageBuilder
         switch (field_info.type) {
-          case MessageType::FieldInfo::STRING: {
+          case gendb::FieldInfo::STRING: {
             std::string str_value = ParseStringValue(field.value);
             builder.AddStringField(field_info.field_id, str_value);
             break;
           }
-          case MessageType::FieldInfo::SCALAR: {
+          case gendb::FieldInfo::SCALAR: {
             switch (field_info.scalar_type) {
-              case MessageType::FieldInfo::UINT64:
+              case gendb::FieldInfo::UINT64:
                 builder.AddField<uint64_t>(field_info.field_id, ParseUIntValue(field.value));
                 break;
-              case MessageType::FieldInfo::INT32:
+              case gendb::FieldInfo::INT32:
                 builder.AddField<int32_t>(field_info.field_id,
                                           static_cast<int32_t>(ParseIntValue(field.value)));
                 break;
-              case MessageType::FieldInfo::BOOL:
+              case gendb::FieldInfo::BOOL:
                 builder.AddField<bool>(field_info.field_id, ParseBoolValue(field.value));
                 break;
-              case MessageType::FieldInfo::FLOAT:
+              case gendb::FieldInfo::FLOAT:
                 builder.AddField<float>(field_info.field_id, ParseFloatValue(field.value));
                 break;
               default:
@@ -106,9 +105,8 @@ std::vector<uint8_t> ParseText(std::string_view text_data) {
             }
             break;
           }
-          case MessageType::FieldInfo::ENUM: {
-            int enum_value =
-                ParseEnumValueGeneric<MessageType>(field_info, ParseStringValue(field.value));
+          case gendb::FieldInfo::ENUM: {
+            int enum_value = ParseEnumValueGeneric(field_info, ParseStringValue(field.value));
             // Enums are typically stored as uint32_t
             builder.AddField<uint32_t>(field_info.field_id, static_cast<uint32_t>(enum_value));
             break;

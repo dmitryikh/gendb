@@ -4,6 +4,7 @@
 #pragma once
 #include <array>
 #include <cstdint>
+#include <span>
 #include <string_view>
 
 #include "gendb/bits.h"
@@ -21,9 +22,9 @@ enum class MetadataType : uint32_t {
 }  // namespace gendb
 
 // Enum value arrays for reflection
-static constexpr gendb::EnumValueInfo kMetadataTypeValues[] = {
-    {"kUnknown", 0},
-    {"kSequence", 1},
+static constexpr std::array<gendb::EnumValueInfo, 2> kMetadataTypeValues = {
+    gendb::EnumValueInfo{"kUnknown", 0},
+    gendb::EnumValueInfo{"kSequence", 1},
 };
 
 // Message classes
@@ -40,26 +41,20 @@ class MetadataValue : private gendb::MessageBase {
       FloatValue,
   });
 
-  // Reflection metadata for ParseText
-  struct FieldInfo {
-    const char* name;
-    int field_id;
-    enum Type { SCALAR, STRING, ENUM } type;
-    enum ScalarType { UINT64, INT32, BOOL, FLOAT, UNKNOWN_SCALAR } scalar_type;
-    const char* enum_name;
-    const gendb::EnumValueInfo* enum_values;
-    size_t enum_values_count;
-  };
-
-  static constexpr std::array<FieldInfo, 5> kFieldsInfo = {
-      FieldInfo{"type", Type, FieldInfo::ENUM, FieldInfo::UNKNOWN_SCALAR, "gendb::MetadataType",
-                kMetadataTypeValues, sizeof(kMetadataTypeValues) / sizeof(gendb::EnumValueInfo)},
-      FieldInfo{"id", Id, FieldInfo::SCALAR, FieldInfo::UNKNOWN_SCALAR, nullptr, nullptr, 0},
-      FieldInfo{"int_value", IntValue, FieldInfo::SCALAR, FieldInfo::INT32, nullptr, nullptr, 0},
-      FieldInfo{"string_value", StringValue, FieldInfo::STRING, FieldInfo::UNKNOWN_SCALAR, nullptr,
-                nullptr, 0},
-      FieldInfo{"float_value", FloatValue, FieldInfo::SCALAR, FieldInfo::FLOAT, nullptr, nullptr,
-                0},
+  // Field reflection metadata using common FieldInfo struct
+  static constexpr std::array<gendb::FieldInfo, 5> kFieldsInfo = {
+      gendb::FieldInfo{"type", Type, gendb::FieldInfo::ENUM, gendb::FieldInfo::UNKNOWN_SCALAR,
+                       "gendb::MetadataType",
+                       std::span<const gendb::EnumValueInfo>(kMetadataTypeValues)},
+      gendb::FieldInfo{"id", Id, gendb::FieldInfo::SCALAR, gendb::FieldInfo::UNKNOWN_SCALAR, "",
+                       std::span<const gendb::EnumValueInfo>()},
+      gendb::FieldInfo{"int_value", IntValue, gendb::FieldInfo::SCALAR, gendb::FieldInfo::INT32, "",
+                       std::span<const gendb::EnumValueInfo>()},
+      gendb::FieldInfo{"string_value", StringValue, gendb::FieldInfo::STRING,
+                       gendb::FieldInfo::UNKNOWN_SCALAR, "",
+                       std::span<const gendb::EnumValueInfo>()},
+      gendb::FieldInfo{"float_value", FloatValue, gendb::FieldInfo::SCALAR, gendb::FieldInfo::FLOAT,
+                       "", std::span<const gendb::EnumValueInfo>()},
   };
 
   MetadataValue() = default;
