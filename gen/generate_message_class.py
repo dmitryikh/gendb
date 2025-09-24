@@ -7,7 +7,7 @@ import flatc
 import json
 import flatc_to_store
 import naming
-import cpp_types
+import base_types
 from store import Store
 from fb_types import FieldKind
 
@@ -62,7 +62,7 @@ def main():
             enums[enum.full_name] = {
                 "name": name,
                 "namespace": naming.to_cpp_namespace(namespace),
-                "underlying_type": cpp_types.cpp_type(enum.underlying_type),
+                "underlying_type": base_types.cpp_type(enum.underlying_type),
                 "vals": [(k, v) for k, v in enum.values.items()]
             }
         # Output file named after .fbs file

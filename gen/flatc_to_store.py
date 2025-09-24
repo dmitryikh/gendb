@@ -3,7 +3,7 @@ import os
 from store import Store
 import flatc
 from pathlib import Path
-import cpp_types
+import base_types
 from fb_types import Message, Field, Enum, FieldKind
 import naming
 
@@ -17,7 +17,7 @@ def __enum_from_flatc_obj(obj):
 def __is_enum_type(field, enums: list[Enum]) -> bool:
         base_type = field["type"]["base_type"]
         idx_enum = field["type"].get("index", -1)
-        if cpp_types.is_integral_type(base_type) and idx_enum >= 0:
+        if base_types.is_integral_type(base_type) and idx_enum >= 0:
             # Could be enum or table, check if index refers to enum
             if idx_enum < len(enums):
                 return True
@@ -31,7 +31,7 @@ def __message_from_flatc_obj(obj, enums: list[Enum], include_prefix=""):
         if __is_enum_type(f, enums):
             field_kind = FieldKind.ENUM
             type_ = enums[f["type"]["index"]].full_name
-        elif cpp_types.is_scalar_type(f["type"]["base_type"]):
+        elif base_types.is_scalar_type(f["type"]["base_type"]):
             field_kind = FieldKind.SCALAR
             type_ = f["type"]["base_type"]
         else:
@@ -42,14 +42,14 @@ def __message_from_flatc_obj(obj, enums: list[Enum], include_prefix=""):
             const_ref_type = cpp_type
             ref_type = f'{cpp_type}&'
             is_fixed = True
-            underlying_type = cpp_types.cpp_type(enums[f["type"]["index"]].underlying_type)
+            underlying_type = base_types.cpp_type(enums[f["type"]["index"]].underlying_type)
         elif field_kind == FieldKind.SCALAR:
-            cpp_type = cpp_types.cpp_type(type_)
+            cpp_type = base_types.cpp_type(type_)
             # TODO: support overwritten default values.
-            default = cpp_types.default_value(type_)
-            const_ref_type = cpp_types.const_ref_type(type_)
-            ref_type = cpp_types.ref_type(type_)
-            is_fixed = cpp_types.is_fixed_size(type_)
+            default = base_types.default_value(type_)
+            const_ref_type = base_types.const_ref_type(type_)
+            ref_type = base_types.ref_type(type_)
+            is_fixed = base_types.is_fixed_size(type_)
             underlying_type = None
             enum_type = None
 

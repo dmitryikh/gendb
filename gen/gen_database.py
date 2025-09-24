@@ -4,7 +4,7 @@ from fb_types import Message, Field, Collection, Database, Index, FieldKind, Seq
 from store import Store
 import naming
 from clang_format import clang_format
-import cpp_types
+import base_types
 import flatc_to_store
 import schema_validator
 
@@ -57,8 +57,8 @@ def build_store_from_yaml(db_cfg):
             name=seq["name"],
             metadata_id=idx,
             type=seq["type"],
-            cpp_type=cpp_types.cpp_type(seq["type"]),
-            ref_type=cpp_types.ref_type(seq["type"]),
+            cpp_type=base_types.cpp_type(seq["type"]),
+            ref_type=base_types.ref_type(seq["type"]),
         )
         store.add_sequence(sequence)
     return store
@@ -125,9 +125,9 @@ def main():
             pk_field = store.get_field(col.type, pk_name)
             if pk_field.is_fixed_size and pk_fixed_size >= 0:
                 if pk_field.field_kind == FieldKind.SCALAR:
-                    pk_fixed_size += cpp_types.type_size(pk_field.type)
+                    pk_fixed_size += base_types.type_size(pk_field.type)
                 else:
-                    pk_fixed_size += cpp_types.cpp_type_size(pk_field.underlying_type)
+                    pk_fixed_size += base_types.cpp_type_size(pk_field.underlying_type)
             elif not pk_field.is_fixed_size:
                 pk_fixed_size = -1
             pk_fields.append(pk_field)
@@ -159,9 +159,9 @@ def main():
             "field": idx.field,
             "field_enum": naming.PascalCase(idx.field),
             "key_type": key_type,
-            "key_cpp_type": cpp_types.cpp_type(key_type),
-            "value_cpp_type": cpp_types.cpp_type(value_type),
-            "index_class": f"gendb::Index</*{idx.field}*/ {cpp_types.cpp_type(key_type)}, std::array<uint8_t, sizeof({cpp_types.cpp_type(value_type)})>>",
+            "key_cpp_type": base_types.cpp_type(key_type),
+            "value_cpp_type": base_types.cpp_type(value_type),
+            "index_class": f"gendb::Index</*{idx.field}*/ {base_types.cpp_type(key_type)}, std::array<uint8_t, sizeof({base_types.cpp_type(value_type)})>>",
             "primary_key": collection.primary_key[0],
         })
 
