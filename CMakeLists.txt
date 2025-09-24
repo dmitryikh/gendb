@@ -48,6 +48,7 @@ add_executable(gendb_tests
     lib/gendb/bits_test.cpp
     lib/gendb/storage_test.cpp
 )
+target_include_directories(gendb_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/lib)
 target_link_libraries(gendb_tests PRIVATE gendb_lib GTest::gtest_main)
 add_test(NAME gendb_tests COMMAND gendb_tests)
 

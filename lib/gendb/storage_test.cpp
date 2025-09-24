@@ -6,6 +6,7 @@
 
 #include "gendb/layered_storage.h"
 #include "gtest/gtest.h"
+#include "status_matchers.h"
 
 namespace gendb {
 namespace {
@@ -95,9 +96,7 @@ TEST_P(StorageTest, BasicPutAndGet) {
 
   // Get the value
   BytesConstView retrieved_value;
-  absl::Status status = storage_->Get(0, StringToBytesView(key), retrieved_value);
-  ASSERT_TRUE(status.ok()) << "Failed with " << StorageHelper::GetName(storage_type_) << ": "
-                           << status;
+  ASSERT_OK(storage_->Get(0, StringToBytesView(key), retrieved_value));
   EXPECT_EQ(BytesViewToString(retrieved_value), value);
 
   // Check that the key exists
@@ -117,9 +116,7 @@ TEST_P(StorageTest, Delete) {
   EXPECT_EQ(storage_->GetCollectionSize(0), 1);
 
   // Delete the key
-  absl::Status status = storage_->Delete(0, StringToBytesView(key));
-  ASSERT_TRUE(status.ok()) << "Failed with " << StorageHelper::GetName(storage_type_) << ": "
-                           << status;
+  ASSERT_OK(storage_->Delete(0, StringToBytesView(key)));
 
   // Verify it no longer exists
   EXPECT_FALSE(storage_->Exists(0, StringToBytesView(key)));
@@ -127,8 +124,7 @@ TEST_P(StorageTest, Delete) {
 
   // Try to get deleted key - should fail
   BytesConstView retrieved_value;
-  status = storage_->Get(0, StringToBytesView(key), retrieved_value);
-  EXPECT_EQ(status.code(), absl::StatusCode::kNotFound);
+  EXPECT_NOT_FOUND(storage_->Get(0, StringToBytesView(key), retrieved_value));
 }
 
 TEST_P(StorageTest, DeleteNonExistentKey) {
@@ -146,8 +142,7 @@ TEST_P(StorageTest, GetNonExistentKey) {
   const std::string key = "non_existent_key";
 
   BytesConstView retrieved_value;
-  absl::Status status = storage_->Get(0, StringToBytesView(key), retrieved_value);
-  EXPECT_EQ(status.code(), absl::StatusCode::kNotFound);
+  EXPECT_NOT_FOUND(storage_->Get(0, StringToBytesView(key), retrieved_value));
 }
 
 TEST_P(StorageTest, MultipleCollections) {
@@ -158,17 +153,14 @@ TEST_P(StorageTest, MultipleCollections) {
 
   // Verify data in collection 0
   BytesConstView retrieved_value;
-  absl::Status status = storage_->Get(0, StringToBytesView("key1"), retrieved_value);
-  ASSERT_TRUE(status.ok()) << status;
+  ASSERT_OK(storage_->Get(0, StringToBytesView("key1"), retrieved_value));
   EXPECT_EQ(BytesViewToString(retrieved_value), "value1");
 
-  status = storage_->Get(0, StringToBytesView("key2"), retrieved_value);
-  ASSERT_TRUE(status.ok()) << status;
+  ASSERT_OK(storage_->Get(0, StringToBytesView("key2"), retrieved_value));
   EXPECT_EQ(BytesViewToString(retrieved_value), "value2");
 
   // Verify data in collection 1
-  status = storage_->Get(1, StringToBytesView("key3"), retrieved_value);
-  ASSERT_TRUE(status.ok()) << status;
+  ASSERT_OK(storage_->Get(1, StringToBytesView("key3"), retrieved_value));
   EXPECT_EQ(BytesViewToString(retrieved_value), "value3");
 
   // Check cross-collection isolation
@@ -193,8 +185,7 @@ TEST_P(StorageTest, CollectionManagementWithDeletion) {
   EXPECT_EQ(storage_->GetCollectionSize(1), 1);
 
   // Delete from collection 0
-  absl::Status status = storage_->Delete(0, StringToBytesView("key1"));
-  ASSERT_TRUE(status.ok()) << status;
+  ASSERT_OK(storage_->Delete(0, StringToBytesView("key1")));
 
   // Verify collection sizes after deletion
   EXPECT_EQ(storage_->GetCollectionCount(), 2);  // Collection count doesn't decrease
@@ -217,16 +208,14 @@ TEST_P(StorageTest, UpdateValue) {
 
   // Verify initial value
   BytesConstView retrieved_value;
-  absl::Status status = storage_->Get(0, StringToBytesView(key), retrieved_value);
-  ASSERT_TRUE(status.ok()) << status;
+  ASSERT_OK(storage_->Get(0, StringToBytesView(key), retrieved_value));
   EXPECT_EQ(BytesViewToString(retrieved_value), value1);
 
   // Update value
   storage_->Put(0, StringToBytesView(key), StringToBytes(value2));
 
   // Verify updated value
-  status = storage_->Get(0, StringToBytesView(key), retrieved_value);
-  ASSERT_TRUE(status.ok()) << status;
+  ASSERT_OK(storage_->Get(0, StringToBytesView(key), retrieved_value));
   EXPECT_EQ(BytesViewToString(retrieved_value), value2);
 }
 
@@ -239,8 +228,7 @@ TEST_P(StorageTest, LargeValues) {
 
   // Get large value
   BytesConstView retrieved_value;
-  absl::Status status = storage_->Get(0, StringToBytesView(key), retrieved_value);
-  ASSERT_TRUE(status.ok()) << status;
+  ASSERT_OK(storage_->Get(0, StringToBytesView(key), retrieved_value));
   EXPECT_EQ(BytesViewToString(retrieved_value), large_value);
 }
 
@@ -257,8 +245,7 @@ TEST_P(StorageTest, BinaryData) {
 
   // Get binary value
   BytesConstView retrieved_value;
-  absl::Status status = storage_->Get(0, binary_key_view, retrieved_value);
-  ASSERT_TRUE(status.ok()) << status;
+  ASSERT_OK(storage_->Get(0, binary_key_view, retrieved_value));
 
   // Verify binary data
   EXPECT_EQ(retrieved_value.size(), binary_data.size());
@@ -299,8 +286,7 @@ TEST_P(StorageTest, EmptyStorageQueries) {
   EXPECT_FALSE(storage_->Exists(0, StringToBytesView("any_key")));
 
   BytesConstView value;
-  absl::Status status = storage_->Get(0, StringToBytesView("any_key"), value);
-  EXPECT_EQ(status.code(), absl::StatusCode::kNotFound);
+  EXPECT_NOT_FOUND(storage_->Get(0, StringToBytesView("any_key"), value));
 }
 
 // Instantiate tests for both storage types
@@ -340,8 +326,7 @@ TEST_F(RocksDBPersistenceTest, DataPersistsAcrossRestarts) {
 
     // Verify value persisted
     BytesConstView retrieved_value;
-    absl::Status status = storage.Get(0, StringToBytesView(key), retrieved_value);
-    ASSERT_TRUE(status.ok()) << status;
+    ASSERT_OK(storage.Get(0, StringToBytesView(key), retrieved_value));
     EXPECT_EQ(BytesViewToString(retrieved_value), value);
   }
 }
@@ -377,20 +362,17 @@ TEST_P(LayeredStorageTest, DeleteWithTempStorage) {
 
   // Verify we can get it through layered storage
   BytesConstView retrieved_value;
-  absl::Status status = layered_storage_->Get(0, StringToBytesView(key), retrieved_value);
-  ASSERT_TRUE(status.ok()) << status;
+  ASSERT_OK(layered_storage_->Get(0, StringToBytesView(key), retrieved_value));
   EXPECT_EQ(BytesViewToString(retrieved_value), value);
 
   // Delete through layered storage (should mark deletion in temp storage)
-  status = layered_storage_->Delete(0, StringToBytesView(key));
-  ASSERT_TRUE(status.ok()) << status;
+  ASSERT_OK(layered_storage_->Delete(0, StringToBytesView(key)));
 
   // Value should still exist in main storage
   EXPECT_TRUE(main_storage_->Exists(0, StringToBytesView(key)));
 
   // But getting through layered storage should fail (deletion marker in temp)
-  status = layered_storage_->Get(0, StringToBytesView(key), retrieved_value);
-  EXPECT_EQ(status.code(), absl::StatusCode::kNotFound);
+  EXPECT_NOT_FOUND(layered_storage_->Get(0, StringToBytesView(key), retrieved_value));
 
   // Merge temp storage - should apply deletion to main storage
   layered_storage_->MergeTempStorage();
@@ -405,17 +387,14 @@ TEST_P(LayeredStorageTest, CompleteWorkflow) {
 
   // Verify read through layered storage
   BytesConstView value;
-  absl::Status status = layered_storage_->Get(0, StringToBytesView("main_key"), value);
-  ASSERT_TRUE(status.ok()) << status;
+  ASSERT_OK(layered_storage_->Get(0, StringToBytesView("main_key"), value));
   EXPECT_EQ(BytesViewToString(value), "main_value");
 
   // Delete through layered storage (marks in temp storage)
-  status = layered_storage_->Delete(0, StringToBytesView("main_key"));
-  ASSERT_TRUE(status.ok()) << status;
+  ASSERT_OK(layered_storage_->Delete(0, StringToBytesView("main_key")));
 
   // Not visible through layered storage
-  status = layered_storage_->Get(0, StringToBytesView("main_key"), value);
-  EXPECT_EQ(status.code(), absl::StatusCode::kNotFound);
+  EXPECT_NOT_FOUND(layered_storage_->Get(0, StringToBytesView("main_key"), value));
 
   // Still exists in main storage
   EXPECT_TRUE(main_storage_->Exists(0, StringToBytesView("main_key")));
