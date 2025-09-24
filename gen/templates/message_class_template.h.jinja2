@@ -10,6 +10,7 @@
 #include "gendb/message_builder.h"
 #include "gendb/bits.h"
 #include "gendb/message_patch.h"
+#include "gendb/reflection.h"
 
 // Enum definitions
 {% for enum in enums.values() %}
@@ -23,6 +24,13 @@ enum class {{ enum.name }} : {{ enum.underlying_type }} {
 {% if enum.namespace %}
 } // namespace {{ enum.namespace.replace('.', '::') }}
 {% endif %}
+
+// Enum value arrays for reflection
+static constexpr gendb::EnumValueInfo k{{ enum.name }}Values[] = {
+  {% for value_name, value in enum.vals %}
+  {"{{ value_name }}", {{ value }}},
+  {% endfor %}
+};
 {% endfor %}
 
 // Message classes
@@ -45,6 +53,27 @@ class {{ table.name }} : private gendb::MessageBase {
       {{ field.name | pascalcase }},
     {% endfor %}
   });
+
+  // Reflection metadata for ParseText
+  struct FieldInfo {
+    const char* name;
+    int field_id;
+    enum Type { SCALAR, STRING, ENUM } type;
+    enum ScalarType { UINT64, INT32, BOOL, FLOAT, UNKNOWN_SCALAR } scalar_type;
+    const char* enum_name;
+    const gendb::EnumValueInfo* enum_values;
+    size_t enum_values_count;
+  };
+
+  static constexpr std::array<FieldInfo, {{ table.fields | length }}> kFieldsInfo = {
+    {% for field in table.fields %}
+    FieldInfo{"{{ field.name }}", {{ field.name | pascalcase }}, 
+      {% if field.cpp_type == 'std::string' %}FieldInfo::STRING{% elif field.field_kind == FieldKind.ENUM %}FieldInfo::ENUM{% else %}FieldInfo::SCALAR{% endif %}, 
+      {% if field.cpp_type == 'uint64_t' %}FieldInfo::UINT64{% elif field.cpp_type == 'int32_t' %}FieldInfo::INT32{% elif field.cpp_type == 'bool' %}FieldInfo::BOOL{% elif field.cpp_type == 'float' %}FieldInfo::FLOAT{% else %}FieldInfo::UNKNOWN_SCALAR{% endif %}, 
+      {% if field.field_kind == FieldKind.ENUM %}"{{ field.cpp_type }}"{% else %}nullptr{% endif %},
+      {% if field.field_kind == FieldKind.ENUM %}k{{ enums[field.type].name }}Values, sizeof(k{{ enums[field.type].name }}Values) / sizeof(gendb::EnumValueInfo){% else %}nullptr, 0{% endif %}},
+    {% endfor %}
+  };
 
   {{ table.name }}() = default;
   {{ table.name }}(std::span<const uint8_t> span) : MessageBase(span) {}

@@ -10,6 +10,7 @@
 #include "gendb/message_base.h"
 #include "gendb/message_builder.h"
 #include "gendb/message_patch.h"
+#include "gendb/reflection.h"
 
 // Enum definitions
 namespace gendb::tests::primitive {
@@ -19,6 +20,13 @@ enum class KeyEnum : uint32_t {
   kSecondValue = 2,
 };
 }  // namespace gendb::tests::primitive
+
+// Enum value arrays for reflection
+static constexpr gendb::EnumValueInfo kKeyEnumValues[] = {
+    {"kUnknown", 0},
+    {"kFirstValue", 1},
+    {"kSecondValue", 2},
+};
 
 // Message classes
 namespace gendb::tests::primitive {
@@ -30,6 +38,24 @@ class MessageA : private gendb::MessageBase {
   static constexpr std::array<uint32_t, 1> kFixedSizeFields = gendb::MakeConstexprFieldBitmask<1>({
       Key,
   });
+
+  // Reflection metadata for ParseText
+  struct FieldInfo {
+    const char* name;
+    int field_id;
+    enum Type { SCALAR, STRING, ENUM } type;
+    enum ScalarType { UINT64, INT32, BOOL, FLOAT, UNKNOWN_SCALAR } scalar_type;
+    const char* enum_name;
+    const gendb::EnumValueInfo* enum_values;
+    size_t enum_values_count;
+  };
+
+  static constexpr std::array<FieldInfo, 2> kFieldsInfo = {
+      FieldInfo{"key", Key, FieldInfo::ENUM, FieldInfo::UNKNOWN_SCALAR,
+                "gendb::tests::primitive::KeyEnum", kKeyEnumValues,
+                sizeof(kKeyEnumValues) / sizeof(gendb::EnumValueInfo)},
+      FieldInfo{"data", Data, FieldInfo::STRING, FieldInfo::UNKNOWN_SCALAR, nullptr, nullptr, 0},
+  };
 
   MessageA() = default;
   MessageA(std::span<const uint8_t> span) : MessageBase(span) {}

@@ -25,6 +25,8 @@ gen_db_schema(
 
 add_executable(message_test
     message_test.cpp
+    lib/parse_text.cpp
+    lib/parse_text.h
 )
 target_link_libraries(message_test PRIVATE gendb_lib GTest::gtest_main)
 add_dependencies(message_test codegen)

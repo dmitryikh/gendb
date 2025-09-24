@@ -2,6 +2,7 @@
 
 #include "account.fbs.h"
 #include "gendb/message_patch.h"
+#include "lib/parse_text.h"
 #include "position.fbs.h"
 
 using namespace gendb::tests;
@@ -11,12 +12,12 @@ class AccountPatchTest : public ::testing::Test {
   Account account;
   std::vector<uint8_t> buffer;
   void SetUp() override {
-    AccountBuilder builder;
-    builder.set_account_id(42);
-    builder.set_age(30);
-    builder.set_balance(100.0f);
-    builder.set_is_active(true);
-    buffer = builder.Build();
+    buffer = ParseText<Account>(R"m(
+      account_id: 42
+      age: 30
+      balance: 100.0
+      is_active: true
+    )m");
     account = Account(buffer);
   }
 };
@@ -70,13 +71,13 @@ TEST_F(AccountPatchTest, ModifyAndRemoveNonFixed) {
 }
 
 TEST(PositionTest, SetGetFields) {
-  PositionBuilder builder;
-  builder.set_account_id(2002);
-  builder.set_instrument("EURUSD");
-  builder.set_open_price(1.2345f);
-  builder.set_position_id(42);
-  builder.set_volume(100);
-  std::vector<uint8_t> buffer = builder.Build();
+  auto buffer = ParseText<Position>(R"m(
+    account_id: 2002
+    instrument: "EURUSD"
+    open_price: 1.2345
+    position_id: 42
+    volume: 100
+  )m");
   Position position{buffer};
 
   EXPECT_EQ(position.account_id(), 2002);
@@ -92,8 +93,7 @@ TEST(PositionTest, SetGetFields) {
 }
 
 TEST(AccountTest, EmptyMessageHasNoFields) {
-  AccountBuilder builder;
-  std::vector<uint8_t> buffer = builder.Build();
+  auto buffer = ParseText<Account>("");  // Empty message
   Account account{buffer};
 
   EXPECT_FALSE(account.has_account_id());
@@ -101,8 +101,7 @@ TEST(AccountTest, EmptyMessageHasNoFields) {
 }
 
 TEST(AccountTest, EmptyMessageReturnsDefaults) {
-  AccountBuilder builder;
-  std::vector<uint8_t> buffer = builder.Build();
+  auto buffer = ParseText<Account>("");  // Empty message
   Account account{buffer};
 
   EXPECT_EQ(account.account_id(), 0);
@@ -110,16 +109,16 @@ TEST(AccountTest, EmptyMessageReturnsDefaults) {
 }
 
 TEST(AccountTest, AllFieldsSetGet) {
-  AccountBuilder builder;
-  builder.set_account_id(42);
-  builder.set_trader_id("T123");
-  builder.set_name("Bob");
-  builder.set_address("123 Main St");
-  builder.set_age(30);
-  builder.set_is_active(true);
-  builder.set_balance(1000.5f);
-  builder.set_config_name("default");
-  std::vector<uint8_t> buffer = builder.Build();
+  auto buffer = ParseText<Account>(R"m(
+    account_id: 42
+    trader_id: "T123"
+    name: "Bob"
+    address: "123 Main St"
+    age: 30
+    is_active: true
+    balance: 1000.5
+    config_name: "default"
+  )m");
   Account account{buffer};
 
   EXPECT_EQ(account.account_id(), 42);
@@ -141,13 +140,13 @@ TEST(AccountTest, AllFieldsSetGet) {
 }
 
 TEST(PositionTest, AllFieldsSetGet) {
-  PositionBuilder builder;
-  builder.set_position_id(101);
-  builder.set_account_id(202);
-  builder.set_volume(500);
-  builder.set_instrument("AAPL");
-  builder.set_open_price(123.45f);
-  std::vector<uint8_t> buffer = builder.Build();
+  auto buffer = ParseText<Position>(R"m(
+    position_id: 101
+    account_id: 202
+    volume: 500
+    instrument: "AAPL"
+    open_price: 123.45
+  )m");
   Position position{buffer};
 
   EXPECT_EQ(position.position_id(), 101);
@@ -339,13 +338,13 @@ TEST(AccountTest, ApplyPatch_ModifyAndRemoveFields) {
 }
 
 TEST(ClosedPositionTest, SetGetFields) {
-  ClosedPositionBuilder builder;
-  builder.set_account_id(1001);
-  builder.set_instrument("GBPUSD");
-  builder.set_position_id(55);
-  builder.set_profit(12.34f);
-  builder.set_volume(200);
-  std::vector<uint8_t> buffer = builder.Build();
+  auto buffer = ParseText<ClosedPosition>(R"m(
+    account_id: 1001
+    instrument: "GBPUSD"
+    position_id: 55
+    profit: 12.34
+    volume: 200
+  )m");
   ClosedPosition closed_position{buffer};
 
   EXPECT_EQ(closed_position.account_id(), 1001);
@@ -361,8 +360,7 @@ TEST(ClosedPositionTest, SetGetFields) {
 }
 
 TEST(ClosedPositionTest, EmptyMessageHasNoFields) {
-  ClosedPositionBuilder builder;
-  std::vector<uint8_t> buffer = builder.Build();
+  auto buffer = ParseText<ClosedPosition>("");  // Empty message
   ClosedPosition closed_position{buffer};
 
   EXPECT_FALSE(closed_position.has_account_id());
@@ -373,8 +371,7 @@ TEST(ClosedPositionTest, EmptyMessageHasNoFields) {
 }
 
 TEST(ClosedPositionTest, EmptyMessageReturnsDefaults) {
-  ClosedPositionBuilder builder;
-  std::vector<uint8_t> buffer = builder.Build();
+  auto buffer = ParseText<ClosedPosition>("");  // Empty message
   ClosedPosition closed_position{buffer};
 
   EXPECT_EQ(closed_position.account_id(), 0);
@@ -385,13 +382,13 @@ TEST(ClosedPositionTest, EmptyMessageReturnsDefaults) {
 }
 
 TEST(ClosedPositionTest, AllFieldsSetGet) {
-  ClosedPositionBuilder builder;
-  builder.set_account_id(77);
-  builder.set_instrument("MSFT");
-  builder.set_position_id(88);
-  builder.set_profit(99.99f);
-  builder.set_volume(123);
-  std::vector<uint8_t> buffer = builder.Build();
+  auto buffer = ParseText<ClosedPosition>(R"m(
+    account_id: 77
+    instrument: "MSFT"
+    position_id: 88
+    profit: 99.99
+    volume: 123
+  )m");
   ClosedPosition closed_position{buffer};
 
   EXPECT_EQ(closed_position.account_id(), 77);
@@ -407,10 +404,10 @@ TEST(ClosedPositionTest, AllFieldsSetGet) {
 }
 
 TEST(PositionTest, PatchDirectionEnum) {
-  PositionBuilder builder;
-  builder.set_position_id(1);
-  builder.set_direction(Direction::kBuy);
-  std::vector<uint8_t> buffer = builder.Build();
+  auto buffer = ParseText<Position>(R"m(
+    position_id: 1
+    direction: kBuy
+  )m");
   Position position{buffer};
 
   EXPECT_EQ(position.direction(), Direction::kBuy);
@@ -431,14 +428,50 @@ TEST(PositionTest, PatchDirectionEnum) {
 }
 
 TEST(PositionTest, DefaultDirectionEnum) {
-  PositionBuilder builder;
-  builder.set_position_id(2);
-  // Do not set direction
-  std::vector<uint8_t> buffer = builder.Build();
+  auto buffer = ParseText<Position>(R"m(
+    position_id: 2
+  )m");  // Do not set direction
   Position position{buffer};
 
   EXPECT_EQ(position.direction(), Direction::kUnknown);
   EXPECT_FALSE(position.has_direction());
+}
+
+TEST(AccountTest, ParseTextBasic) {
+  auto buffer = ParseText<Account>(R"m(
+    account_id : 42
+    age: 30
+    name: "John"
+    is_active: true
+    balance: 1234.56
+  )m");
+
+  Account account(buffer);
+
+  EXPECT_EQ(account.account_id(), 42);
+  EXPECT_EQ(account.age(), 30);
+  EXPECT_EQ(account.name(), "John");
+  EXPECT_EQ(account.is_active(), true);
+  EXPECT_EQ(account.balance(), 1234.56f);
+}
+
+TEST(ClosedPositionTest, ParseTextGeneric) {
+  // This test demonstrates that ParseText works generically without explicit instantiation
+  auto buffer = ParseText<ClosedPosition>(R"m(
+    position_id: 123
+    account_id: 456
+    volume: 1000
+    instrument: "EURUSD"
+    profit: 150.75
+  )m");
+
+  ClosedPosition position(buffer);
+
+  EXPECT_EQ(position.position_id(), 123);
+  EXPECT_EQ(position.account_id(), 456);
+  EXPECT_EQ(position.volume(), 1000);
+  EXPECT_EQ(position.instrument(), "EURUSD");
+  EXPECT_EQ(position.profit(), 150.75f);
 }
 
 int main(int argc, char **argv) {

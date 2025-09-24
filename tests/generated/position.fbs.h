@@ -10,6 +10,7 @@
 #include "gendb/message_base.h"
 #include "gendb/message_builder.h"
 #include "gendb/message_patch.h"
+#include "gendb/reflection.h"
 
 // Enum definitions
 namespace gendb::tests {
@@ -19,6 +20,13 @@ enum class Direction : uint32_t {
   kSell = 2,
 };
 }  // namespace gendb::tests
+
+// Enum value arrays for reflection
+static constexpr gendb::EnumValueInfo kDirectionValues[] = {
+    {"kUnknown", 0},
+    {"kBuy", 1},
+    {"kSell", 2},
+};
 
 // Message classes
 namespace gendb::tests {
@@ -40,6 +48,27 @@ class ClosedPosition : private gendb::MessageBase {
       Volume,
       Profit,
   });
+
+  // Reflection metadata for ParseText
+  struct FieldInfo {
+    const char* name;
+    int field_id;
+    enum Type { SCALAR, STRING, ENUM } type;
+    enum ScalarType { UINT64, INT32, BOOL, FLOAT, UNKNOWN_SCALAR } scalar_type;
+    const char* enum_name;
+    const gendb::EnumValueInfo* enum_values;
+    size_t enum_values_count;
+  };
+
+  static constexpr std::array<FieldInfo, 5> kFieldsInfo = {
+      FieldInfo{"position_id", PositionId, FieldInfo::SCALAR, FieldInfo::INT32, nullptr, nullptr,
+                0},
+      FieldInfo{"account_id", AccountId, FieldInfo::SCALAR, FieldInfo::INT32, nullptr, nullptr, 0},
+      FieldInfo{"volume", Volume, FieldInfo::SCALAR, FieldInfo::INT32, nullptr, nullptr, 0},
+      FieldInfo{"instrument", Instrument, FieldInfo::STRING, FieldInfo::UNKNOWN_SCALAR, nullptr,
+                nullptr, 0},
+      FieldInfo{"profit", Profit, FieldInfo::SCALAR, FieldInfo::FLOAT, nullptr, nullptr, 0},
+  };
 
   ClosedPosition() = default;
   ClosedPosition(std::span<const uint8_t> span) : MessageBase(span) {}
@@ -217,6 +246,30 @@ class Position : private gendb::MessageBase {
       OpenPrice,
       Direction,
   });
+
+  // Reflection metadata for ParseText
+  struct FieldInfo {
+    const char* name;
+    int field_id;
+    enum Type { SCALAR, STRING, ENUM } type;
+    enum ScalarType { UINT64, INT32, BOOL, FLOAT, UNKNOWN_SCALAR } scalar_type;
+    const char* enum_name;
+    const gendb::EnumValueInfo* enum_values;
+    size_t enum_values_count;
+  };
+
+  static constexpr std::array<FieldInfo, 6> kFieldsInfo = {
+      FieldInfo{"position_id", PositionId, FieldInfo::SCALAR, FieldInfo::INT32, nullptr, nullptr,
+                0},
+      FieldInfo{"account_id", AccountId, FieldInfo::SCALAR, FieldInfo::INT32, nullptr, nullptr, 0},
+      FieldInfo{"volume", Volume, FieldInfo::SCALAR, FieldInfo::INT32, nullptr, nullptr, 0},
+      FieldInfo{"instrument", Instrument, FieldInfo::STRING, FieldInfo::UNKNOWN_SCALAR, nullptr,
+                nullptr, 0},
+      FieldInfo{"open_price", OpenPrice, FieldInfo::SCALAR, FieldInfo::FLOAT, nullptr, nullptr, 0},
+      FieldInfo{"direction", Direction, FieldInfo::ENUM, FieldInfo::UNKNOWN_SCALAR,
+                "gendb::tests::Direction", kDirectionValues,
+                sizeof(kDirectionValues) / sizeof(gendb::EnumValueInfo)},
+  };
 
   Position() = default;
   Position(std::span<const uint8_t> span) : MessageBase(span) {}

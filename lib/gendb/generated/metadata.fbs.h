@@ -10,6 +10,7 @@
 #include "gendb/message_base.h"
 #include "gendb/message_builder.h"
 #include "gendb/message_patch.h"
+#include "gendb/reflection.h"
 
 // Enum definitions
 namespace gendb {
@@ -18,6 +19,12 @@ enum class MetadataType : uint32_t {
   kSequence = 1,
 };
 }  // namespace gendb
+
+// Enum value arrays for reflection
+static constexpr gendb::EnumValueInfo kMetadataTypeValues[] = {
+    {"kUnknown", 0},
+    {"kSequence", 1},
+};
 
 // Message classes
 namespace gendb {
@@ -32,6 +39,28 @@ class MetadataValue : private gendb::MessageBase {
       IntValue,
       FloatValue,
   });
+
+  // Reflection metadata for ParseText
+  struct FieldInfo {
+    const char* name;
+    int field_id;
+    enum Type { SCALAR, STRING, ENUM } type;
+    enum ScalarType { UINT64, INT32, BOOL, FLOAT, UNKNOWN_SCALAR } scalar_type;
+    const char* enum_name;
+    const gendb::EnumValueInfo* enum_values;
+    size_t enum_values_count;
+  };
+
+  static constexpr std::array<FieldInfo, 5> kFieldsInfo = {
+      FieldInfo{"type", Type, FieldInfo::ENUM, FieldInfo::UNKNOWN_SCALAR, "gendb::MetadataType",
+                kMetadataTypeValues, sizeof(kMetadataTypeValues) / sizeof(gendb::EnumValueInfo)},
+      FieldInfo{"id", Id, FieldInfo::SCALAR, FieldInfo::UNKNOWN_SCALAR, nullptr, nullptr, 0},
+      FieldInfo{"int_value", IntValue, FieldInfo::SCALAR, FieldInfo::INT32, nullptr, nullptr, 0},
+      FieldInfo{"string_value", StringValue, FieldInfo::STRING, FieldInfo::UNKNOWN_SCALAR, nullptr,
+                nullptr, 0},
+      FieldInfo{"float_value", FloatValue, FieldInfo::SCALAR, FieldInfo::FLOAT, nullptr, nullptr,
+                0},
+  };
 
   MetadataValue() = default;
   MetadataValue(std::span<const uint8_t> span) : MessageBase(span) {}

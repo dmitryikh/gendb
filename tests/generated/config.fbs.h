@@ -10,6 +10,7 @@
 #include "gendb/message_base.h"
 #include "gendb/message_builder.h"
 #include "gendb/message_patch.h"
+#include "gendb/reflection.h"
 
 // Enum definitions
 
@@ -23,6 +24,24 @@ class Config : private gendb::MessageBase {
   static constexpr std::array<uint32_t, 1> kFixedSizeFields = gendb::MakeConstexprFieldBitmask<1>({
       MaxTradeVolume,
   });
+
+  // Reflection metadata for ParseText
+  struct FieldInfo {
+    const char* name;
+    int field_id;
+    enum Type { SCALAR, STRING, ENUM } type;
+    enum ScalarType { UINT64, INT32, BOOL, FLOAT, UNKNOWN_SCALAR } scalar_type;
+    const char* enum_name;
+    const gendb::EnumValueInfo* enum_values;
+    size_t enum_values_count;
+  };
+
+  static constexpr std::array<FieldInfo, 2> kFieldsInfo = {
+      FieldInfo{"config_name", ConfigName, FieldInfo::STRING, FieldInfo::UNKNOWN_SCALAR, nullptr,
+                nullptr, 0},
+      FieldInfo{"max_trade_volume", MaxTradeVolume, FieldInfo::SCALAR, FieldInfo::UNKNOWN_SCALAR,
+                nullptr, nullptr, 0},
+  };
 
   Config() = default;
   Config(std::span<const uint8_t> span) : MessageBase(span) {}

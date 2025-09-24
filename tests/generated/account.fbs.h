@@ -10,6 +10,7 @@
 #include "gendb/message_base.h"
 #include "gendb/message_builder.h"
 #include "gendb/message_patch.h"
+#include "gendb/reflection.h"
 
 // Enum definitions
 
@@ -36,6 +37,31 @@ class Account : private gendb::MessageBase {
       IsActive,
       Balance,
   });
+
+  // Reflection metadata for ParseText
+  struct FieldInfo {
+    const char* name;
+    int field_id;
+    enum Type { SCALAR, STRING, ENUM } type;
+    enum ScalarType { UINT64, INT32, BOOL, FLOAT, UNKNOWN_SCALAR } scalar_type;
+    const char* enum_name;
+    const gendb::EnumValueInfo* enum_values;
+    size_t enum_values_count;
+  };
+
+  static constexpr std::array<FieldInfo, 8> kFieldsInfo = {
+      FieldInfo{"account_id", AccountId, FieldInfo::SCALAR, FieldInfo::UINT64, nullptr, nullptr, 0},
+      FieldInfo{"trader_id", TraderId, FieldInfo::STRING, FieldInfo::UNKNOWN_SCALAR, nullptr,
+                nullptr, 0},
+      FieldInfo{"name", Name, FieldInfo::STRING, FieldInfo::UNKNOWN_SCALAR, nullptr, nullptr, 0},
+      FieldInfo{"address", Address, FieldInfo::STRING, FieldInfo::UNKNOWN_SCALAR, nullptr, nullptr,
+                0},
+      FieldInfo{"age", Age, FieldInfo::SCALAR, FieldInfo::INT32, nullptr, nullptr, 0},
+      FieldInfo{"is_active", IsActive, FieldInfo::SCALAR, FieldInfo::BOOL, nullptr, nullptr, 0},
+      FieldInfo{"balance", Balance, FieldInfo::SCALAR, FieldInfo::FLOAT, nullptr, nullptr, 0},
+      FieldInfo{"config_name", ConfigName, FieldInfo::STRING, FieldInfo::UNKNOWN_SCALAR, nullptr,
+                nullptr, 0},
+  };
 
   Account() = default;
   Account(std::span<const uint8_t> span) : MessageBase(span) {}
