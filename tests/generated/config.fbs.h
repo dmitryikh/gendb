@@ -26,6 +26,12 @@ class Config : private gendb::MessageBase {
       MaxTradeVolume,
   });
 
+  static constexpr std::array<gendb::FixedFieldDescriptor, 1> kFixedFieldDescriptors = {
+      gendb::FixedFieldDescriptor{MaxTradeVolume, 8, 0},
+  };
+
+  static constexpr gendb::MessageLayout kLayout{kFixedFieldDescriptors};
+
   // Field reflection metadata using common FieldInfo struct
   static constexpr std::array<gendb::FieldInfo, 2> kFieldsInfo = {
       gendb::FieldInfo{"config_name", ConfigName, gendb::FieldInfo::STRING,
@@ -36,8 +42,8 @@ class Config : private gendb::MessageBase {
                        std::span<const gendb::EnumValueInfo>()},
   };
 
-  Config() = default;
-  Config(std::span<const uint8_t> span) : MessageBase(span) {}
+  Config() : MessageBase(&kLayout) {}
+  Config(std::span<const uint8_t> span) : MessageBase(span, &kLayout) {}
 
   bool has_config_name() const { return HasField(ConfigName); }
   std::string_view config_name() const { return ReadStringField(ConfigName, ""); }
@@ -48,6 +54,7 @@ class Config : private gendb::MessageBase {
   using gendb::MessageBase::FieldCount;
   using gendb::MessageBase::GetFieldsMask;
   using gendb::MessageBase::HasField;
+  static constexpr const gendb::MessageLayout* LayoutPtr() { return &kLayout; }
   std::span<const uint8_t> FieldRaw(int field_id) const {
     return gendb::MessageBase::FieldRaw(field_id);
   }
@@ -57,7 +64,7 @@ class Config : private gendb::MessageBase {
 
 class ConfigBuilder : public gendb::MessageBuilder {
  public:
-  ConfigBuilder() : MessageBuilder() {}
+  ConfigBuilder() : MessageBuilder(Config::LayoutPtr()) {}
   ConfigBuilder(Config& obj) : MessageBuilder(obj) {}
 
   ConfigBuilder& set_config_name(std::string_view value) {
@@ -115,6 +122,7 @@ class ConfigPatchBuilder {
     gendb::MessagePatch patch;
     patch.modified = std::move(modified);
     patch.removed = std::move(removed);
+    patch.layout = Config::LayoutPtr();
     patch.buffer = _builder.Build();
     return patch;
   }

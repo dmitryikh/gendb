@@ -39,6 +39,15 @@ class Account : private gendb::MessageBase {
       Balance,
   });
 
+  static constexpr std::array<gendb::FixedFieldDescriptor, 4> kFixedFieldDescriptors = {
+      gendb::FixedFieldDescriptor{AccountId, 8, 0},
+      gendb::FixedFieldDescriptor{Age, 4, 1},
+      gendb::FixedFieldDescriptor{IsActive, 1, 2},
+      gendb::FixedFieldDescriptor{Balance, 4, 3},
+  };
+
+  static constexpr gendb::MessageLayout kLayout{kFixedFieldDescriptors};
+
   // Field reflection metadata using common FieldInfo struct
   static constexpr std::array<gendb::FieldInfo, 8> kFieldsInfo = {
       gendb::FieldInfo{"account_id", AccountId, gendb::FieldInfo::SCALAR, gendb::FieldInfo::UINT64,
@@ -62,8 +71,8 @@ class Account : private gendb::MessageBase {
                        std::span<const gendb::EnumValueInfo>()},
   };
 
-  Account() = default;
-  Account(std::span<const uint8_t> span) : MessageBase(span) {}
+  Account() : MessageBase(&kLayout) {}
+  Account(std::span<const uint8_t> span) : MessageBase(span, &kLayout) {}
 
   bool has_account_id() const { return HasField(AccountId); }
   uint64_t account_id() const { return ReadScalarField<uint64_t>(AccountId, 0ULL); }
@@ -86,6 +95,7 @@ class Account : private gendb::MessageBase {
   using gendb::MessageBase::FieldCount;
   using gendb::MessageBase::GetFieldsMask;
   using gendb::MessageBase::HasField;
+  static constexpr const gendb::MessageLayout* LayoutPtr() { return &kLayout; }
   std::span<const uint8_t> FieldRaw(int field_id) const {
     return gendb::MessageBase::FieldRaw(field_id);
   }
@@ -95,7 +105,7 @@ class Account : private gendb::MessageBase {
 
 class AccountBuilder : public gendb::MessageBuilder {
  public:
-  AccountBuilder() : MessageBuilder() {}
+  AccountBuilder() : MessageBuilder(Account::LayoutPtr()) {}
   AccountBuilder(Account& obj) : MessageBuilder(obj) {}
 
   AccountBuilder& set_account_id(uint64_t value) {
@@ -273,6 +283,7 @@ class AccountPatchBuilder {
     gendb::MessagePatch patch;
     patch.modified = std::move(modified);
     patch.removed = std::move(removed);
+    patch.layout = Account::LayoutPtr();
     patch.buffer = _builder.Build();
     return patch;
   }

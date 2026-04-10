@@ -40,6 +40,12 @@ class MessageA : private gendb::MessageBase {
       Key,
   });
 
+  static constexpr std::array<gendb::FixedFieldDescriptor, 1> kFixedFieldDescriptors = {
+      gendb::FixedFieldDescriptor{Key, 4, 0},
+  };
+
+  static constexpr gendb::MessageLayout kLayout{kFixedFieldDescriptors};
+
   // Field reflection metadata using common FieldInfo struct
   static constexpr std::array<gendb::FieldInfo, 2> kFieldsInfo = {
       gendb::FieldInfo{"key", Key, gendb::FieldInfo::ENUM, gendb::FieldInfo::UNKNOWN_SCALAR,
@@ -49,8 +55,8 @@ class MessageA : private gendb::MessageBase {
                        std::span<const gendb::EnumValueInfo>()},
   };
 
-  MessageA() = default;
-  MessageA(std::span<const uint8_t> span) : MessageBase(span) {}
+  MessageA() : MessageBase(&kLayout) {}
+  MessageA(std::span<const uint8_t> span) : MessageBase(span, &kLayout) {}
 
   bool has_key() const { return HasField(Key); }
   gendb::tests::primitive::KeyEnum key() const {
@@ -63,6 +69,7 @@ class MessageA : private gendb::MessageBase {
   using gendb::MessageBase::FieldCount;
   using gendb::MessageBase::GetFieldsMask;
   using gendb::MessageBase::HasField;
+  static constexpr const gendb::MessageLayout* LayoutPtr() { return &kLayout; }
   std::span<const uint8_t> FieldRaw(int field_id) const {
     return gendb::MessageBase::FieldRaw(field_id);
   }
@@ -72,7 +79,7 @@ class MessageA : private gendb::MessageBase {
 
 class MessageABuilder : public gendb::MessageBuilder {
  public:
-  MessageABuilder() : MessageBuilder() {}
+  MessageABuilder() : MessageBuilder(MessageA::LayoutPtr()) {}
   MessageABuilder(MessageA& obj) : MessageBuilder(obj) {}
 
   MessageABuilder& set_key(gendb::tests::primitive::KeyEnum value) {
@@ -130,6 +137,7 @@ class MessageAPatchBuilder {
     gendb::MessagePatch patch;
     patch.modified = std::move(modified);
     patch.removed = std::move(removed);
+    patch.layout = MessageA::LayoutPtr();
     patch.buffer = _builder.Build();
     return patch;
   }

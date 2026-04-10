@@ -26,3 +26,6 @@ Non goals:
   * Heavyweight server process (runs embedded in-process, not as a separate daemon)
   * Multi-language bindings (C++ is the first-class and only target)
   * Ad-hoc SQL query engine (no query parser or optimizer, API-only access)
+
+Build and test instructions:
+  * Docker workflow: [docs/docker_build.md](/Users/dmitry/code/gendb/docs/docker_build.md)

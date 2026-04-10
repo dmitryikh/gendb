@@ -9,32 +9,55 @@ namespace gendb {
 struct MessagePatch {
   absl::InlinedVector<uint32_t, 2> modified;
   absl::InlinedVector<uint32_t, 2> removed;
+  const MessageLayout* layout = nullptr;
 
   // Buffer for storing the message.
   // Message must have data for all modified fields.
   std::vector<uint8_t> buffer;
 };
 
-bool ApplyPatchInplace(const MessagePatch& patch, std::span<uint8_t> message);
-void ApplyPatch(const MessagePatch& patch, std::span<const uint8_t> src, std::vector<uint8_t>& dst);
+bool ApplyPatchInplace(const MessagePatch& patch, std::span<uint8_t> message,
+                       const MessageLayout* layout = nullptr);
+void ApplyPatch(const MessagePatch& patch, std::span<const uint8_t> src, std::vector<uint8_t>& dst,
+                const MessageLayout* layout = nullptr);
 
 template <typename T>
 void ApplyPatch(const MessagePatch& patch, std::vector<uint8_t>& message) {
   if (CanApplyPatchInplace<T>(patch, message)) {
-    ApplyPatchInplace(patch, message);
+    ApplyPatchInplace(patch, message, T::LayoutPtr());
   } else {
     std::vector<uint8_t> buffer;
-    ApplyPatch(patch, message, buffer);
+    ApplyPatch(patch, message, buffer, T::LayoutPtr());
     message = std::move(buffer);
   }
 }
 
 template <typename T>
 bool CanApplyPatchInplace(const MessagePatch& patch, std::span<const uint8_t> message) {
-  if (!IsBitmaskSubset(T::kFixedSizeFields, patch.modified)) return false;
-  absl::InlinedVector<uint32_t, 2> current = T{message}.GetFieldsMask();
-  if (!IsBitmaskSubset(current, patch.modified)) return false;
-  if (!IsBitmaskSubsetInverted(current, patch.removed)) return false;
+  if (!patch.removed.empty()) return false;
+
+  T current{message};
+  MessageBase patch_message{patch.buffer, patch.layout != nullptr ? patch.layout : T::LayoutPtr()};
+  bool can_apply = true;
+  ForEachSetField(patch.modified, [&](int field_id) {
+    if (!current.HasField(field_id)) {
+      can_apply = false;
+      return;
+    }
+    if (current.FieldRaw(field_id).size() != patch_message.FieldRaw(field_id).size()) {
+      can_apply = false;
+    }
+  });
+  if (!can_apply) {
+    return false;
+  }
+  ForEachSetField(patch.removed, [&](int) { can_apply = false; });
+  if (!can_apply) {
+    return false;
+  }
+  if (patch.modified.empty()) {
+    return false;
+  }
   return true;
 }
 

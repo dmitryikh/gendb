@@ -50,6 +50,15 @@ class ClosedPosition : private gendb::MessageBase {
       Profit,
   });
 
+  static constexpr std::array<gendb::FixedFieldDescriptor, 4> kFixedFieldDescriptors = {
+      gendb::FixedFieldDescriptor{PositionId, 4, 0},
+      gendb::FixedFieldDescriptor{AccountId, 4, 1},
+      gendb::FixedFieldDescriptor{Volume, 4, 2},
+      gendb::FixedFieldDescriptor{Profit, 4, 3},
+  };
+
+  static constexpr gendb::MessageLayout kLayout{kFixedFieldDescriptors};
+
   // Field reflection metadata using common FieldInfo struct
   static constexpr std::array<gendb::FieldInfo, 5> kFieldsInfo = {
       gendb::FieldInfo{"position_id", PositionId, gendb::FieldInfo::SCALAR, gendb::FieldInfo::INT32,
@@ -65,8 +74,8 @@ class ClosedPosition : private gendb::MessageBase {
                        std::span<const gendb::EnumValueInfo>()},
   };
 
-  ClosedPosition() = default;
-  ClosedPosition(std::span<const uint8_t> span) : MessageBase(span) {}
+  ClosedPosition() : MessageBase(&kLayout) {}
+  ClosedPosition(std::span<const uint8_t> span) : MessageBase(span, &kLayout) {}
 
   bool has_position_id() const { return HasField(PositionId); }
   int32_t position_id() const { return ReadScalarField<int32_t>(PositionId, 0); }
@@ -83,6 +92,7 @@ class ClosedPosition : private gendb::MessageBase {
   using gendb::MessageBase::FieldCount;
   using gendb::MessageBase::GetFieldsMask;
   using gendb::MessageBase::HasField;
+  static constexpr const gendb::MessageLayout* LayoutPtr() { return &kLayout; }
   std::span<const uint8_t> FieldRaw(int field_id) const {
     return gendb::MessageBase::FieldRaw(field_id);
   }
@@ -92,7 +102,7 @@ class ClosedPosition : private gendb::MessageBase {
 
 class ClosedPositionBuilder : public gendb::MessageBuilder {
  public:
-  ClosedPositionBuilder() : MessageBuilder() {}
+  ClosedPositionBuilder() : MessageBuilder(ClosedPosition::LayoutPtr()) {}
   ClosedPositionBuilder(ClosedPosition& obj) : MessageBuilder(obj) {}
 
   ClosedPositionBuilder& set_position_id(int32_t value) {
@@ -210,6 +220,7 @@ class ClosedPositionPatchBuilder {
     gendb::MessagePatch patch;
     patch.modified = std::move(modified);
     patch.removed = std::move(removed);
+    patch.layout = ClosedPosition::LayoutPtr();
     patch.buffer = _builder.Build();
     return patch;
   }
@@ -242,6 +253,14 @@ class Position : private gendb::MessageBase {
       Direction,
   });
 
+  static constexpr std::array<gendb::FixedFieldDescriptor, 5> kFixedFieldDescriptors = {
+      gendb::FixedFieldDescriptor{PositionId, 4, 0}, gendb::FixedFieldDescriptor{AccountId, 4, 1},
+      gendb::FixedFieldDescriptor{Volume, 4, 2},     gendb::FixedFieldDescriptor{OpenPrice, 4, 3},
+      gendb::FixedFieldDescriptor{Direction, 4, 4},
+  };
+
+  static constexpr gendb::MessageLayout kLayout{kFixedFieldDescriptors};
+
   // Field reflection metadata using common FieldInfo struct
   static constexpr std::array<gendb::FieldInfo, 6> kFieldsInfo = {
       gendb::FieldInfo{"position_id", PositionId, gendb::FieldInfo::SCALAR, gendb::FieldInfo::INT32,
@@ -260,8 +279,8 @@ class Position : private gendb::MessageBase {
                        std::span<const gendb::EnumValueInfo>(kDirectionValues)},
   };
 
-  Position() = default;
-  Position(std::span<const uint8_t> span) : MessageBase(span) {}
+  Position() : MessageBase(&kLayout) {}
+  Position(std::span<const uint8_t> span) : MessageBase(span, &kLayout) {}
 
   bool has_position_id() const { return HasField(PositionId); }
   int32_t position_id() const { return ReadScalarField<int32_t>(PositionId, 0); }
@@ -282,6 +301,7 @@ class Position : private gendb::MessageBase {
   using gendb::MessageBase::FieldCount;
   using gendb::MessageBase::GetFieldsMask;
   using gendb::MessageBase::HasField;
+  static constexpr const gendb::MessageLayout* LayoutPtr() { return &kLayout; }
   std::span<const uint8_t> FieldRaw(int field_id) const {
     return gendb::MessageBase::FieldRaw(field_id);
   }
@@ -291,7 +311,7 @@ class Position : private gendb::MessageBase {
 
 class PositionBuilder : public gendb::MessageBuilder {
  public:
-  PositionBuilder() : MessageBuilder() {}
+  PositionBuilder() : MessageBuilder(Position::LayoutPtr()) {}
   PositionBuilder(Position& obj) : MessageBuilder(obj) {}
 
   PositionBuilder& set_position_id(int32_t value) {
@@ -429,6 +449,7 @@ class PositionPatchBuilder {
     gendb::MessagePatch patch;
     patch.modified = std::move(modified);
     patch.removed = std::move(removed);
+    patch.layout = Position::LayoutPtr();
     patch.buffer = _builder.Build();
     return patch;
   }

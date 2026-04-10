@@ -26,7 +26,7 @@ class AccountPatchTest : public ::testing::Test {
 TEST_F(AccountPatchTest, ModifyFixedSizeField) {
   auto patch = AccountPatchBuilder().set_account_id(24).Build();
   EXPECT_TRUE(CanApplyPatchInplace<Account>(patch, buffer));
-  EXPECT_TRUE(ApplyPatchInplace(patch, buffer));
+  EXPECT_TRUE(ApplyPatchInplace(patch, buffer, Account::LayoutPtr()));
   EXPECT_EQ(account.account_id(), 24);
 }
 
@@ -42,18 +42,12 @@ TEST_F(AccountPatchTest, RemoveFixedSizeField) {
 
 TEST_F(AccountPatchTest, RemoveNonFixedSizeField) {
   auto patch = AccountPatchBuilder().clear_name().Build();
-  EXPECT_TRUE(CanApplyPatchInplace<Account>(patch, buffer));
-  EXPECT_TRUE(ApplyPatchInplace(patch, buffer));
-  EXPECT_TRUE(account.name().empty());
+  EXPECT_FALSE(CanApplyPatchInplace<Account>(patch, buffer));
 }
 
 TEST_F(AccountPatchTest, ModifyAndRemoveFields) {
   auto patch = AccountPatchBuilder().set_age(31).set_balance(200.0f).clear_name().Build();
-  EXPECT_TRUE(CanApplyPatchInplace<Account>(patch, buffer));
-  EXPECT_TRUE(ApplyPatchInplace(patch, buffer));
-  EXPECT_EQ(account.age(), 31);
-  EXPECT_EQ(account.balance(), 200.0f);
-  EXPECT_TRUE(account.name().empty());
+  EXPECT_FALSE(CanApplyPatchInplace<Account>(patch, buffer));
 }
 
 TEST_F(AccountPatchTest, ModifyAndRemoveExistingFields) {
@@ -317,7 +311,6 @@ TEST(AccountTest, ApplyPatch_RemoveNonFixedField) {
   Account patched(patched_buffer);
   EXPECT_THAT(patched, MessageEqual<Account>(R"m(
     account_id: 42
-    name: ""
   )m"));
 }
 
@@ -340,6 +333,72 @@ TEST(AccountTest, ApplyPatch_ModifyAndRemoveFields) {
     age: 30
     balance: 200.0
   )m"));
+}
+
+TEST(AccountTest, InplacePatchRequiresEqualLengthForSparseField) {
+  std::vector<uint8_t> buffer = ParseText<Account>(R"m(
+    account_id: 42
+    name: "OldName"
+  )m");
+
+  auto same_size_patch = AccountPatchBuilder().set_name("NewName").Build();
+  EXPECT_TRUE(CanApplyPatchInplace<Account>(same_size_patch, buffer));
+  EXPECT_TRUE(ApplyPatchInplace(same_size_patch, buffer, Account::LayoutPtr()));
+  EXPECT_EQ(Account(buffer).name(), "NewName");
+
+  auto different_size_patch = AccountPatchBuilder().set_name("LongerName").Build();
+  EXPECT_FALSE(CanApplyPatchInplace<Account>(different_size_patch, buffer));
+}
+
+TEST(AccountTest, UnknownSparseFieldSurvivesKnownFieldRewrite) {
+  AccountBuilder builder;
+  builder.set_account_id(42);
+  builder.set_name("Alice");
+  builder.AddStringField(1000, "future");
+  std::vector<uint8_t> buffer = builder.Build();
+
+  auto patch = AccountPatchBuilder().set_account_id(77).Build();
+  ApplyPatch<Account>(patch, buffer);
+
+  Account patched(buffer);
+  gendb::MessageBase raw(buffer, Account::LayoutPtr());
+  EXPECT_EQ(patched.account_id(), 77);
+  EXPECT_EQ(patched.name(), "Alice");
+  ASSERT_TRUE(raw.HasField(1000));
+  EXPECT_EQ(std::string_view(reinterpret_cast<const char*>(raw.FieldRaw(1000).data()),
+                             raw.FieldRaw(1000).size()),
+            "future");
+}
+
+TEST(AccountTest, UnknownSparseFieldSupportsEqualLengthInplacePatch) {
+  AccountBuilder builder;
+  builder.set_account_id(42);
+  builder.AddStringField(1000, "future");
+  std::vector<uint8_t> buffer = builder.Build();
+
+  gendb::MessageBuilder patch_builder;
+  patch_builder.AddStringField(1000, "past!!");
+  gendb::MessagePatch patch;
+  gendb::SetFieldBit(patch.modified, 1000);
+  patch.buffer = patch_builder.Build();
+
+  EXPECT_TRUE(CanApplyPatchInplace<Account>(patch, buffer));
+  EXPECT_TRUE(ApplyPatchInplace(patch, buffer, Account::LayoutPtr()));
+
+  gendb::MessageBase raw(buffer, Account::LayoutPtr());
+  ASSERT_TRUE(raw.HasField(1000));
+  EXPECT_EQ(std::string_view(reinterpret_cast<const char*>(raw.FieldRaw(1000).data()),
+                             raw.FieldRaw(1000).size()),
+            "past!!");
+}
+
+TEST(AccountTest, SparseUnknownFieldUsesCompactStorageForLargeFieldId) {
+  gendb::MessageBuilder builder;
+  builder.AddField<uint8_t>(1000, 7);
+  std::vector<uint8_t> buffer = builder.Build();
+
+  const size_t dense_baseline = 2 + (1001 * sizeof(uint16_t)) + sizeof(uint8_t);
+  EXPECT_LT(buffer.size(), dense_baseline / 20);
 }
 
 TEST(ClosedPositionTest, SetGetFields) {

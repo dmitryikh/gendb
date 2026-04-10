@@ -2,6 +2,7 @@
 
 #include <bit>
 #include <cstdint>
+#include <span>
 #include <vector>
 
 #include "absl/hash/hash.h"

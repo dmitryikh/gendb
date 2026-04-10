@@ -9,7 +9,7 @@
 namespace gendb {
 class MessageBuilder {
  public:
-  MessageBuilder();
+  explicit MessageBuilder(const MessageLayout* layout = nullptr);
   MessageBuilder(const MessageBase& src);
   template <typename T>
     requires IsSupportedScalar<T>
@@ -32,8 +32,13 @@ class MessageBuilder {
   void MergeFields(const MessageBase& rhs);
   bool NeedRebuild() const { return !_fields.empty(); }
   std::map<int, std::span<const uint8_t>> GetFieldData() const;
+  const MessageLayout* Layout() const { return _layout; }
+
+ private:
+  const FixedFieldDescriptor* FindFixedField(int field_id) const;
 
  private:
   std::map<int, std::string> _fields;
+  const MessageLayout* _layout;
 };
 }  // namespace gendb

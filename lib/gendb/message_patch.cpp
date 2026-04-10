@@ -4,9 +4,10 @@
 #include "gendb/message_builder.h"
 
 namespace gendb {
-bool ApplyPatchInplace(const MessagePatch& patch, std::span<uint8_t> message) {
-  MessageBase patch_message{patch.buffer};
-  MessageBase dst{message};
+bool ApplyPatchInplace(const MessagePatch& patch, std::span<uint8_t> message,
+                       const MessageLayout* layout) {
+  MessageBase patch_message{patch.buffer, patch.layout};
+  MessageBase dst{message, layout != nullptr ? layout : patch.layout};
   bool res = true;
   ForEachSetField(patch.modified, [&](int field_id) {
     auto dst_field = dst.FieldRaw(field_id);
@@ -20,14 +21,16 @@ bool ApplyPatchInplace(const MessagePatch& patch, std::span<uint8_t> message) {
   return res;
 }
 
-void ApplyPatch(const MessagePatch& patch, std::span<const uint8_t> src,
-                std::vector<uint8_t>& dst) {
-  MessageBuilder builder(src);
-  MessageBase patch_message{patch.buffer};
+void ApplyPatch(const MessagePatch& patch, std::span<const uint8_t> src, std::vector<uint8_t>& dst,
+                const MessageLayout* layout) {
+  const MessageLayout* effective_layout = layout != nullptr ? layout : patch.layout;
+  MessageBase src_message{src, effective_layout};
+  MessageBuilder builder(src_message);
+  MessageBase patch_message{patch.buffer, patch.layout};
   ForEachSetField(patch.removed, [&](int field_id) { builder.ClearField(field_id); });
   ForEachSetField(patch.modified, [&](int field_id) {
     auto src_field = patch_message.FieldRaw(field_id);
-    if (src_field.empty()) {
+    if (!patch_message.HasField(field_id)) {
       return;
     }
     builder.AddFieldRaw(field_id, src_field);

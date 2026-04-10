@@ -44,7 +44,13 @@ def main():
 
                 if f.is_fixed_size:
                     fixed_indices.append(f.id)
-                    fixed_fields.append({"idx": f.id, "name": f.name});
+                    fixed_fields.append({
+                        "idx": f.id,
+                        "name": f.name,
+                        "size": base_types.cpp_type_size(f.underlying_type)
+                        if f.field_kind == FieldKind.ENUM
+                        else base_types.type_size(f.type),
+                    })
             K = (max(fixed_indices) // 32 + 1) if fixed_indices else 1
             namespace, name = naming.split_namespace_class(msg.full_name)
             tables.append({

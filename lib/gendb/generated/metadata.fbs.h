@@ -41,6 +41,15 @@ class MetadataValue : private gendb::MessageBase {
       FloatValue,
   });
 
+  static constexpr std::array<gendb::FixedFieldDescriptor, 4> kFixedFieldDescriptors = {
+      gendb::FixedFieldDescriptor{Type, 4, 0},
+      gendb::FixedFieldDescriptor{Id, 4, 1},
+      gendb::FixedFieldDescriptor{IntValue, 4, 2},
+      gendb::FixedFieldDescriptor{FloatValue, 4, 3},
+  };
+
+  static constexpr gendb::MessageLayout kLayout{kFixedFieldDescriptors};
+
   // Field reflection metadata using common FieldInfo struct
   static constexpr std::array<gendb::FieldInfo, 5> kFieldsInfo = {
       gendb::FieldInfo{"type", Type, gendb::FieldInfo::ENUM, gendb::FieldInfo::UNKNOWN_SCALAR,
@@ -57,8 +66,8 @@ class MetadataValue : private gendb::MessageBase {
                        "", std::span<const gendb::EnumValueInfo>()},
   };
 
-  MetadataValue() = default;
-  MetadataValue(std::span<const uint8_t> span) : MessageBase(span) {}
+  MetadataValue() : MessageBase(&kLayout) {}
+  MetadataValue(std::span<const uint8_t> span) : MessageBase(span, &kLayout) {}
 
   bool has_type() const { return HasField(Type); }
   gendb::MetadataType type() const {
@@ -77,6 +86,7 @@ class MetadataValue : private gendb::MessageBase {
   using gendb::MessageBase::FieldCount;
   using gendb::MessageBase::GetFieldsMask;
   using gendb::MessageBase::HasField;
+  static constexpr const gendb::MessageLayout* LayoutPtr() { return &kLayout; }
   std::span<const uint8_t> FieldRaw(int field_id) const {
     return gendb::MessageBase::FieldRaw(field_id);
   }
@@ -86,7 +96,7 @@ class MetadataValue : private gendb::MessageBase {
 
 class MetadataValueBuilder : public gendb::MessageBuilder {
  public:
-  MetadataValueBuilder() : MessageBuilder() {}
+  MetadataValueBuilder() : MessageBuilder(MetadataValue::LayoutPtr()) {}
   MetadataValueBuilder(MetadataValue& obj) : MessageBuilder(obj) {}
 
   MetadataValueBuilder& set_type(gendb::MetadataType value) {
@@ -204,6 +214,7 @@ class MetadataValuePatchBuilder {
     gendb::MessagePatch patch;
     patch.modified = std::move(modified);
     patch.removed = std::move(removed);
+    patch.layout = MetadataValue::LayoutPtr();
     patch.buffer = _builder.Build();
     return patch;
   }

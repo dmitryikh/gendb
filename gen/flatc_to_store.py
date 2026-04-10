@@ -54,7 +54,7 @@ def __message_from_flatc_obj(obj, enums: list[Enum], include_prefix=""):
             enum_type = None
 
         fields.append(Field(
-            id = f.get("id", 0),
+            id = f.get("id", 0) + 1,
             name=f["name"],
             type=type_,
             field_kind=field_kind,

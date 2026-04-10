@@ -44,7 +44,7 @@ class {{ table.name }} : private gendb::MessageBase {
 
   enum Field : int {
     {% for field in table.fields %}
-    {{ field.name | pascalcase }} = {{ loop.index }},
+    {{ field.name | pascalcase }} = {{ field.id }},
     {% endfor %}
     MaxFields
   };
@@ -54,6 +54,14 @@ class {{ table.name }} : private gendb::MessageBase {
       {{ field.name | pascalcase }},
     {% endfor %}
   });
+
+  static constexpr std::array<gendb::FixedFieldDescriptor, {{ table.fixed_fields | length }}> kFixedFieldDescriptors = {
+    {% for field in table.fixed_fields %}
+    gendb::FixedFieldDescriptor{ {{ field.name | pascalcase }}, {{ field.size }}, {{ loop.index0 }} },
+    {% endfor %}
+  };
+
+  static constexpr gendb::MessageLayout kLayout{kFixedFieldDescriptors};
 
   // Field reflection metadata using common FieldInfo struct
   static constexpr std::array<gendb::FieldInfo, {{ table.fields | length }}> kFieldsInfo = {
@@ -66,8 +74,8 @@ class {{ table.name }} : private gendb::MessageBase {
     {% endfor %}
   };
 
-  {{ table.name }}() = default;
-  {{ table.name }}(std::span<const uint8_t> span) : MessageBase(span) {}
+  {{ table.name }}() : MessageBase(&kLayout) {}
+  {{ table.name }}(std::span<const uint8_t> span) : MessageBase(span, &kLayout) {}
 
   {% for field in table.fields %}
   bool has_{{field.name}}() const { return HasField({{ field.name | pascalcase }}); }
@@ -85,6 +93,7 @@ class {{ table.name }} : private gendb::MessageBase {
   using gendb::MessageBase::FieldCount;
   using gendb::MessageBase::HasField;
   using gendb::MessageBase::GetFieldsMask;
+  static constexpr const gendb::MessageLayout* LayoutPtr() { return &kLayout; }
   std::span<const uint8_t> FieldRaw(int field_id) const {
     return gendb::MessageBase::FieldRaw(field_id);
   }
@@ -94,7 +103,7 @@ class {{ table.name }} : private gendb::MessageBase {
 
 class {{table.name}}Builder : public gendb::MessageBuilder {
  public:
-  {{table.name}}Builder() : MessageBuilder() {}
+  {{table.name}}Builder() : MessageBuilder({{table.name}}::LayoutPtr()) {}
   {{table.name}}Builder({{table.name}}& obj) : MessageBuilder(obj) {}
 
   {% for field in table.fields %}
@@ -138,6 +147,7 @@ class {{table.name}}PatchBuilder {
     gendb::MessagePatch patch;
     patch.modified = std::move(modified);
     patch.removed = std::move(removed);
+    patch.layout = {{table.name}}::LayoutPtr();
     patch.buffer = _builder.Build();
     return patch;
   }

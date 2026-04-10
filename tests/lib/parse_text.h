@@ -62,7 +62,7 @@ inline int ParseEnumValueGeneric(const gendb::FieldInfo& field_info, std::string
 // Fully generic ParseText implementation using MessageBuilder and reflection
 template <typename MessageType>
 std::vector<uint8_t> ParseText(std::string_view text_data) {
-  gendb::MessageBuilder builder;
+  gendb::MessageBuilder builder(MessageType::LayoutPtr());
 
   std::string text_str{text_data};
   std::istringstream stream{text_str};
