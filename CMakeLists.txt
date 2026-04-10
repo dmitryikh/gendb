@@ -22,6 +22,8 @@ gen_db_messages(
 
 find_package(absl REQUIRED)
 find_package(RocksDB REQUIRED)
+find_package(benchmark REQUIRED)
+find_package(flatbuffers REQUIRED)
 
 # Main library
 add_library(gendb_lib
@@ -53,6 +55,7 @@ target_link_libraries(gendb_tests PRIVATE gendb_lib GTest::gtest_main)
 add_test(NAME gendb_tests COMMAND gendb_tests)
 
 add_subdirectory(tests)
+add_subdirectory(benchmarks)
 
 # GoogleTest setup for unit tests
 enable_testing()

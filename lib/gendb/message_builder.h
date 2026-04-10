@@ -33,6 +33,7 @@ class MessageBuilder {
   bool NeedRebuild() const { return !_fields.empty(); }
   std::map<int, std::span<const uint8_t>> GetFieldData() const;
   const MessageLayout* Layout() const { return _layout; }
+  size_t OwnedBytesEstimate() const;
 
  private:
   const FixedFieldDescriptor* FindFixedField(int field_id) const;

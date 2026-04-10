@@ -136,4 +136,14 @@ std::map<int, std::span<const uint8_t>> MessageBuilder::GetFieldData() const {
   }
   return field_data;
 }
+
+size_t MessageBuilder::OwnedBytesEstimate() const {
+  size_t bytes = sizeof(*this);
+  bytes += sizeof(std::pair<const int, std::string>) * _fields.size();
+  for (const auto& [field_id, field_raw] : _fields) {
+    static_cast<void>(field_id);
+    bytes += field_raw.capacity();
+  }
+  return bytes;
+}
 }  // namespace gendb
