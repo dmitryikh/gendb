@@ -51,13 +51,19 @@ class ClosedPosition : private gendb::MessageBase {
   });
 
   static constexpr std::array<gendb::FixedFieldDescriptor, 4> kFixedFieldDescriptors = {
-      gendb::FixedFieldDescriptor{PositionId, 4, 0},
-      gendb::FixedFieldDescriptor{AccountId, 4, 1},
-      gendb::FixedFieldDescriptor{Volume, 4, 2},
-      gendb::FixedFieldDescriptor{Profit, 4, 3},
+      gendb::FixedFieldDescriptor{PositionId, 4, gendb::FixedStorageWidth::Byte4, 0, 0, 0u, 0},
+      gendb::FixedFieldDescriptor{AccountId, 4, gendb::FixedStorageWidth::Byte4, 1, 1, 1u, 0},
+      gendb::FixedFieldDescriptor{Volume, 4, gendb::FixedStorageWidth::Byte4, 2, 2, 3u, 0},
+      gendb::FixedFieldDescriptor{Profit, 4, gendb::FixedStorageWidth::Byte4, 3, 3, 7u, 0},
   };
 
-  static constexpr gendb::MessageLayout kLayout{kFixedFieldDescriptors};
+  static constexpr std::array<uint8_t, gendb::kFixedStorageClassCount> kFixedWordCounts = {
+      0,
+      1,
+      0,
+  };
+
+  static constexpr gendb::MessageLayout kLayout{kFixedFieldDescriptors, kFixedWordCounts};
 
   // Field reflection metadata using common FieldInfo struct
   static constexpr std::array<gendb::FieldInfo, 5> kFieldsInfo = {
@@ -78,15 +84,23 @@ class ClosedPosition : private gendb::MessageBase {
   ClosedPosition(std::span<const uint8_t> span) : MessageBase(span, &kLayout) {}
 
   bool has_position_id() const { return HasField(PositionId); }
-  int32_t position_id() const { return ReadScalarField<int32_t>(PositionId, 0); }
+  int32_t position_id() const {
+    return ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[0], int32_t>(0);
+  }
   bool has_account_id() const { return HasField(AccountId); }
-  int32_t account_id() const { return ReadScalarField<int32_t>(AccountId, 0); }
+  int32_t account_id() const {
+    return ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[1], int32_t>(0);
+  }
   bool has_volume() const { return HasField(Volume); }
-  int32_t volume() const { return ReadScalarField<int32_t>(Volume, 0); }
+  int32_t volume() const {
+    return ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[2], int32_t>(0);
+  }
   bool has_instrument() const { return HasField(Instrument); }
-  std::string_view instrument() const { return ReadStringField(Instrument, ""); }
+  std::string_view instrument() const { return ReadSparseKnownStringField(Instrument, ""); }
   bool has_profit() const { return HasField(Profit); }
-  float profit() const { return ReadScalarField<float>(Profit, 0.0f); }
+  float profit() const {
+    return ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[3], float>(0.0f);
+  }
 
   // MessageBase methods.
   using gendb::MessageBase::FieldCount;
@@ -254,12 +268,20 @@ class Position : private gendb::MessageBase {
   });
 
   static constexpr std::array<gendb::FixedFieldDescriptor, 5> kFixedFieldDescriptors = {
-      gendb::FixedFieldDescriptor{PositionId, 4, 0}, gendb::FixedFieldDescriptor{AccountId, 4, 1},
-      gendb::FixedFieldDescriptor{Volume, 4, 2},     gendb::FixedFieldDescriptor{OpenPrice, 4, 3},
-      gendb::FixedFieldDescriptor{Direction, 4, 4},
+      gendb::FixedFieldDescriptor{PositionId, 4, gendb::FixedStorageWidth::Byte4, 0, 0, 0u, 0},
+      gendb::FixedFieldDescriptor{AccountId, 4, gendb::FixedStorageWidth::Byte4, 1, 1, 1u, 0},
+      gendb::FixedFieldDescriptor{Volume, 4, gendb::FixedStorageWidth::Byte4, 2, 2, 3u, 0},
+      gendb::FixedFieldDescriptor{OpenPrice, 4, gendb::FixedStorageWidth::Byte4, 3, 3, 7u, 0},
+      gendb::FixedFieldDescriptor{Direction, 4, gendb::FixedStorageWidth::Byte4, 4, 4, 15u, 0},
   };
 
-  static constexpr gendb::MessageLayout kLayout{kFixedFieldDescriptors};
+  static constexpr std::array<uint8_t, gendb::kFixedStorageClassCount> kFixedWordCounts = {
+      0,
+      1,
+      0,
+  };
+
+  static constexpr gendb::MessageLayout kLayout{kFixedFieldDescriptors, kFixedWordCounts};
 
   // Field reflection metadata using common FieldInfo struct
   static constexpr std::array<gendb::FieldInfo, 6> kFieldsInfo = {
@@ -283,18 +305,27 @@ class Position : private gendb::MessageBase {
   Position(std::span<const uint8_t> span) : MessageBase(span, &kLayout) {}
 
   bool has_position_id() const { return HasField(PositionId); }
-  int32_t position_id() const { return ReadScalarField<int32_t>(PositionId, 0); }
+  int32_t position_id() const {
+    return ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[0], int32_t>(0);
+  }
   bool has_account_id() const { return HasField(AccountId); }
-  int32_t account_id() const { return ReadScalarField<int32_t>(AccountId, 0); }
+  int32_t account_id() const {
+    return ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[1], int32_t>(0);
+  }
   bool has_volume() const { return HasField(Volume); }
-  int32_t volume() const { return ReadScalarField<int32_t>(Volume, 0); }
+  int32_t volume() const {
+    return ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[2], int32_t>(0);
+  }
   bool has_instrument() const { return HasField(Instrument); }
-  std::string_view instrument() const { return ReadStringField(Instrument, ""); }
+  std::string_view instrument() const { return ReadSparseKnownStringField(Instrument, ""); }
   bool has_open_price() const { return HasField(OpenPrice); }
-  float open_price() const { return ReadScalarField<float>(OpenPrice, 0.0f); }
+  float open_price() const {
+    return ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[3], float>(0.0f);
+  }
   bool has_direction() const { return HasField(Direction); }
   gendb::tests::Direction direction() const {
-    return static_cast<gendb::tests::Direction>(ReadScalarField<uint32_t>(Direction, 0));
+    return static_cast<gendb::tests::Direction>(
+        ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[4], uint32_t>(0));
   }
 
   // MessageBase methods.

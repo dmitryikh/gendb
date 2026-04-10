@@ -173,6 +173,30 @@ void BM_Gendb_Position_ReadHotFields(benchmark::State& state) {
   }
 }
 
+void BM_Gendb_Position_ReadFixedHotFields(benchmark::State& state) {
+  assert(kValidated);
+  const auto bytes = BuildGendbPosition(gbench::kPositionFull);
+  const Position position(bytes);
+  state.counters["serialized_bytes"] = static_cast<double>(bytes.size());
+  for (auto _ : state) {
+    benchmark::DoNotOptimize(position.position_id());
+    benchmark::DoNotOptimize(position.account_id());
+    benchmark::DoNotOptimize(position.volume());
+    benchmark::DoNotOptimize(position.open_price());
+  }
+}
+
+void BM_Gendb_Position_ReadSparseHotFields(benchmark::State& state) {
+  assert(kValidated);
+  const auto bytes = BuildGendbPosition(gbench::kPositionFull);
+  const Position position(bytes);
+  state.counters["serialized_bytes"] = static_cast<double>(bytes.size());
+  for (auto _ : state) {
+    benchmark::DoNotOptimize(position.instrument().data());
+    benchmark::DoNotOptimize(position.instrument().size());
+  }
+}
+
 void BM_Gendb_Position_EndToEnd(benchmark::State& state) {
   assert(kValidated);
   const auto sample = MakeGendbPositionBuilder(gbench::kPositionFull).second;
@@ -255,6 +279,49 @@ void BM_Gendb_AccountFull_ReadHotFields(benchmark::State& state) {
     benchmark::DoNotOptimize(account.age());
     benchmark::DoNotOptimize(account.is_active());
     benchmark::DoNotOptimize(account.balance());
+  }
+}
+
+void BM_Gendb_AccountFull_ReadFixedHotFields(benchmark::State& state) {
+  assert(kValidated);
+  const auto bytes = BuildGendbAccount(gbench::kAccountFull, false);
+  const Account account(bytes);
+  state.counters["serialized_bytes"] = static_cast<double>(bytes.size());
+  for (auto _ : state) {
+    benchmark::DoNotOptimize(account.account_id());
+    benchmark::DoNotOptimize(account.age());
+    benchmark::DoNotOptimize(account.is_active());
+    benchmark::DoNotOptimize(account.balance());
+  }
+}
+
+void BM_Gendb_AccountFull_ReadSparseHotFields(benchmark::State& state) {
+  assert(kValidated);
+  const auto bytes = BuildGendbAccount(gbench::kAccountFull, false);
+  const Account account(bytes);
+  state.counters["serialized_bytes"] = static_cast<double>(bytes.size());
+  for (auto _ : state) {
+    benchmark::DoNotOptimize(account.name().data());
+    benchmark::DoNotOptimize(account.name().size());
+    benchmark::DoNotOptimize(account.address().data());
+    benchmark::DoNotOptimize(account.address().size());
+    benchmark::DoNotOptimize(account.config_name().data());
+    benchmark::DoNotOptimize(account.config_name().size());
+  }
+}
+
+void BM_Gendb_AccountFull_ReadSameFieldRepeatedly(benchmark::State& state) {
+  assert(kValidated);
+  const auto bytes = BuildGendbAccount(gbench::kAccountFull, false);
+  const Account account(bytes);
+  state.counters["serialized_bytes"] = static_cast<double>(bytes.size());
+  for (auto _ : state) {
+    benchmark::DoNotOptimize(account.name().data());
+    benchmark::DoNotOptimize(account.name().size());
+    benchmark::DoNotOptimize(account.name().data());
+    benchmark::DoNotOptimize(account.name().size());
+    benchmark::DoNotOptimize(account.name().data());
+    benchmark::DoNotOptimize(account.name().size());
   }
 }
 
@@ -348,11 +415,16 @@ BENCHMARK(BM_Gendb_Position_Build);
 BENCHMARK(BM_Gendb_Position_SerializeOnly);
 BENCHMARK(BM_Gendb_Position_View);
 BENCHMARK(BM_Gendb_Position_ReadHotFields);
+BENCHMARK(BM_Gendb_Position_ReadFixedHotFields);
+BENCHMARK(BM_Gendb_Position_ReadSparseHotFields);
 BENCHMARK(BM_Gendb_Position_EndToEnd);
 BENCHMARK(BM_Gendb_AccountFull_Build);
 BENCHMARK(BM_Gendb_AccountFull_SerializeOnly);
 BENCHMARK(BM_Gendb_AccountFull_View);
 BENCHMARK(BM_Gendb_AccountFull_ReadHotFields);
+BENCHMARK(BM_Gendb_AccountFull_ReadFixedHotFields);
+BENCHMARK(BM_Gendb_AccountFull_ReadSparseHotFields);
+BENCHMARK(BM_Gendb_AccountFull_ReadSameFieldRepeatedly);
 BENCHMARK(BM_Gendb_AccountFull_EndToEnd);
 BENCHMARK(BM_Gendb_AccountSparse_Build);
 BENCHMARK(BM_Gendb_AccountSparse_SerializeOnly);

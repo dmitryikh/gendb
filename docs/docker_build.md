@@ -69,6 +69,18 @@ For representative numbers, use a `Release` build:
 ./scripts/docker-bench-release.sh
 ```
 
+To capture the benchmark output into a text file you can commit as a reference:
+
+```bash
+./scripts/docker-bench-release-to-file.sh
+```
+
+By default this writes to `benchmarks/reference/release_benchmarks.txt`. You can also pass a custom path:
+
+```bash
+./scripts/docker-bench-release-to-file.sh benchmarks/reference/my_run.txt
+```
+
 Equivalent explicit Docker command:
 
 ```bash

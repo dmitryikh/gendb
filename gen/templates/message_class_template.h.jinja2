@@ -57,11 +57,17 @@ class {{ table.name }} : private gendb::MessageBase {
 
   static constexpr std::array<gendb::FixedFieldDescriptor, {{ table.fixed_fields | length }}> kFixedFieldDescriptors = {
     {% for field in table.fixed_fields %}
-    gendb::FixedFieldDescriptor{ {{ field.name | pascalcase }}, {{ field.size }}, {{ loop.index0 }} },
+    gendb::FixedFieldDescriptor{ {{ field.name | pascalcase }}, {{ field.logical_size }}, gendb::FixedStorageWidth::Byte{{ field.storage_width }}, {{ field.bit_index_within_class }}, {{ field.ordinal_within_class }}, {{ field.mask_before_within_word }}u, {{ field.word_index_within_class }} },
     {% endfor %}
   };
 
-  static constexpr gendb::MessageLayout kLayout{kFixedFieldDescriptors};
+  static constexpr std::array<uint8_t, gendb::kFixedStorageClassCount> kFixedWordCounts = {
+      {{ table.fixed_word_counts[1] }},
+      {{ table.fixed_word_counts[4] }},
+      {{ table.fixed_word_counts[8] }},
+  };
+
+  static constexpr gendb::MessageLayout kLayout{kFixedFieldDescriptors, kFixedWordCounts};
 
   // Field reflection metadata using common FieldInfo struct
   static constexpr std::array<gendb::FieldInfo, {{ table.fields | length }}> kFieldsInfo = {
@@ -80,7 +86,11 @@ class {{ table.name }} : private gendb::MessageBase {
   {% for field in table.fields %}
   bool has_{{field.name}}() const { return HasField({{ field.name | pascalcase }}); }
   {% if field.cpp_type == 'std::string' %}
-  std::string_view {{field.name}}() const { return ReadStringField({{ field.name | pascalcase }}, ""); }
+  std::string_view {{field.name}}() const { return ReadSparseKnownStringField({{ field.name | pascalcase }}, ""); }
+  {% elif field.is_fixed_size and field.field_kind == FieldKind.ENUM %}
+  {{ field.cpp_type }} {{field.name}}() const { return static_cast<{{ field.cpp_type }}>(ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[{{ field.fixed_descriptor_index }}], {{field.underlying_type}}>({{ field.default }})); }
+  {% elif field.is_fixed_size %}
+  {{ field.cpp_type }} {{field.name}}() const { return ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[{{ field.fixed_descriptor_index }}], {{ field.cpp_type }}>({{ field.default }}); }
   {% elif field.field_kind == FieldKind.ENUM %}
   {{ field.cpp_type }} {{field.name}}() const { return static_cast<{{ field.cpp_type }}>(ReadScalarField<{{field.underlying_type}}>({{ field.name | pascalcase }}, {{ field.default }})); }
   {% else %}

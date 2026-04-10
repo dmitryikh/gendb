@@ -42,13 +42,19 @@ class MetadataValue : private gendb::MessageBase {
   });
 
   static constexpr std::array<gendb::FixedFieldDescriptor, 4> kFixedFieldDescriptors = {
-      gendb::FixedFieldDescriptor{Type, 4, 0},
-      gendb::FixedFieldDescriptor{Id, 4, 1},
-      gendb::FixedFieldDescriptor{IntValue, 4, 2},
-      gendb::FixedFieldDescriptor{FloatValue, 4, 3},
+      gendb::FixedFieldDescriptor{Type, 4, gendb::FixedStorageWidth::Byte4, 0, 0, 0u, 0},
+      gendb::FixedFieldDescriptor{Id, 4, gendb::FixedStorageWidth::Byte4, 1, 1, 1u, 0},
+      gendb::FixedFieldDescriptor{IntValue, 4, gendb::FixedStorageWidth::Byte4, 2, 2, 3u, 0},
+      gendb::FixedFieldDescriptor{FloatValue, 4, gendb::FixedStorageWidth::Byte4, 3, 3, 7u, 0},
   };
 
-  static constexpr gendb::MessageLayout kLayout{kFixedFieldDescriptors};
+  static constexpr std::array<uint8_t, gendb::kFixedStorageClassCount> kFixedWordCounts = {
+      0,
+      1,
+      0,
+  };
+
+  static constexpr gendb::MessageLayout kLayout{kFixedFieldDescriptors, kFixedWordCounts};
 
   // Field reflection metadata using common FieldInfo struct
   static constexpr std::array<gendb::FieldInfo, 5> kFieldsInfo = {
@@ -71,16 +77,23 @@ class MetadataValue : private gendb::MessageBase {
 
   bool has_type() const { return HasField(Type); }
   gendb::MetadataType type() const {
-    return static_cast<gendb::MetadataType>(ReadScalarField<uint32_t>(Type, 0));
+    return static_cast<gendb::MetadataType>(
+        ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[0], uint32_t>(0));
   }
   bool has_id() const { return HasField(Id); }
-  uint32_t id() const { return ReadScalarField<uint32_t>(Id, 0); }
+  uint32_t id() const {
+    return ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[1], uint32_t>(0);
+  }
   bool has_int_value() const { return HasField(IntValue); }
-  int32_t int_value() const { return ReadScalarField<int32_t>(IntValue, 0); }
+  int32_t int_value() const {
+    return ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[2], int32_t>(0);
+  }
   bool has_string_value() const { return HasField(StringValue); }
-  std::string_view string_value() const { return ReadStringField(StringValue, ""); }
+  std::string_view string_value() const { return ReadSparseKnownStringField(StringValue, ""); }
   bool has_float_value() const { return HasField(FloatValue); }
-  float float_value() const { return ReadScalarField<float>(FloatValue, 0.0f); }
+  float float_value() const {
+    return ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[3], float>(0.0f);
+  }
 
   // MessageBase methods.
   using gendb::MessageBase::FieldCount;

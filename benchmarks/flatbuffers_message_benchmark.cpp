@@ -161,6 +161,30 @@ void BM_FlatBuffers_Position_ReadHotFields(benchmark::State& state) {
   }
 }
 
+void BM_FlatBuffers_Position_ReadFixedHotFields(benchmark::State& state) {
+  assert(kValidated);
+  const auto [bytes, stats] = BuildFlatbuffersPosition(fbench::kPositionFull);
+  const auto* position = flatbuffers::GetRoot<gendb::tests::Position>(bytes.data());
+  state.counters["serialized_bytes"] = static_cast<double>(stats.serialized_bytes);
+  for (auto _ : state) {
+    benchmark::DoNotOptimize(position->position_id());
+    benchmark::DoNotOptimize(position->account_id());
+    benchmark::DoNotOptimize(position->volume());
+    benchmark::DoNotOptimize(position->open_price());
+  }
+}
+
+void BM_FlatBuffers_Position_ReadSparseHotFields(benchmark::State& state) {
+  assert(kValidated);
+  const auto [bytes, stats] = BuildFlatbuffersPosition(fbench::kPositionFull);
+  const auto* position = flatbuffers::GetRoot<gendb::tests::Position>(bytes.data());
+  state.counters["serialized_bytes"] = static_cast<double>(stats.serialized_bytes);
+  for (auto _ : state) {
+    benchmark::DoNotOptimize(position->instrument()->c_str());
+    benchmark::DoNotOptimize(position->instrument()->size());
+  }
+}
+
 void BM_FlatBuffers_Position_EndToEnd(benchmark::State& state) {
   assert(kValidated);
   const auto sample = BuildFlatbuffersPosition(fbench::kPositionFull).second;
@@ -243,6 +267,49 @@ void BM_FlatBuffers_AccountFull_ReadHotFields(benchmark::State& state) {
     benchmark::DoNotOptimize(account->age());
     benchmark::DoNotOptimize(account->is_active());
     benchmark::DoNotOptimize(account->balance());
+  }
+}
+
+void BM_FlatBuffers_AccountFull_ReadFixedHotFields(benchmark::State& state) {
+  assert(kValidated);
+  const auto [bytes, stats] = BuildFlatbuffersAccount(fbench::kAccountFull, false);
+  const auto* account = flatbuffers::GetRoot<gendb::tests::Account>(bytes.data());
+  state.counters["serialized_bytes"] = static_cast<double>(stats.serialized_bytes);
+  for (auto _ : state) {
+    benchmark::DoNotOptimize(account->account_id());
+    benchmark::DoNotOptimize(account->age());
+    benchmark::DoNotOptimize(account->is_active());
+    benchmark::DoNotOptimize(account->balance());
+  }
+}
+
+void BM_FlatBuffers_AccountFull_ReadSparseHotFields(benchmark::State& state) {
+  assert(kValidated);
+  const auto [bytes, stats] = BuildFlatbuffersAccount(fbench::kAccountFull, false);
+  const auto* account = flatbuffers::GetRoot<gendb::tests::Account>(bytes.data());
+  state.counters["serialized_bytes"] = static_cast<double>(stats.serialized_bytes);
+  for (auto _ : state) {
+    benchmark::DoNotOptimize(account->name()->c_str());
+    benchmark::DoNotOptimize(account->name()->size());
+    benchmark::DoNotOptimize(account->address()->c_str());
+    benchmark::DoNotOptimize(account->address()->size());
+    benchmark::DoNotOptimize(account->config_name()->c_str());
+    benchmark::DoNotOptimize(account->config_name()->size());
+  }
+}
+
+void BM_FlatBuffers_AccountFull_ReadSameFieldRepeatedly(benchmark::State& state) {
+  assert(kValidated);
+  const auto [bytes, stats] = BuildFlatbuffersAccount(fbench::kAccountFull, false);
+  const auto* account = flatbuffers::GetRoot<gendb::tests::Account>(bytes.data());
+  state.counters["serialized_bytes"] = static_cast<double>(stats.serialized_bytes);
+  for (auto _ : state) {
+    benchmark::DoNotOptimize(account->name()->c_str());
+    benchmark::DoNotOptimize(account->name()->size());
+    benchmark::DoNotOptimize(account->name()->c_str());
+    benchmark::DoNotOptimize(account->name()->size());
+    benchmark::DoNotOptimize(account->name()->c_str());
+    benchmark::DoNotOptimize(account->name()->size());
   }
 }
 
@@ -340,11 +407,16 @@ BENCHMARK(BM_FlatBuffers_Position_Build);
 BENCHMARK(BM_FlatBuffers_Position_SerializeOnly);
 BENCHMARK(BM_FlatBuffers_Position_View);
 BENCHMARK(BM_FlatBuffers_Position_ReadHotFields);
+BENCHMARK(BM_FlatBuffers_Position_ReadFixedHotFields);
+BENCHMARK(BM_FlatBuffers_Position_ReadSparseHotFields);
 BENCHMARK(BM_FlatBuffers_Position_EndToEnd);
 BENCHMARK(BM_FlatBuffers_AccountFull_Build);
 BENCHMARK(BM_FlatBuffers_AccountFull_SerializeOnly);
 BENCHMARK(BM_FlatBuffers_AccountFull_View);
 BENCHMARK(BM_FlatBuffers_AccountFull_ReadHotFields);
+BENCHMARK(BM_FlatBuffers_AccountFull_ReadFixedHotFields);
+BENCHMARK(BM_FlatBuffers_AccountFull_ReadSparseHotFields);
+BENCHMARK(BM_FlatBuffers_AccountFull_ReadSameFieldRepeatedly);
 BENCHMARK(BM_FlatBuffers_AccountFull_EndToEnd);
 BENCHMARK(BM_FlatBuffers_AccountSparse_Build);
 BENCHMARK(BM_FlatBuffers_AccountSparse_SerializeOnly);

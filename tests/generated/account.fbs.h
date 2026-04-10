@@ -40,13 +40,19 @@ class Account : private gendb::MessageBase {
   });
 
   static constexpr std::array<gendb::FixedFieldDescriptor, 4> kFixedFieldDescriptors = {
-      gendb::FixedFieldDescriptor{AccountId, 8, 0},
-      gendb::FixedFieldDescriptor{Age, 4, 1},
-      gendb::FixedFieldDescriptor{IsActive, 1, 2},
-      gendb::FixedFieldDescriptor{Balance, 4, 3},
+      gendb::FixedFieldDescriptor{AccountId, 8, gendb::FixedStorageWidth::Byte8, 0, 0, 0u, 0},
+      gendb::FixedFieldDescriptor{Age, 4, gendb::FixedStorageWidth::Byte4, 0, 0, 0u, 0},
+      gendb::FixedFieldDescriptor{IsActive, 1, gendb::FixedStorageWidth::Byte1, 0, 0, 0u, 0},
+      gendb::FixedFieldDescriptor{Balance, 4, gendb::FixedStorageWidth::Byte4, 1, 1, 1u, 0},
   };
 
-  static constexpr gendb::MessageLayout kLayout{kFixedFieldDescriptors};
+  static constexpr std::array<uint8_t, gendb::kFixedStorageClassCount> kFixedWordCounts = {
+      1,
+      1,
+      1,
+  };
+
+  static constexpr gendb::MessageLayout kLayout{kFixedFieldDescriptors, kFixedWordCounts};
 
   // Field reflection metadata using common FieldInfo struct
   static constexpr std::array<gendb::FieldInfo, 8> kFieldsInfo = {
@@ -75,21 +81,29 @@ class Account : private gendb::MessageBase {
   Account(std::span<const uint8_t> span) : MessageBase(span, &kLayout) {}
 
   bool has_account_id() const { return HasField(AccountId); }
-  uint64_t account_id() const { return ReadScalarField<uint64_t>(AccountId, 0ULL); }
+  uint64_t account_id() const {
+    return ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[0], uint64_t>(0ULL);
+  }
   bool has_trader_id() const { return HasField(TraderId); }
-  std::string_view trader_id() const { return ReadStringField(TraderId, ""); }
+  std::string_view trader_id() const { return ReadSparseKnownStringField(TraderId, ""); }
   bool has_name() const { return HasField(Name); }
-  std::string_view name() const { return ReadStringField(Name, ""); }
+  std::string_view name() const { return ReadSparseKnownStringField(Name, ""); }
   bool has_address() const { return HasField(Address); }
-  std::string_view address() const { return ReadStringField(Address, ""); }
+  std::string_view address() const { return ReadSparseKnownStringField(Address, ""); }
   bool has_age() const { return HasField(Age); }
-  int32_t age() const { return ReadScalarField<int32_t>(Age, 0); }
+  int32_t age() const {
+    return ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[1], int32_t>(0);
+  }
   bool has_is_active() const { return HasField(IsActive); }
-  bool is_active() const { return ReadScalarField<bool>(IsActive, false); }
+  bool is_active() const {
+    return ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[2], bool>(false);
+  }
   bool has_balance() const { return HasField(Balance); }
-  float balance() const { return ReadScalarField<float>(Balance, 0.0f); }
+  float balance() const {
+    return ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[3], float>(0.0f);
+  }
   bool has_config_name() const { return HasField(ConfigName); }
-  std::string_view config_name() const { return ReadStringField(ConfigName, ""); }
+  std::string_view config_name() const { return ReadSparseKnownStringField(ConfigName, ""); }
 
   // MessageBase methods.
   using gendb::MessageBase::FieldCount;

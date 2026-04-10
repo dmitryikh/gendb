@@ -38,19 +38,33 @@ def main():
             fields = []
             fixed_indices = []
             fixed_fields = []
+            storage_class_counts = {1: 0, 4: 0, 8: 0}
             for f_name in store.list_fields(msg_name):
                 f = store.get_field(msg_name, f_name)
+                f.fixed_descriptor_index = None
                 fields.append(f)
 
                 if f.is_fixed_size:
                     fixed_indices.append(f.id)
+                    logical_size = base_types.cpp_type_size(f.underlying_type) if f.field_kind == FieldKind.ENUM else base_types.type_size(f.type)
+                    storage_width = 4 if logical_size == 2 else logical_size
+                    class_ordinal = storage_class_counts[storage_width]
+                    word_index = class_ordinal // 32
+                    bit_index = class_ordinal
+                    mask_before = (1 << (class_ordinal % 32)) - 1
+                    f.fixed_descriptor_index = len(fixed_fields)
                     fixed_fields.append({
                         "idx": f.id,
                         "name": f.name,
-                        "size": base_types.cpp_type_size(f.underlying_type)
-                        if f.field_kind == FieldKind.ENUM
-                        else base_types.type_size(f.type),
+                        "fixed_descriptor_index": f.fixed_descriptor_index,
+                        "logical_size": logical_size,
+                        "storage_width": storage_width,
+                        "bit_index_within_class": bit_index,
+                        "ordinal_within_class": class_ordinal,
+                        "mask_before_within_word": mask_before,
+                        "word_index_within_class": word_index,
                     })
+                    storage_class_counts[storage_width] += 1
             K = (max(fixed_indices) // 32 + 1) if fixed_indices else 1
             namespace, name = naming.split_namespace_class(msg.full_name)
             tables.append({
@@ -59,6 +73,11 @@ def main():
                 "fields": fields,
                 "fixed_indices": fixed_indices,
                 "fixed_fields": fixed_fields,
+                "fixed_word_counts": {
+                    1: (storage_class_counts[1] + 31) // 32,
+                    4: (storage_class_counts[4] + 31) // 32,
+                    8: (storage_class_counts[8] + 31) // 32,
+                },
                 "K": K,
             })
 

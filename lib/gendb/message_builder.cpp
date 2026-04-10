@@ -13,6 +13,8 @@ void SetBitmapBit(Bytes& bitmap, uint16_t bit_index) {
   WriteScalarRaw<uint32_t>(bitmap.data() + word_index * sizeof(uint32_t), word);
 }
 
+size_t WidthIndex(FixedStorageWidth width) { return FixedStorageClassIndex(width); }
+
 }  // namespace
 
 MessageBuilder::MessageBuilder(const MessageLayout* layout) : _layout(layout) {}
@@ -39,14 +41,16 @@ void MessageBuilder::ClearField(int field_id) {
   _fields.erase(field_id);
 }
 std::vector<uint8_t> MessageBuilder::Build() {
-  Bytes fixed_bitmap;
-  Bytes fixed_payload;
+  std::array<Bytes, kFixedStorageClassCount> fixed_bitmaps;
+  std::array<Bytes, kFixedStorageClassCount> fixed_payloads;
   Bytes sparse_dir;
   Bytes sparse_payload;
 
-  const size_t fixed_word_count =
-      _layout == nullptr ? 0 : (_layout->fixed_fields.size() + 31) / 32;
-  fixed_bitmap.resize(fixed_word_count * sizeof(uint32_t), 0);
+  if (_layout != nullptr) {
+    for (size_t i = 0; i < kFixedStorageClassCount; ++i) {
+      fixed_bitmaps[i].resize(_layout->fixed_word_counts[i] * sizeof(uint32_t), 0);
+    }
+  }
 
   if (_layout != nullptr) {
     for (const auto& descriptor : _layout->fixed_fields) {
@@ -54,11 +58,16 @@ std::vector<uint8_t> MessageBuilder::Build() {
       if (it == _fields.end()) {
         continue;
       }
-      if (it->second.size() != descriptor.size) {
+      const size_t stored_width = static_cast<size_t>(descriptor.storage_width);
+      if (it->second.size() != descriptor.logical_size && it->second.size() != stored_width) {
         continue;
       }
-      SetBitmapBit(fixed_bitmap, descriptor.bit_index);
-      fixed_payload.insert(fixed_payload.end(), it->second.begin(), it->second.end());
+      const size_t class_index = WidthIndex(descriptor.storage_width);
+      SetBitmapBit(fixed_bitmaps[class_index], descriptor.bit_index_within_class);
+      const size_t payload_offset = fixed_payloads[class_index].size();
+      fixed_payloads[class_index].resize(payload_offset + stored_width, 0);
+      memcpy(fixed_payloads[class_index].data() + payload_offset, it->second.data(),
+             std::min(it->second.size(), stored_width));
     }
   }
 
@@ -67,7 +76,9 @@ std::vector<uint8_t> MessageBuilder::Build() {
   uint16_t sparse_count = 0;
   for (const auto& [field_id, field_raw] : _fields) {
     const FixedFieldDescriptor* descriptor = FindFixedField(field_id);
-    if (descriptor != nullptr && field_raw.size() == descriptor->size) {
+    if (descriptor != nullptr &&
+        (field_raw.size() == descriptor->logical_size ||
+         field_raw.size() == static_cast<size_t>(descriptor->storage_width))) {
       continue;
     }
     const uint32_t payload_offset = sparse_payload.size();
@@ -80,10 +91,14 @@ std::vector<uint8_t> MessageBuilder::Build() {
     ++sparse_count;
   }
 
-  const size_t total_length = internal::kMessageHeaderSize + fixed_bitmap.size() +
-                              fixed_payload.size() + sparse_dir.size() + sparse_payload.size();
+  const size_t total_length = internal::kMessageHeaderSize + fixed_bitmaps[0].size() +
+                              fixed_bitmaps[1].size() + fixed_bitmaps[2].size() +
+                              fixed_payloads[0].size() + fixed_payloads[1].size() +
+                              fixed_payloads[2].size() + sparse_dir.size() + sparse_payload.size();
   if (sparse_count > std::numeric_limits<uint16_t>::max() ||
-      fixed_payload.size() > std::numeric_limits<uint16_t>::max() ||
+      fixed_payloads[0].size() > std::numeric_limits<uint16_t>::max() ||
+      fixed_payloads[1].size() > std::numeric_limits<uint16_t>::max() ||
+      fixed_payloads[2].size() > std::numeric_limits<uint16_t>::max() ||
       sparse_dir.size() > std::numeric_limits<uint16_t>::max() ||
       total_length > std::numeric_limits<uint32_t>::max()) {
     return {};
@@ -96,21 +111,29 @@ std::vector<uint8_t> MessageBuilder::Build() {
   uint8_t* cursor = message.data();
   cursor[0] = internal::kMessageFormatVersion;
   cursor[1] = 0;
-  cursor[2] = static_cast<uint8_t>(fixed_word_count);
-  cursor[3] = 0;
-  WriteScalarRaw<uint16_t>(cursor + 4, sparse_count);
-  WriteScalarRaw<uint16_t>(cursor + 6, static_cast<uint16_t>(fixed_payload.size()));
-  WriteScalarRaw<uint16_t>(cursor + 8, static_cast<uint16_t>(sparse_dir.size()));
-  WriteScalarRaw<uint32_t>(cursor + 10, static_cast<uint32_t>(total_length));
+  cursor[2] = _layout == nullptr ? 0 : _layout->fixed_word_counts[0];
+  cursor[3] = _layout == nullptr ? 0 : _layout->fixed_word_counts[1];
+  cursor[4] = _layout == nullptr ? 0 : _layout->fixed_word_counts[2];
+  cursor[5] = 0;
+  WriteScalarRaw<uint16_t>(cursor + 6, sparse_count);
+  WriteScalarRaw<uint16_t>(cursor + 8, static_cast<uint16_t>(fixed_payloads[0].size()));
+  WriteScalarRaw<uint16_t>(cursor + 10, static_cast<uint16_t>(fixed_payloads[1].size()));
+  WriteScalarRaw<uint16_t>(cursor + 12, static_cast<uint16_t>(fixed_payloads[2].size()));
+  WriteScalarRaw<uint16_t>(cursor + 14, static_cast<uint16_t>(sparse_dir.size()));
+  WriteScalarRaw<uint32_t>(cursor + 16, static_cast<uint32_t>(total_length));
 
   cursor += internal::kMessageHeaderSize;
-  if (!fixed_bitmap.empty()) {
-    memcpy(cursor, fixed_bitmap.data(), fixed_bitmap.size());
-    cursor += fixed_bitmap.size();
+  for (const auto& fixed_bitmap : fixed_bitmaps) {
+    if (!fixed_bitmap.empty()) {
+      memcpy(cursor, fixed_bitmap.data(), fixed_bitmap.size());
+      cursor += fixed_bitmap.size();
+    }
   }
-  if (!fixed_payload.empty()) {
-    memcpy(cursor, fixed_payload.data(), fixed_payload.size());
-    cursor += fixed_payload.size();
+  for (const auto& fixed_payload : fixed_payloads) {
+    if (!fixed_payload.empty()) {
+      memcpy(cursor, fixed_payload.data(), fixed_payload.size());
+      cursor += fixed_payload.size();
+    }
   }
   if (!sparse_dir.empty()) {
     memcpy(cursor, sparse_dir.data(), sparse_dir.size());

@@ -134,6 +134,55 @@ TEST(AccountTest, AllFieldsSetGet) {
   EXPECT_TRUE(account.has_config_name());
 }
 
+TEST(AccountTest, FixedGettersHandleMissingEarlierFields) {
+  AccountBuilder builder;
+  builder.set_age(45);
+  builder.set_balance(321.5f);
+  std::vector<uint8_t> buffer = builder.Build();
+  Account account{buffer};
+
+  EXPECT_FALSE(account.has_account_id());
+  EXPECT_EQ(account.age(), 45);
+  EXPECT_FALSE(account.has_is_active());
+  EXPECT_FLOAT_EQ(account.balance(), 321.5f);
+}
+
+TEST(AccountTest, SparseStringReadsRemainStableAcrossRepeatedLookups) {
+  AccountBuilder builder;
+  builder.set_account_id(77);
+  builder.set_name("Repeated Name");
+  builder.set_address("Repeated Address");
+  builder.AddStringField(99, "unknown");
+  std::vector<uint8_t> buffer = builder.Build();
+  Account account{buffer};
+
+  const auto first_name = account.name();
+  const auto second_name = account.name();
+  const auto first_address = account.address();
+  const auto second_address = account.address();
+
+  EXPECT_EQ(first_name, "Repeated Name");
+  EXPECT_EQ(second_name, "Repeated Name");
+  EXPECT_EQ(first_address, "Repeated Address");
+  EXPECT_EQ(second_address, "Repeated Address");
+  EXPECT_EQ(account.FieldRaw(99).size(), std::string_view("unknown").size());
+}
+
+TEST(AccountTest, FixedFieldRawMatchesStoredWidths) {
+  AccountBuilder builder;
+  builder.set_account_id(11);
+  builder.set_age(22);
+  builder.set_is_active(true);
+  builder.set_balance(33.5f);
+  std::vector<uint8_t> buffer = builder.Build();
+  Account account{buffer};
+
+  EXPECT_EQ(account.FieldRaw(Account::AccountId).size(), sizeof(uint64_t));
+  EXPECT_EQ(account.FieldRaw(Account::Age).size(), sizeof(int32_t));
+  EXPECT_EQ(account.FieldRaw(Account::IsActive).size(), sizeof(bool));
+  EXPECT_EQ(account.FieldRaw(Account::Balance).size(), sizeof(float));
+}
+
 TEST(PositionTest, AllFieldsSetGet) {
   auto buffer = ParseText<Position>(R"m(
     position_id: 101

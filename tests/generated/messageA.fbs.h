@@ -41,10 +41,16 @@ class MessageA : private gendb::MessageBase {
   });
 
   static constexpr std::array<gendb::FixedFieldDescriptor, 1> kFixedFieldDescriptors = {
-      gendb::FixedFieldDescriptor{Key, 4, 0},
+      gendb::FixedFieldDescriptor{Key, 4, gendb::FixedStorageWidth::Byte4, 0, 0, 0u, 0},
   };
 
-  static constexpr gendb::MessageLayout kLayout{kFixedFieldDescriptors};
+  static constexpr std::array<uint8_t, gendb::kFixedStorageClassCount> kFixedWordCounts = {
+      0,
+      1,
+      0,
+  };
+
+  static constexpr gendb::MessageLayout kLayout{kFixedFieldDescriptors, kFixedWordCounts};
 
   // Field reflection metadata using common FieldInfo struct
   static constexpr std::array<gendb::FieldInfo, 2> kFieldsInfo = {
@@ -60,10 +66,11 @@ class MessageA : private gendb::MessageBase {
 
   bool has_key() const { return HasField(Key); }
   gendb::tests::primitive::KeyEnum key() const {
-    return static_cast<gendb::tests::primitive::KeyEnum>(ReadScalarField<uint32_t>(Key, 0));
+    return static_cast<gendb::tests::primitive::KeyEnum>(
+        ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[0], uint32_t>(0));
   }
   bool has_data() const { return HasField(Data); }
-  std::string_view data() const { return ReadStringField(Data, ""); }
+  std::string_view data() const { return ReadSparseKnownStringField(Data, ""); }
 
   // MessageBase methods.
   using gendb::MessageBase::FieldCount;

@@ -27,10 +27,16 @@ class Config : private gendb::MessageBase {
   });
 
   static constexpr std::array<gendb::FixedFieldDescriptor, 1> kFixedFieldDescriptors = {
-      gendb::FixedFieldDescriptor{MaxTradeVolume, 8, 0},
+      gendb::FixedFieldDescriptor{MaxTradeVolume, 8, gendb::FixedStorageWidth::Byte8, 0, 0, 0u, 0},
   };
 
-  static constexpr gendb::MessageLayout kLayout{kFixedFieldDescriptors};
+  static constexpr std::array<uint8_t, gendb::kFixedStorageClassCount> kFixedWordCounts = {
+      0,
+      0,
+      1,
+  };
+
+  static constexpr gendb::MessageLayout kLayout{kFixedFieldDescriptors, kFixedWordCounts};
 
   // Field reflection metadata using common FieldInfo struct
   static constexpr std::array<gendb::FieldInfo, 2> kFieldsInfo = {
@@ -46,9 +52,11 @@ class Config : private gendb::MessageBase {
   Config(std::span<const uint8_t> span) : MessageBase(span, &kLayout) {}
 
   bool has_config_name() const { return HasField(ConfigName); }
-  std::string_view config_name() const { return ReadStringField(ConfigName, ""); }
+  std::string_view config_name() const { return ReadSparseKnownStringField(ConfigName, ""); }
   bool has_max_trade_volume() const { return HasField(MaxTradeVolume); }
-  double max_trade_volume() const { return ReadScalarField<double>(MaxTradeVolume, 0.0); }
+  double max_trade_volume() const {
+    return ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[0], double>(0.0);
+  }
 
   // MessageBase methods.
   using gendb::MessageBase::FieldCount;

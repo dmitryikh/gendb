@@ -16,14 +16,22 @@ All integers are little-endian.
 ```text
 [version:u8]
 [flags:u8]
-[fixed_word_count:u8]
+[fixed1_word_count:u8]
+[fixed4_word_count:u8]
+[fixed8_word_count:u8]
 [reserved:u8]
 [sparse_count:u16]
-[fixed_payload_size:u16]
+[fixed1_payload_size:u16]
+[fixed4_payload_size:u16]
+[fixed8_payload_size:u16]
 [sparse_dir_size:u16]
 [total_size:u32]
-[fixed_presence_bitmap]
-[fixed_payload]
+[fixed1_presence_bitmap]
+[fixed4_presence_bitmap]
+[fixed8_presence_bitmap]
+[fixed1_payload]
+[fixed4_payload]
+[fixed8_payload]
 [sparse_directory]
 [sparse_payload]
 ```
@@ -32,15 +40,19 @@ All integers are little-endian.
 
 The fixed section stores only known fixed-size fields from the current schema:
 
-- one presence bit per fixed-known field
-- payload bytes packed in fixed-field schema order
+- one presence bit per fixed-known field within its width class
+- payload bytes packed separately for `1`, `4`, and `8` byte storage classes
 - no per-field offsets or type tags
 
 Generated readers use schema metadata to:
 
-- test the presence bit
-- compute the byte offset by summing widths of present earlier fixed fields
+- select the storage class at compile time
+- test the presence bit in that class bitmap
+- compute the byte offset with `popcount` over earlier set bits in the same class
 - return a zero-copy slice or scalar value
+
+Logical `2`-byte fixed fields are stored in the `4`-byte section using a 4-byte slot with the
+value encoded in the low 2 bytes.
 
 Unknown fields are never stored in the fixed section.
 
