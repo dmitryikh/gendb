@@ -261,6 +261,11 @@ class MessageBase {
     uint32_t payload_len = 0;
   };
 
+  struct CachedSparseField {
+    int field_id = 0;
+    std::span<const uint8_t> value;
+  };
+
   template <FixedStorageWidth Width>
   uint8_t FixedWordCount() const {
     return HeaderPtr()[2 + FixedStorageClassIndex(Width)];
@@ -379,6 +384,8 @@ class MessageBase {
   std::optional<std::span<uint8_t>> LookupFixedFieldMutable(int field_id);
   std::optional<std::span<const uint8_t>> LookupSparseField(int field_id) const;
   std::optional<std::span<uint8_t>> LookupSparseFieldMutable(int field_id);
+  std::optional<std::span<const uint8_t>> LookupSparseFieldCached(int field_id) const;
+  void CacheSparseField(int field_id, std::span<const uint8_t> value) const;
   std::optional<SparseEntry> DecodeSparseEntry(size_t index) const;
   const absl::InlinedVector<SparseEntry, 8>& DecodedSparseEntries() const;
   const uint8_t* HeaderPtr() const { return _buffer; }
@@ -405,5 +412,6 @@ class MessageBase {
   const MessageLayout* _layout;
   mutable bool _sparse_index_built = false;
   mutable absl::InlinedVector<SparseEntry, 8> _decoded_sparse_entries;
+  mutable absl::InlinedVector<CachedSparseField, 4> _cached_sparse_fields;
 };
 }  // namespace gendb

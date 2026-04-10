@@ -198,6 +198,7 @@ const absl::InlinedVector<MessageBase::SparseEntry, 8>& MessageBase::DecodedSpar
   }
 
   _decoded_sparse_entries.clear();
+  _cached_sparse_fields.clear();
   _decoded_sparse_entries.reserve(SparseCount());
 
   const uint8_t* ptr = SparseDirPtr();
@@ -232,15 +233,58 @@ const absl::InlinedVector<MessageBase::SparseEntry, 8>& MessageBase::DecodedSpar
   return _decoded_sparse_entries;
 }
 
+std::optional<std::span<const uint8_t>> MessageBase::LookupSparseFieldCached(int field_id) const {
+  for (const auto& cached : _cached_sparse_fields) {
+    if (cached.field_id == field_id) {
+      return cached.value;
+    }
+  }
+  return std::nullopt;
+}
+
+void MessageBase::CacheSparseField(int field_id, std::span<const uint8_t> value) const {
+  for (auto& cached : _cached_sparse_fields) {
+    if (cached.field_id == field_id) {
+      cached.value = value;
+      return;
+    }
+  }
+  _cached_sparse_fields.push_back(CachedSparseField{
+      .field_id = field_id,
+      .value = value,
+  });
+}
+
 std::optional<std::span<const uint8_t>> MessageBase::LookupSparseField(int field_id) const {
+  if (auto cached = LookupSparseFieldCached(field_id); cached.has_value()) {
+    return cached;
+  }
+
   const auto& entries = DecodedSparseEntries();
+  if (entries.size() <= 8) {
+    for (const auto& entry : entries) {
+      if (entry.field_id == field_id) {
+        auto value =
+            std::span<const uint8_t>(SparsePayloadPtr() + entry.payload_offset, entry.payload_len);
+        CacheSparseField(field_id, value);
+        return value;
+      }
+      if (entry.field_id > field_id) {
+        return std::nullopt;
+      }
+    }
+    return std::nullopt;
+  }
+
   const auto it = std::lower_bound(
       entries.begin(), entries.end(), field_id,
       [](const SparseEntry& entry, int needle) { return entry.field_id < needle; });
   if (it == entries.end() || it->field_id != field_id) {
     return std::nullopt;
   }
-  return std::span<const uint8_t>(SparsePayloadPtr() + it->payload_offset, it->payload_len);
+  auto value = std::span<const uint8_t>(SparsePayloadPtr() + it->payload_offset, it->payload_len);
+  CacheSparseField(field_id, value);
+  return value;
 }
 
 std::optional<std::span<uint8_t>> MessageBase::LookupSparseFieldMutable(int field_id) {
