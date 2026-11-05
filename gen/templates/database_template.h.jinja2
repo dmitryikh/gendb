@@ -17,7 +17,7 @@
 
 #include "absl/status/status.h"
 #include "gendb/layered_storage.h"
-#include "gendb/message_patch.h"
+#include "gendb/message.h"
 #include "gendb/key_codec.h"
 
 {% if namespace %} namespace {{ namespace }} {
@@ -161,7 +161,7 @@ class ScopedWrite {
   {% endif %}
   absl::Status Get{{coll.type}}({% if coll.pk_fields | length > 1 %}const {{coll.type}}Key& key{% else %}{{ coll.pk_fields[0].const_ref_type }} {{coll.pk_fields[0].name}}{% endif %}, {{ coll.type}}& {{ coll.type_snake_case }}) const;
   absl::Status Put{{coll.type}}({% if coll.pk_fields | length > 1 %}const {{coll.type}}Key& key{% else %}{{ coll.pk_fields[0].const_ref_type }} {{coll.pk_fields[0].name}}{% endif %}, std::vector<uint8_t> {{ coll.type_snake_case }});
-  absl::Status Update{{coll.type}}({% if coll.pk_fields | length > 1 %}const {{coll.type}}Key& key{% else %}{{ coll.pk_fields[0].const_ref_type }} {{coll.pk_fields[0].name}}{% endif %}, const MessagePatch& update);
+  absl::Status Update{{coll.type}}({% if coll.pk_fields | length > 1 %}const {{coll.type}}Key& key{% else %}{{ coll.pk_fields[0].const_ref_type }} {{coll.pk_fields[0].name}}{% endif %}, const gendb::MessagePatch& update);
 {% endfor %}
 public:
 {% for idx in indices %}
@@ -186,7 +186,7 @@ public:
 {% for idx in indices %}
   void MaybeUpdate{{ idx.name_pascal_case }}Index(std::array<uint8_t, sizeof({{ idx.value_cpp_type }})> key,
                                     gendb::BytesConstView {{ idx.type|lower }}_buffer,
-                                    const MessagePatch* update);
+                                    const gendb::MessagePatch* update);
 {% endfor %}
 
  private:

@@ -87,7 +87,8 @@ def main():
         seq = store.get_sequence(seq_name)
         print(f"Sequence: {seq}")
 
-    errors = schema_validator.validate_names(store)
+    errors = (schema_validator.validate_names(store) + schema_validator.validate_field_ids(store)
+              + schema_validator.validate_collections(store))
     if errors:
         print("Schema validation errors found:")
         for error in errors:

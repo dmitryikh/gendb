@@ -64,7 +64,8 @@ def __message_from_flatc_obj(obj, enums: list[Enum], include_prefix=""):
             ref_type=ref_type,
             is_fixed_size=is_fixed,
             optional=True,  # All fields are optional
-            default=default
+            default=default,
+            deprecated=f.get("deprecated", False),
         ))
 
     # Sort fields by id

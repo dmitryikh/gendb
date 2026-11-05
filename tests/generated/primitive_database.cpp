@@ -7,7 +7,7 @@
 #include "absl/status/status.h"
 #include "gendb/bytes.h"
 #include "gendb/iterator.h"
-#include "gendb/message_patch.h"
+#include "gendb/message.h"
 #include "gendb/status.h"
 #include "messageA.fbs.h"
 #include "metadata.fbs.h"
@@ -45,11 +45,11 @@ absl::Status ScopedWrite::PutMetadataValue(const MetadataValueKey& key, Bytes me
 }
 
 absl::Status ScopedWrite::UpdateMetadataValue(const MetadataValueKey& key,
-                                              const MessagePatch& update) {
+                                              const gendb::MessagePatch& update) {
   Bytes* ptr = nullptr;
   auto key_ = ToMetadataValueKey(key);
   RETURN_IF_ERROR(_layered_storage.EnsureInTempStorage(MetadataValueCollId, key_, &ptr));
-  gendb::ApplyPatch<MetadataValue>(update, *ptr);
+  gendb::ApplyPatch(update, *ptr);
   return absl::OkStatus();
 }
 absl::Status Guard::GetMessageA(gendb::tests::primitive::KeyEnum key, MessageA& message_a) const {
@@ -74,11 +74,11 @@ absl::Status ScopedWrite::PutMessageA(gendb::tests::primitive::KeyEnum key, Byte
 }
 
 absl::Status ScopedWrite::UpdateMessageA(gendb::tests::primitive::KeyEnum key,
-                                         const MessagePatch& update) {
+                                         const gendb::MessagePatch& update) {
   Bytes* ptr = nullptr;
   auto key_ = ToMessageAKey(key);
   RETURN_IF_ERROR(_layered_storage.EnsureInTempStorage(MessageACollId, key_, &ptr));
-  gendb::ApplyPatch<MessageA>(update, *ptr);
+  gendb::ApplyPatch(update, *ptr);
   return absl::OkStatus();
 }
 

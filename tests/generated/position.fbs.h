@@ -1,4 +1,3 @@
-
 // AUTO GENERATED. DO NOT EDIT.
 //
 #pragma once
@@ -6,11 +5,9 @@
 #include <cstdint>
 #include <span>
 #include <string_view>
+#include <utility>
 
-#include "gendb/bits.h"
-#include "gendb/message_base.h"
-#include "gendb/message_builder.h"
-#include "gendb/message_patch.h"
+#include "gendb/message.h"
 #include "gendb/reflection.h"
 
 // Enum definitions
@@ -31,39 +28,16 @@ static constexpr std::array<gendb::EnumValueInfo, 3> kDirectionValues = {
 
 // Message classes
 namespace gendb::tests {
-// GeneratedClass
-class ClosedPosition : private gendb::MessageBase {
+// Zero-copy view of a serialized ClosedPosition. Does not own the bytes.
+class ClosedPosition {
  public:
-  enum Field : int {
+  enum Field : gendb::FieldId {
     PositionId = 1,
     AccountId = 2,
     Volume = 3,
     Instrument = 4,
     Profit = 5,
-    MaxFields
   };
-
-  static constexpr std::array<uint32_t, 1> kFixedSizeFields = gendb::MakeConstexprFieldBitmask<1>({
-      PositionId,
-      AccountId,
-      Volume,
-      Profit,
-  });
-
-  static constexpr std::array<gendb::FixedFieldDescriptor, 4> kFixedFieldDescriptors = {
-      gendb::FixedFieldDescriptor{PositionId, 4, gendb::FixedStorageWidth::Byte4, 0, 0, 0u, 0},
-      gendb::FixedFieldDescriptor{AccountId, 4, gendb::FixedStorageWidth::Byte4, 1, 1, 1u, 0},
-      gendb::FixedFieldDescriptor{Volume, 4, gendb::FixedStorageWidth::Byte4, 2, 2, 3u, 0},
-      gendb::FixedFieldDescriptor{Profit, 4, gendb::FixedStorageWidth::Byte4, 3, 3, 7u, 0},
-  };
-
-  static constexpr std::array<uint8_t, gendb::kFixedStorageClassCount> kFixedWordCounts = {
-      0,
-      1,
-      0,
-  };
-
-  static constexpr gendb::MessageLayout kLayout{kFixedFieldDescriptors, kFixedWordCounts};
 
   // Field reflection metadata using common FieldInfo struct
   static constexpr std::array<gendb::FieldInfo, 5> kFieldsInfo = {
@@ -74,214 +48,151 @@ class ClosedPosition : private gendb::MessageBase {
       gendb::FieldInfo{"volume", Volume, gendb::FieldInfo::SCALAR, gendb::FieldInfo::INT32, "",
                        std::span<const gendb::EnumValueInfo>()},
       gendb::FieldInfo{"instrument", Instrument, gendb::FieldInfo::STRING,
-                       gendb::FieldInfo::UNKNOWN_SCALAR, "",
-                       std::span<const gendb::EnumValueInfo>()},
+                       gendb::FieldInfo::NOT_SCALAR, "", std::span<const gendb::EnumValueInfo>()},
       gendb::FieldInfo{"profit", Profit, gendb::FieldInfo::SCALAR, gendb::FieldInfo::FLOAT, "",
                        std::span<const gendb::EnumValueInfo>()},
   };
 
-  ClosedPosition() : MessageBase(&kLayout) {}
-  ClosedPosition(std::span<const uint8_t> span) : MessageBase(span, &kLayout) {}
+  ClosedPosition() = default;
+  // The bytes must outlive the view. Malformed bytes read as an empty message; check untrusted
+  // input with gendb::MessageView::Verify first.
+  ClosedPosition(std::span<const uint8_t> bytes) : _view(gendb::MessageView::OpenOrEmpty(bytes)) {}
 
-  bool has_position_id() const { return HasField(PositionId); }
-  int32_t position_id() const {
-    return ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[0], int32_t>(0);
-  }
-  bool has_account_id() const { return HasField(AccountId); }
-  int32_t account_id() const {
-    return ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[1], int32_t>(0);
-  }
-  bool has_volume() const { return HasField(Volume); }
-  int32_t volume() const {
-    return ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[2], int32_t>(0);
-  }
-  bool has_instrument() const { return HasField(Instrument); }
-  std::string_view instrument() const { return ReadSparseKnownStringField(Instrument, ""); }
-  bool has_profit() const { return HasField(Profit); }
-  float profit() const {
-    return ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[3], float>(0.0f);
-  }
+  bool has_position_id() const { return _view.Has<PositionId, gendb::KindOf<int32_t>>(); }
+  int32_t position_id() const { return _view.Get<PositionId, int32_t>(0); }
+  bool has_account_id() const { return _view.Has<AccountId, gendb::KindOf<int32_t>>(); }
+  int32_t account_id() const { return _view.Get<AccountId, int32_t>(0); }
+  bool has_volume() const { return _view.Has<Volume, gendb::KindOf<int32_t>>(); }
+  int32_t volume() const { return _view.Get<Volume, int32_t>(0); }
+  bool has_instrument() const { return _view.Has<Instrument, gendb::Kind::Var>(); }
+  std::string_view instrument() const { return _view.GetString<Instrument>(); }
+  bool has_profit() const { return _view.Has<Profit, gendb::KindOf<float>>(); }
+  float profit() const { return _view.Get<Profit, float>(0.0f); }
 
-  // MessageBase methods.
-  using gendb::MessageBase::FieldCount;
-  using gendb::MessageBase::GetFieldsMask;
-  using gendb::MessageBase::HasField;
-  static constexpr const gendb::MessageLayout* LayoutPtr() { return &kLayout; }
-  std::span<const uint8_t> FieldRaw(int field_id) const {
-    return gendb::MessageBase::FieldRaw(field_id);
-  }
+  // Any field by ID, including unknown ones: this schema's future or deprecated fields.
+  bool HasField(gendb::FieldId id) const { return _view.Has(id); }
+  uint32_t FieldCount() const { return _view.FieldCount(); }
+  const gendb::MessageView& View() const { return _view; }
 
-  friend class ClosedPositionBuilder;
+ private:
+  gendb::MessageView _view;
 };
 
+// Builds a serialized ClosedPosition. Strings are borrowed: they must stay alive until Build().
 class ClosedPositionBuilder : public gendb::MessageBuilder {
  public:
-  ClosedPositionBuilder() : MessageBuilder(ClosedPosition::LayoutPtr()) {}
-  ClosedPositionBuilder(ClosedPosition& obj) : MessageBuilder(obj) {}
+  ClosedPositionBuilder() = default;
+  // Starts from all fields of `source`, known or unknown; its bytes must outlive the builder.
+  explicit ClosedPositionBuilder(const ClosedPosition& source) : MessageBuilder(source.View()) {}
 
   ClosedPositionBuilder& set_position_id(int32_t value) {
     AddField<int32_t>(ClosedPosition::PositionId, value);
+    return *this;
+  }
+  ClosedPositionBuilder& clear_position_id() {
+    ClearField(ClosedPosition::PositionId);
     return *this;
   }
   ClosedPositionBuilder& set_account_id(int32_t value) {
     AddField<int32_t>(ClosedPosition::AccountId, value);
     return *this;
   }
-  ClosedPositionBuilder& set_volume(int32_t value) {
-    AddField<int32_t>(ClosedPosition::Volume, value);
-    return *this;
-  }
-  ClosedPositionBuilder& set_instrument(std::string_view value) {
-    AddStringField(ClosedPosition::Instrument, value);
-    return *this;
-  }
-  ClosedPositionBuilder& set_profit(float value) {
-    AddField<float>(ClosedPosition::Profit, value);
-    return *this;
-  }
-
-  ClosedPositionBuilder& clear_position_id() {
-    ClearField(ClosedPosition::PositionId);
-    return *this;
-  }
   ClosedPositionBuilder& clear_account_id() {
     ClearField(ClosedPosition::AccountId);
+    return *this;
+  }
+  ClosedPositionBuilder& set_volume(int32_t value) {
+    AddField<int32_t>(ClosedPosition::Volume, value);
     return *this;
   }
   ClosedPositionBuilder& clear_volume() {
     ClearField(ClosedPosition::Volume);
     return *this;
   }
+  ClosedPositionBuilder& set_instrument(std::string_view value) {
+    AddStringField(ClosedPosition::Instrument, value);
+    return *this;
+  }
+  template <gendb::TemporaryString S>
+  ClosedPositionBuilder& set_instrument(S&&) = delete;
   ClosedPositionBuilder& clear_instrument() {
     ClearField(ClosedPosition::Instrument);
+    return *this;
+  }
+  ClosedPositionBuilder& set_profit(float value) {
+    AddField<float>(ClosedPosition::Profit, value);
     return *this;
   }
   ClosedPositionBuilder& clear_profit() {
     ClearField(ClosedPosition::Profit);
     return *this;
   }
-
-  std::vector<uint8_t> Build() { return MessageBuilder::Build(); }
 };
 
+// Builds a partial update of ClosedPosition. Owns its string values.
 class ClosedPositionPatchBuilder {
  public:
   ClosedPositionPatchBuilder() = default;
-  // TODO: Add constructor with primary key fields.
 
   ClosedPositionPatchBuilder&& set_position_id(int32_t value) && {
-    _builder.set_position_id(value);
-    SetFieldBit(modified, ClosedPosition::PositionId);
-    UnsetFieldBit(removed, ClosedPosition::PositionId);
+    _patch.Set<int32_t>(ClosedPosition::PositionId, value);
     return std::move(*this);
   }
   ClosedPositionPatchBuilder&& clear_position_id() && {
-    SetFieldBit(removed, ClosedPosition::PositionId);
-    UnsetFieldBit(modified, ClosedPosition::PositionId);
-    _builder.clear_position_id();
+    _patch.Remove(ClosedPosition::PositionId);
     return std::move(*this);
   }
   ClosedPositionPatchBuilder&& set_account_id(int32_t value) && {
-    _builder.set_account_id(value);
-    SetFieldBit(modified, ClosedPosition::AccountId);
-    UnsetFieldBit(removed, ClosedPosition::AccountId);
+    _patch.Set<int32_t>(ClosedPosition::AccountId, value);
     return std::move(*this);
   }
   ClosedPositionPatchBuilder&& clear_account_id() && {
-    SetFieldBit(removed, ClosedPosition::AccountId);
-    UnsetFieldBit(modified, ClosedPosition::AccountId);
-    _builder.clear_account_id();
+    _patch.Remove(ClosedPosition::AccountId);
     return std::move(*this);
   }
   ClosedPositionPatchBuilder&& set_volume(int32_t value) && {
-    _builder.set_volume(value);
-    SetFieldBit(modified, ClosedPosition::Volume);
-    UnsetFieldBit(removed, ClosedPosition::Volume);
+    _patch.Set<int32_t>(ClosedPosition::Volume, value);
     return std::move(*this);
   }
   ClosedPositionPatchBuilder&& clear_volume() && {
-    SetFieldBit(removed, ClosedPosition::Volume);
-    UnsetFieldBit(modified, ClosedPosition::Volume);
-    _builder.clear_volume();
+    _patch.Remove(ClosedPosition::Volume);
     return std::move(*this);
   }
   ClosedPositionPatchBuilder&& set_instrument(std::string_view value) && {
-    _builder.set_instrument(value);
-    SetFieldBit(modified, ClosedPosition::Instrument);
-    UnsetFieldBit(removed, ClosedPosition::Instrument);
+    _patch.CopyString(ClosedPosition::Instrument, value);
     return std::move(*this);
   }
   ClosedPositionPatchBuilder&& clear_instrument() && {
-    SetFieldBit(removed, ClosedPosition::Instrument);
-    UnsetFieldBit(modified, ClosedPosition::Instrument);
-    _builder.clear_instrument();
+    _patch.Remove(ClosedPosition::Instrument);
     return std::move(*this);
   }
   ClosedPositionPatchBuilder&& set_profit(float value) && {
-    _builder.set_profit(value);
-    SetFieldBit(modified, ClosedPosition::Profit);
-    UnsetFieldBit(removed, ClosedPosition::Profit);
+    _patch.Set<float>(ClosedPosition::Profit, value);
     return std::move(*this);
   }
   ClosedPositionPatchBuilder&& clear_profit() && {
-    SetFieldBit(removed, ClosedPosition::Profit);
-    UnsetFieldBit(modified, ClosedPosition::Profit);
-    _builder.clear_profit();
+    _patch.Remove(ClosedPosition::Profit);
     return std::move(*this);
   }
 
-  gendb::MessagePatch Build() && {
-    gendb::MessagePatch patch;
-    patch.modified = std::move(modified);
-    patch.removed = std::move(removed);
-    patch.layout = ClosedPosition::LayoutPtr();
-    patch.buffer = _builder.Build();
-    return patch;
-  }
+  gendb::MessagePatch Build() && { return std::move(_patch); }
 
  private:
-  gendb::Bitmask modified;
-  gendb::Bitmask removed;
-  ClosedPositionBuilder _builder;
+  gendb::MessagePatch _patch;
 };
 }  // namespace gendb::tests
 namespace gendb::tests {
-// GeneratedClass
-class Position : private gendb::MessageBase {
+// Zero-copy view of a serialized Position. Does not own the bytes.
+class Position {
  public:
-  enum Field : int {
+  enum Field : gendb::FieldId {
     PositionId = 1,
     AccountId = 2,
     Volume = 3,
     Instrument = 4,
     OpenPrice = 5,
     Direction = 6,
-    MaxFields
   };
-
-  static constexpr std::array<uint32_t, 1> kFixedSizeFields = gendb::MakeConstexprFieldBitmask<1>({
-      PositionId,
-      AccountId,
-      Volume,
-      OpenPrice,
-      Direction,
-  });
-
-  static constexpr std::array<gendb::FixedFieldDescriptor, 5> kFixedFieldDescriptors = {
-      gendb::FixedFieldDescriptor{PositionId, 4, gendb::FixedStorageWidth::Byte4, 0, 0, 0u, 0},
-      gendb::FixedFieldDescriptor{AccountId, 4, gendb::FixedStorageWidth::Byte4, 1, 1, 1u, 0},
-      gendb::FixedFieldDescriptor{Volume, 4, gendb::FixedStorageWidth::Byte4, 2, 2, 3u, 0},
-      gendb::FixedFieldDescriptor{OpenPrice, 4, gendb::FixedStorageWidth::Byte4, 3, 3, 7u, 0},
-      gendb::FixedFieldDescriptor{Direction, 4, gendb::FixedStorageWidth::Byte4, 4, 4, 15u, 0},
-  };
-
-  static constexpr std::array<uint8_t, gendb::kFixedStorageClassCount> kFixedWordCounts = {
-      0,
-      1,
-      0,
-  };
-
-  static constexpr gendb::MessageLayout kLayout{kFixedFieldDescriptors, kFixedWordCounts};
 
   // Field reflection metadata using common FieldInfo struct
   static constexpr std::array<gendb::FieldInfo, 6> kFieldsInfo = {
@@ -292,202 +203,159 @@ class Position : private gendb::MessageBase {
       gendb::FieldInfo{"volume", Volume, gendb::FieldInfo::SCALAR, gendb::FieldInfo::INT32, "",
                        std::span<const gendb::EnumValueInfo>()},
       gendb::FieldInfo{"instrument", Instrument, gendb::FieldInfo::STRING,
-                       gendb::FieldInfo::UNKNOWN_SCALAR, "",
-                       std::span<const gendb::EnumValueInfo>()},
+                       gendb::FieldInfo::NOT_SCALAR, "", std::span<const gendb::EnumValueInfo>()},
       gendb::FieldInfo{"open_price", OpenPrice, gendb::FieldInfo::SCALAR, gendb::FieldInfo::FLOAT,
                        "", std::span<const gendb::EnumValueInfo>()},
-      gendb::FieldInfo{"direction", Direction, gendb::FieldInfo::ENUM,
-                       gendb::FieldInfo::UNKNOWN_SCALAR, "gendb::tests::Direction",
+      gendb::FieldInfo{"direction", Direction, gendb::FieldInfo::ENUM, gendb::FieldInfo::UINT32,
+                       "gendb::tests::Direction",
                        std::span<const gendb::EnumValueInfo>(kDirectionValues)},
   };
 
-  Position() : MessageBase(&kLayout) {}
-  Position(std::span<const uint8_t> span) : MessageBase(span, &kLayout) {}
+  Position() = default;
+  // The bytes must outlive the view. Malformed bytes read as an empty message; check untrusted
+  // input with gendb::MessageView::Verify first.
+  Position(std::span<const uint8_t> bytes) : _view(gendb::MessageView::OpenOrEmpty(bytes)) {}
 
-  bool has_position_id() const { return HasField(PositionId); }
-  int32_t position_id() const {
-    return ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[0], int32_t>(0);
-  }
-  bool has_account_id() const { return HasField(AccountId); }
-  int32_t account_id() const {
-    return ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[1], int32_t>(0);
-  }
-  bool has_volume() const { return HasField(Volume); }
-  int32_t volume() const {
-    return ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[2], int32_t>(0);
-  }
-  bool has_instrument() const { return HasField(Instrument); }
-  std::string_view instrument() const { return ReadSparseKnownStringField(Instrument, ""); }
-  bool has_open_price() const { return HasField(OpenPrice); }
-  float open_price() const {
-    return ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[3], float>(0.0f);
-  }
-  bool has_direction() const { return HasField(Direction); }
+  bool has_position_id() const { return _view.Has<PositionId, gendb::KindOf<int32_t>>(); }
+  int32_t position_id() const { return _view.Get<PositionId, int32_t>(0); }
+  bool has_account_id() const { return _view.Has<AccountId, gendb::KindOf<int32_t>>(); }
+  int32_t account_id() const { return _view.Get<AccountId, int32_t>(0); }
+  bool has_volume() const { return _view.Has<Volume, gendb::KindOf<int32_t>>(); }
+  int32_t volume() const { return _view.Get<Volume, int32_t>(0); }
+  bool has_instrument() const { return _view.Has<Instrument, gendb::Kind::Var>(); }
+  std::string_view instrument() const { return _view.GetString<Instrument>(); }
+  bool has_open_price() const { return _view.Has<OpenPrice, gendb::KindOf<float>>(); }
+  float open_price() const { return _view.Get<OpenPrice, float>(0.0f); }
+  bool has_direction() const { return _view.Has<Direction, gendb::KindOf<uint32_t>>(); }
   gendb::tests::Direction direction() const {
-    return static_cast<gendb::tests::Direction>(
-        ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[4], uint32_t>(0));
+    return static_cast<gendb::tests::Direction>(_view.Get<Direction, uint32_t>(0));
   }
 
-  // MessageBase methods.
-  using gendb::MessageBase::FieldCount;
-  using gendb::MessageBase::GetFieldsMask;
-  using gendb::MessageBase::HasField;
-  static constexpr const gendb::MessageLayout* LayoutPtr() { return &kLayout; }
-  std::span<const uint8_t> FieldRaw(int field_id) const {
-    return gendb::MessageBase::FieldRaw(field_id);
-  }
+  // Any field by ID, including unknown ones: this schema's future or deprecated fields.
+  bool HasField(gendb::FieldId id) const { return _view.Has(id); }
+  uint32_t FieldCount() const { return _view.FieldCount(); }
+  const gendb::MessageView& View() const { return _view; }
 
-  friend class PositionBuilder;
+ private:
+  gendb::MessageView _view;
 };
 
+// Builds a serialized Position. Strings are borrowed: they must stay alive until Build().
 class PositionBuilder : public gendb::MessageBuilder {
  public:
-  PositionBuilder() : MessageBuilder(Position::LayoutPtr()) {}
-  PositionBuilder(Position& obj) : MessageBuilder(obj) {}
+  PositionBuilder() = default;
+  // Starts from all fields of `source`, known or unknown; its bytes must outlive the builder.
+  explicit PositionBuilder(const Position& source) : MessageBuilder(source.View()) {}
 
   PositionBuilder& set_position_id(int32_t value) {
     AddField<int32_t>(Position::PositionId, value);
+    return *this;
+  }
+  PositionBuilder& clear_position_id() {
+    ClearField(Position::PositionId);
     return *this;
   }
   PositionBuilder& set_account_id(int32_t value) {
     AddField<int32_t>(Position::AccountId, value);
     return *this;
   }
-  PositionBuilder& set_volume(int32_t value) {
-    AddField<int32_t>(Position::Volume, value);
-    return *this;
-  }
-  PositionBuilder& set_instrument(std::string_view value) {
-    AddStringField(Position::Instrument, value);
-    return *this;
-  }
-  PositionBuilder& set_open_price(float value) {
-    AddField<float>(Position::OpenPrice, value);
-    return *this;
-  }
-  PositionBuilder& set_direction(gendb::tests::Direction value) {
-    AddField<uint32_t>(Position::Direction, static_cast<uint32_t>(value));
-    return *this;
-  }
-
-  PositionBuilder& clear_position_id() {
-    ClearField(Position::PositionId);
-    return *this;
-  }
   PositionBuilder& clear_account_id() {
     ClearField(Position::AccountId);
+    return *this;
+  }
+  PositionBuilder& set_volume(int32_t value) {
+    AddField<int32_t>(Position::Volume, value);
     return *this;
   }
   PositionBuilder& clear_volume() {
     ClearField(Position::Volume);
     return *this;
   }
+  PositionBuilder& set_instrument(std::string_view value) {
+    AddStringField(Position::Instrument, value);
+    return *this;
+  }
+  template <gendb::TemporaryString S>
+  PositionBuilder& set_instrument(S&&) = delete;
   PositionBuilder& clear_instrument() {
     ClearField(Position::Instrument);
+    return *this;
+  }
+  PositionBuilder& set_open_price(float value) {
+    AddField<float>(Position::OpenPrice, value);
     return *this;
   }
   PositionBuilder& clear_open_price() {
     ClearField(Position::OpenPrice);
     return *this;
   }
+  PositionBuilder& set_direction(gendb::tests::Direction value) {
+    AddField<uint32_t>(Position::Direction, static_cast<uint32_t>(value));
+    return *this;
+  }
   PositionBuilder& clear_direction() {
     ClearField(Position::Direction);
     return *this;
   }
-
-  std::vector<uint8_t> Build() { return MessageBuilder::Build(); }
 };
 
+// Builds a partial update of Position. Owns its string values.
 class PositionPatchBuilder {
  public:
   PositionPatchBuilder() = default;
-  // TODO: Add constructor with primary key fields.
 
   PositionPatchBuilder&& set_position_id(int32_t value) && {
-    _builder.set_position_id(value);
-    SetFieldBit(modified, Position::PositionId);
-    UnsetFieldBit(removed, Position::PositionId);
+    _patch.Set<int32_t>(Position::PositionId, value);
     return std::move(*this);
   }
   PositionPatchBuilder&& clear_position_id() && {
-    SetFieldBit(removed, Position::PositionId);
-    UnsetFieldBit(modified, Position::PositionId);
-    _builder.clear_position_id();
+    _patch.Remove(Position::PositionId);
     return std::move(*this);
   }
   PositionPatchBuilder&& set_account_id(int32_t value) && {
-    _builder.set_account_id(value);
-    SetFieldBit(modified, Position::AccountId);
-    UnsetFieldBit(removed, Position::AccountId);
+    _patch.Set<int32_t>(Position::AccountId, value);
     return std::move(*this);
   }
   PositionPatchBuilder&& clear_account_id() && {
-    SetFieldBit(removed, Position::AccountId);
-    UnsetFieldBit(modified, Position::AccountId);
-    _builder.clear_account_id();
+    _patch.Remove(Position::AccountId);
     return std::move(*this);
   }
   PositionPatchBuilder&& set_volume(int32_t value) && {
-    _builder.set_volume(value);
-    SetFieldBit(modified, Position::Volume);
-    UnsetFieldBit(removed, Position::Volume);
+    _patch.Set<int32_t>(Position::Volume, value);
     return std::move(*this);
   }
   PositionPatchBuilder&& clear_volume() && {
-    SetFieldBit(removed, Position::Volume);
-    UnsetFieldBit(modified, Position::Volume);
-    _builder.clear_volume();
+    _patch.Remove(Position::Volume);
     return std::move(*this);
   }
   PositionPatchBuilder&& set_instrument(std::string_view value) && {
-    _builder.set_instrument(value);
-    SetFieldBit(modified, Position::Instrument);
-    UnsetFieldBit(removed, Position::Instrument);
+    _patch.CopyString(Position::Instrument, value);
     return std::move(*this);
   }
   PositionPatchBuilder&& clear_instrument() && {
-    SetFieldBit(removed, Position::Instrument);
-    UnsetFieldBit(modified, Position::Instrument);
-    _builder.clear_instrument();
+    _patch.Remove(Position::Instrument);
     return std::move(*this);
   }
   PositionPatchBuilder&& set_open_price(float value) && {
-    _builder.set_open_price(value);
-    SetFieldBit(modified, Position::OpenPrice);
-    UnsetFieldBit(removed, Position::OpenPrice);
+    _patch.Set<float>(Position::OpenPrice, value);
     return std::move(*this);
   }
   PositionPatchBuilder&& clear_open_price() && {
-    SetFieldBit(removed, Position::OpenPrice);
-    UnsetFieldBit(modified, Position::OpenPrice);
-    _builder.clear_open_price();
+    _patch.Remove(Position::OpenPrice);
     return std::move(*this);
   }
   PositionPatchBuilder&& set_direction(gendb::tests::Direction value) && {
-    _builder.set_direction(value);
-    SetFieldBit(modified, Position::Direction);
-    UnsetFieldBit(removed, Position::Direction);
+    _patch.Set<uint32_t>(Position::Direction, static_cast<uint32_t>(value));
     return std::move(*this);
   }
   PositionPatchBuilder&& clear_direction() && {
-    SetFieldBit(removed, Position::Direction);
-    UnsetFieldBit(modified, Position::Direction);
-    _builder.clear_direction();
+    _patch.Remove(Position::Direction);
     return std::move(*this);
   }
 
-  gendb::MessagePatch Build() && {
-    gendb::MessagePatch patch;
-    patch.modified = std::move(modified);
-    patch.removed = std::move(removed);
-    patch.layout = Position::LayoutPtr();
-    patch.buffer = _builder.Build();
-    return patch;
-  }
+  gendb::MessagePatch Build() && { return std::move(_patch); }
 
  private:
-  gendb::Bitmask modified;
-  gendb::Bitmask removed;
-  PositionBuilder _builder;
+  gendb::MessagePatch _patch;
 };
 }  // namespace gendb::tests

@@ -22,6 +22,7 @@ class Field:
     is_fixed_size: bool # if the size of the field is known at compile-time
     optional: bool = True
     default: Optional[Union[int, float, str]] = None
+    deprecated: bool = False # keeps its ID reserved; no generated accessors
 
 @dataclass
 class Enum:

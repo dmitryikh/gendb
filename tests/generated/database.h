@@ -13,7 +13,7 @@
 #include "gendb/iterator.h"
 #include "gendb/key_codec.h"
 #include "gendb/layered_storage.h"
-#include "gendb/message_patch.h"
+#include "gendb/message.h"
 #include "metadata.fbs.h"
 #include "position.fbs.h"
 
@@ -139,18 +139,18 @@ class ScopedWrite {
  private:
   absl::Status GetMetadataValue(const MetadataValueKey& key, MetadataValue& metadata_value) const;
   absl::Status PutMetadataValue(const MetadataValueKey& key, std::vector<uint8_t> metadata_value);
-  absl::Status UpdateMetadataValue(const MetadataValueKey& key, const MessagePatch& update);
+  absl::Status UpdateMetadataValue(const MetadataValueKey& key, const gendb::MessagePatch& update);
 
  public:
   absl::Status GetAccount(uint64_t account_id, Account& account) const;
   absl::Status PutAccount(uint64_t account_id, std::vector<uint8_t> account);
-  absl::Status UpdateAccount(uint64_t account_id, const MessagePatch& update);
+  absl::Status UpdateAccount(uint64_t account_id, const gendb::MessagePatch& update);
   absl::Status GetPosition(int32_t position_id, Position& position) const;
   absl::Status PutPosition(int32_t position_id, std::vector<uint8_t> position);
-  absl::Status UpdatePosition(int32_t position_id, const MessagePatch& update);
+  absl::Status UpdatePosition(int32_t position_id, const gendb::MessagePatch& update);
   absl::Status GetConfig(std::string_view config_name, Config& config) const;
   absl::Status PutConfig(std::string_view config_name, std::vector<uint8_t> config);
-  absl::Status UpdateConfig(std::string_view config_name, const MessagePatch& update);
+  absl::Status UpdateConfig(std::string_view config_name, const gendb::MessagePatch& update);
 
  public:
   gendb::Iterator<Account> GetAccountByAgeRange(int32_t min_age, int32_t max_age) const;
@@ -174,10 +174,10 @@ class ScopedWrite {
   // Index update helpers
   void MaybeUpdateAccountByAgeIndex(std::array<uint8_t, sizeof(uint64_t)> key,
                                     gendb::BytesConstView account_buffer,
-                                    const MessagePatch* update);
+                                    const gendb::MessagePatch* update);
   void MaybeUpdatePositionByAccountIdIndex(std::array<uint8_t, sizeof(int32_t)> key,
                                            gendb::BytesConstView position_buffer,
-                                           const MessagePatch* update);
+                                           const gendb::MessagePatch* update);
 
  private:
   Db& _db;

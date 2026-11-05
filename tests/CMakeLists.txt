@@ -1,8 +1,3 @@
-include(CTest)
-
-find_package(GTest REQUIRED)
-
-
 # Message codegen
 gen_db_messages(
     codegen
@@ -59,6 +54,7 @@ if(PYTHON_EXECUTABLE)
     add_test(
         NAME python_tests
         COMMAND ${PYTHON_EXECUTABLE} -m pytest ${CMAKE_SOURCE_DIR}/gen
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     )
 endif()
 

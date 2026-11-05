@@ -2,12 +2,29 @@
 
 #include <gtest/gtest.h>
 
+#include <string>
+#include <tuple>
+#include <vector>
+
 using namespace gendb::internal::key_codec;
+using gendb::Bytes;
+using gendb::BytesConstView;
+using gendb::BytesView;
+
+namespace {
+template <typename T>
+void AppendInteger(T value, Bytes& out) {
+  const size_t offset = out.size();
+  out.resize(offset + sizeof(T));
+  BytesView view(out.data() + offset, sizeof(T));
+  ASSERT_TRUE(WriteInteger(value, view));
+}
+}  // namespace
 
 TEST(KeyCodecTest, IntegerEncodeDecode) {
   Bytes out;
   int32_t value = -123456;
-  WriteInteger(value, out);
+  AppendInteger(value, out);
   BytesConstView in(out.data(), out.size());
   auto decoded = ReadInteger<int32_t>(in);
   EXPECT_EQ(decoded, value);
@@ -35,7 +52,7 @@ TEST(KeyCodecTest, EnumEncodeDecode) {
   enum class MyEnum : int8_t { A = 1, B = 2 };
   Bytes out;
   MyEnum e = MyEnum::B;
-  EncodeField(e, out);
+  out = EncodeTuple(std::tuple{e});
   BytesConstView in(out.data(), out.size());
   auto decoded = DecodeField<MyEnum>(in);
   EXPECT_EQ(decoded, MyEnum::B);
@@ -56,7 +73,7 @@ TEST(KeyCodecOrderTest, IntegerOrderPreserved) {
   std::vector<Bytes> encoded;
   for (auto v : values) {
     Bytes out;
-    WriteInteger(v, out);
+    AppendInteger(v, out);
     encoded.push_back(out);
   }
   for (size_t i = 1; i < encoded.size(); ++i) {
@@ -84,7 +101,7 @@ TEST(KeyCodecOrderTest, EnumOrderPreserved) {
   std::vector<Bytes> encoded;
   for (auto e : values) {
     Bytes out;
-    EncodeField(e, out);
+    out = EncodeTuple(std::tuple{e});
     encoded.push_back(out);
   }
   for (size_t i = 1; i < encoded.size(); ++i) {
@@ -110,7 +127,7 @@ TEST(KeyCodecOrderTest, NegativeIntegerOrderPreserved) {
   std::vector<Bytes> encoded;
   for (auto v : values) {
     Bytes out;
-    WriteInteger(v, out);
+    AppendInteger(v, out);
     encoded.push_back(out);
   }
   for (size_t i = 1; i < encoded.size(); ++i) {

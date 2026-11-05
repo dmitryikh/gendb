@@ -3,7 +3,10 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <filesystem>
+
 #include "account.fbs.h"
+#include "gendb/storage.h"
 #include "metadata.fbs.h"
 #include "position.fbs.h"
 
@@ -477,4 +480,140 @@ TEST(DbTest, NextAccountIdSequence_NotCommitted) {
   uint64_t next_id2 = 0;
   EXPECT_TRUE(writer2.NextAccountIdSequence(next_id2).ok());
   EXPECT_EQ(next_id2, 1);
+}
+
+TEST(DbTest, UnknownFieldsSurviveUpdate) {
+  Db db;
+  {
+    auto writer = db.CreateWriter();
+    AccountBuilder builder;
+    builder.set_account_id(50).set_name("Eve");
+    builder.AddStringField(1000, "from a newer schema");
+    EXPECT_TRUE(writer.PutAccount(50, builder.Build()).ok());
+    writer.Commit();
+  }
+  {
+    auto writer = db.CreateWriter();
+    EXPECT_TRUE(writer.UpdateAccount(50, AccountPatchBuilder().set_name("Evelyn").Build()).ok());
+    writer.Commit();
+  }
+  auto guard = db.SharedLock();
+  Account account;
+  ASSERT_TRUE(guard.GetAccount(50, account).ok());
+  EXPECT_EQ(account.name(), "Evelyn");
+  EXPECT_EQ(account.View().GetString(1000), "from a newer schema");
+}
+
+TEST(DbTest, IndexFollowsPatchesOfIndexedField) {
+  Db db;
+  {
+    auto writer = db.CreateWriter();
+    EXPECT_TRUE(
+        writer.PutAccount(60, AccountBuilder().set_account_id(60).set_age(20).Build()).ok());
+    EXPECT_TRUE(
+        writer.PutAccount(61, AccountBuilder().set_account_id(61).set_age(20).Build()).ok());
+    writer.Commit();
+  }
+  {
+    auto writer = db.CreateWriter();
+    // Moves to another key, leaves the index, and does not touch the indexed field.
+    EXPECT_TRUE(writer.UpdateAccount(60, AccountPatchBuilder().set_age(21).Build()).ok());
+    EXPECT_TRUE(writer.UpdateAccount(61, AccountPatchBuilder().clear_age().Build()).ok());
+    EXPECT_TRUE(writer.UpdateAccount(60, AccountPatchBuilder().set_name("x").Build()).ok());
+    writer.Commit();
+  }
+  auto guard = db.SharedLock();
+  auto ids_with_age = [&](int32_t age) {
+    std::vector<uint64_t> ids;
+    for (auto it = guard.GetAccountByAgeEqual(age); it.Valid(); it.Next()) {
+      ids.push_back(it.Value().account_id());
+    }
+    return ids;
+  };
+  EXPECT_THAT(ids_with_age(20), ::testing::IsEmpty());
+  EXPECT_THAT(ids_with_age(21), ::testing::ElementsAre(60));
+}
+
+// The whole path a value takes: generated builder, transaction, secondary index, sequence, patch,
+// commit, and generated read.
+TEST(DbTest, EndToEndWorkflow) {
+  Db db;
+  int32_t position_id = 0;
+  {
+    auto writer = db.CreateWriter();
+    uint64_t account_id = 0;
+    ASSERT_TRUE(writer.NextAccountIdSequence(account_id).ok());
+    const std::string name = "Grace";
+    AccountBuilder account;
+    account.set_account_id(account_id).set_name(name).set_age(33).set_is_active(true);
+    ASSERT_TRUE(writer.PutAccount(account_id, account.Build()).ok());
+
+    ASSERT_TRUE(writer.NextPositionIdSequence(position_id).ok());
+    PositionBuilder position;
+    position.set_position_id(position_id)
+        .set_account_id(static_cast<int32_t>(account_id))
+        .set_instrument("EURUSD")
+        .set_direction(Direction::kBuy);
+    ASSERT_TRUE(writer.PutPosition(position_id, position.Build()).ok());
+    writer.Commit();
+  }
+  {
+    auto writer = db.CreateWriter();
+    ASSERT_TRUE(writer
+                    .UpdatePosition(position_id, PositionPatchBuilder()
+                                                     .set_instrument("GBPUSD-long")
+                                                     .set_direction(Direction::kSell)
+                                                     .set_volume(250)
+                                                     .Build())
+                    .ok());
+    writer.Commit();
+  }
+  auto guard = db.SharedLock();
+  auto positions = guard.GetPositionByAccountIdEqual(1);
+  ASSERT_TRUE(positions.Valid());
+  auto position = positions.Value();
+  EXPECT_EQ(position.instrument(), "GBPUSD-long");
+  EXPECT_EQ(position.direction(), Direction::kSell);
+  EXPECT_EQ(position.volume(), 250);
+
+  Account account;
+  ASSERT_TRUE(guard.GetAccount(1, account).ok());
+  EXPECT_EQ(account.name(), "Grace");
+  EXPECT_TRUE(account.is_active());
+  positions.Next();
+  EXPECT_FALSE(positions.Valid());
+}
+
+// Generated messages persisted in RocksDB: bytes come back with arbitrary alignment.
+TEST(RocksDbMessageTest, MessagesSurviveReopenAndPatch) {
+  const auto path = std::filesystem::temp_directory_path() / "gendb_message_rocksdb_test";
+  std::filesystem::remove_all(path);
+  const auto key = ToAccountKey(uint64_t{7});
+  {
+    gendb::RocksDBStorage storage(path.string());
+    AccountBuilder builder;
+    builder.set_account_id(7).set_name("Heidi").set_balance(12.5f);
+    builder.AddStringField(1000, "from a newer schema");
+    storage.Put(AccountCollId, key, builder.Build());
+  }
+  {
+    gendb::RocksDBStorage storage(path.string());
+    gendb::BytesConstView value;
+    ASSERT_TRUE(storage.Get(AccountCollId, key, value).ok());
+    ASSERT_TRUE(gendb::MessageView::Verify(value));
+    gendb::Bytes bytes(value.begin(), value.end());
+    gendb::ApplyPatch(AccountPatchBuilder().set_name("Heidi Klum").Build(), bytes);
+    storage.Put(AccountCollId, key, std::move(bytes));
+  }
+  {
+    gendb::RocksDBStorage storage(path.string());
+    gendb::BytesConstView value;
+    ASSERT_TRUE(storage.Get(AccountCollId, key, value).ok());
+    Account account{value};
+    EXPECT_EQ(account.account_id(), 7u);
+    EXPECT_EQ(account.name(), "Heidi Klum");
+    EXPECT_EQ(account.balance(), 12.5f);
+    EXPECT_EQ(account.View().GetString(1000), "from a newer schema");
+  }
+  std::filesystem::remove_all(path);
 }

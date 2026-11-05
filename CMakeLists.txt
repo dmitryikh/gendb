@@ -7,6 +7,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+enable_testing()
+
 include(cmake/CodegenTargets.cmake)
 
 
@@ -24,17 +26,12 @@ find_package(absl REQUIRED)
 find_package(RocksDB REQUIRED)
 find_package(benchmark REQUIRED)
 find_package(flatbuffers REQUIRED)
+find_package(GTest REQUIRED)
 
 # Main library
 add_library(gendb_lib
-    lib/gendb/message_base.h
-    lib/gendb/message_base.cpp
-    lib/gendb/message_builder.h
-    lib/gendb/message_builder.cpp
-    lib/gendb/bits.h
-    lib/gendb/math.h
-    lib/gendb/message_patch.h
-    lib/gendb/message_patch.cpp
+    lib/gendb/message.h
+    lib/gendb/message.cpp
     lib/gendb/storage.h
     lib/gendb/storage.cpp
     lib/gendb/layered_storage.h
@@ -44,10 +41,9 @@ target_include_directories(gendb_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/lib)
 target_link_libraries(gendb_lib PUBLIC absl::inlined_vector absl::hash absl::span absl::status absl::strings RocksDB::rocksdb)
 add_dependencies(gendb_lib gendb_lib_codegen)
 
-# Add your test sources here
 add_executable(gendb_tests
-    lib/gendb/message_format_test.cpp
-    lib/gendb/bits_test.cpp
+    lib/gendb/key_codec_test.cpp
+    lib/gendb/message_test.cpp
     lib/gendb/storage_test.cpp
 )
 target_include_directories(gendb_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/lib)
@@ -56,22 +52,6 @@ add_test(NAME gendb_tests COMMAND gendb_tests)
 
 add_subdirectory(tests)
 add_subdirectory(benchmarks)
-
-# GoogleTest setup for unit tests
-enable_testing()
-include(FetchContent)
-FetchContent_Declare(
-    googletest
-    URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.zip
-)
-FetchContent_MakeAvailable(googletest)
-
-# Add your test sources here
-# add_executable(gendb_tests tests/test_message_format.cpp)
-# target_link_libraries(gendb_tests PRIVATE gendb_lib gtest_main)
-# add_test(NAME gendb_tests COMMAND gendb_tests)
-
-# TODO: Add your test sources
 
 find_program(CLANG_FORMAT_EXE NAMES clang-format)
 
