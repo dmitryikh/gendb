@@ -30,6 +30,8 @@ find_package(GTest REQUIRED)
 
 # Main library
 add_library(gendb_lib
+    lib/gendb/bits.h
+    lib/gendb/math.h
     lib/gendb/message.h
     lib/gendb/message.cpp
     lib/gendb/storage.h
@@ -42,6 +44,7 @@ target_link_libraries(gendb_lib PUBLIC absl::inlined_vector absl::hash absl::spa
 add_dependencies(gendb_lib gendb_lib_codegen)
 
 add_executable(gendb_tests
+    lib/gendb/bits_test.cpp
     lib/gendb/key_codec_test.cpp
     lib/gendb/message_test.cpp
     lib/gendb/storage_test.cpp
