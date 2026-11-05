@@ -2,6 +2,7 @@
 
 #include <bit>
 #include <cassert>
+#include <concepts>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
@@ -87,6 +88,11 @@ inline constexpr size_t FieldSize(const T&)
   return sizeof(std::underlying_type_t<T>);
 }
 
+template <std::floating_point T>
+inline constexpr size_t FieldSize(const T&) {
+  return sizeof(T);
+}
+
 inline size_t FieldSize(const std::string& s) {
   return s.size() + 1;
 }
@@ -111,6 +117,15 @@ inline bool EncodeField(const T& v, BytesView& out)
   return WriteInteger(static_cast<U>(v), out);
 }
 
+// Sign-magnitude to order-preserving: negatives reverse, and all sort below positives.
+template <std::floating_point T>
+inline bool EncodeField(const T& v, BytesView& out) {
+  using U = std::conditional_t<sizeof(T) == 4, uint32_t, uint64_t>;
+  const U bits = std::bit_cast<U>(v);
+  const U sign = U(1) << (sizeof(U) * 8 - 1);
+  return WriteInteger<U>((bits & sign) ? ~bits : (bits | sign), out);
+}
+
 inline bool EncodeField(std::string_view v, BytesView& out) {
   size_t needed = v.size() + 1;
   if (out.size() < needed) return false;
@@ -122,6 +137,16 @@ inline bool EncodeField(std::string_view v, BytesView& out) {
 
 inline bool EncodeField(const std::string& v, BytesView& out) {
   return EncodeField(std::string_view(v), out);
+}
+
+// Appends one field's encoding, for composite keys built in a string.
+template <typename T>
+inline void AppendField(const T& v, std::string& out) {
+  const size_t offset = out.size();
+  const size_t size = FieldSize(v);
+  out.resize(offset + size);
+  BytesView view(reinterpret_cast<uint8_t*>(out.data()) + offset, size);
+  EncodeField(v, view);
 }
 
 // Encode tuple to BytesView

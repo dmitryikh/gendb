@@ -39,7 +39,8 @@ def build_store_from_yaml(db_cfg):
             name=col["name"],
             type=col["type"],
             primary_key=col["primary_key"] if isinstance(col["primary_key"], list) else [col["primary_key"]],
-            private=col.get("private", False)
+            private=col.get("private", False),
+            ephemeral=col.get("ephemeral", False),
         )
         store.add_collection(collection)
     # Load indices
@@ -141,29 +142,22 @@ def main():
             "pk_fields": pk_fields,
             "pk_fixed_size": pk_fixed_size, # -1 in case the size is not fixed
             "private": col.private,
+            "ephemeral": col.ephemeral,
         })
 
     # Compose indices info
     indices = []
     for idx in store.indices.values():
         collection = store.get_collection(idx.collection)
-        msg = store.get_message(collection.type)
         key_type = store.get_field(collection.type, idx.field).type
-        value_type = store.get_field(collection.type, collection.primary_key[0]).type
         col_type = naming.split_namespace_class(collection.type)[1]
         indices.append({
             "name": idx.name,
             "name_pascal_case": naming.PascalCase(idx.name),
-            "collection": idx.collection,
+            "collection_enum": naming.PascalCase(col_type) + "CollId",
             "type": col_type,
-            "type_snake_case": naming.snake_case(col_type),
             "field": idx.field,
-            "field_enum": naming.PascalCase(idx.field),
-            "key_type": key_type,
-            "key_cpp_type": base_types.cpp_type(key_type),
-            "value_cpp_type": base_types.cpp_type(value_type),
-            "index_class": f"gendb::Index</*{idx.field}*/ {base_types.cpp_type(key_type)}, std::array<uint8_t, sizeof({base_types.cpp_type(value_type)})>>",
-            "primary_key": collection.primary_key[0],
+            "key_param_type": base_types.const_ref_type(key_type),
         })
 
     # Compose sequences info

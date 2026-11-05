@@ -5,86 +5,104 @@
 #include <cstdint>
 
 #include "absl/status/status.h"
-#include "gendb/bytes.h"
-#include "gendb/iterator.h"
-#include "gendb/message.h"
 #include "gendb/status.h"
 #include "messageA.fbs.h"
 #include "metadata.fbs.h"
 
 namespace gendb::tests::primitive {
 
-Guard Db::SharedLock() const {
-  return {*this, std::shared_lock<std::shared_mutex>(_reader_mutex)};
+namespace {
+
+gendb::EngineSchema MakeSchema() {
+  gendb::EngineSchema schema;
+  schema.collections.push_back({"metadata", /*ephemeral=*/false});
+  schema.collections.push_back({"Table_A", /*ephemeral=*/false});
+  return schema;
+}
+
+// Returns `value` if present, as message type T.
+template <typename T>
+absl::Status ToMessage(std::optional<gendb::BytesConstView> value, T& message) {
+  if (!value.has_value()) return absl::NotFoundError("Key not found");
+  message = T{*value};
+  return absl::OkStatus();
+}
+
+}  // namespace
+
+Db::Db() : _engine(std::make_unique<gendb::Engine>(MakeSchema())) {}
+
+absl::StatusOr<std::unique_ptr<Db>> Db::Open(const DbOptions& options) {
+  auto engine =
+      gendb::Engine::Open(MakeSchema(), {options.path, options.sync_commits, options.change_log});
+  if (!engine.ok()) return engine.status();
+  return std::unique_ptr<Db>(new Db(std::move(*engine)));
+}
+
+Snapshot Db::CreateSnapshot() const {
+  return Snapshot(*_engine);
 }
 
 ScopedWrite Db::CreateWriter() {
-  return {*this, std::unique_lock<std::mutex>(_writer_mutex)};
+  return ScopedWrite(*_engine);
 }
 
-absl::Status Guard::GetMetadataValue(const MetadataValueKey& key,
-                                     MetadataValue& metadata_value) const {
-  BytesConstView value;
-  RETURN_IF_ERROR(_layered_storage.Get(MetadataValueCollId, ToMetadataValueKey(key), value));
-  metadata_value = MetadataValue{value};
-  return absl::OkStatus();
+absl::Status Snapshot::GetMetadataValue(const MetadataValueKey& key,
+                                        MetadataValue& metadata_value) const {
+  return ToMessage(_snapshot.Get(MetadataValueCollId, ToMetadataValueKey(key)), metadata_value);
+}
+
+gendb::ScanIterator<MetadataValue> Snapshot::ScanMetadataValue() const {
+  return gendb::ScanIterator<MetadataValue>(gendb::ScanCursor(_snapshot, MetadataValueCollId));
 }
 
 absl::Status ScopedWrite::GetMetadataValue(const MetadataValueKey& key,
                                            MetadataValue& metadata_value) const {
-  BytesConstView value;
-  RETURN_IF_ERROR(_layered_storage.Get(MetadataValueCollId, ToMetadataValueKey(key), value));
-  metadata_value = MetadataValue{value};
-  return absl::OkStatus();
+  return ToMessage(_txn.Get(MetadataValueCollId, ToMetadataValueKey(key)), metadata_value);
 }
 
-absl::Status ScopedWrite::PutMetadataValue(const MetadataValueKey& key, Bytes metadata_value) {
-  auto key_ = ToMetadataValueKey(key);
-  _temp_storage.Put(MetadataValueCollId, key_, std::move(metadata_value));
+absl::Status ScopedWrite::PutMetadataValue(const MetadataValueKey& key,
+                                           gendb::BytesConstView metadata_value) {
+  _txn.Put(MetadataValueCollId, ToMetadataValueKey(key), metadata_value);
   return absl::OkStatus();
 }
 
 absl::Status ScopedWrite::UpdateMetadataValue(const MetadataValueKey& key,
                                               const gendb::MessagePatch& update) {
-  Bytes* ptr = nullptr;
-  auto key_ = ToMetadataValueKey(key);
-  RETURN_IF_ERROR(_layered_storage.EnsureInTempStorage(MetadataValueCollId, key_, &ptr));
-  gendb::ApplyPatch(update, *ptr);
-  return absl::OkStatus();
+  return _txn.Update(MetadataValueCollId, ToMetadataValueKey(key), update);
 }
-absl::Status Guard::GetMessageA(gendb::tests::primitive::KeyEnum key, MessageA& message_a) const {
-  BytesConstView value;
-  RETURN_IF_ERROR(_layered_storage.Get(MessageACollId, ToMessageAKey(key), value));
-  message_a = MessageA{value};
-  return absl::OkStatus();
+
+absl::Status ScopedWrite::DeleteMetadataValue(const MetadataValueKey& key) {
+  return _txn.Delete(MetadataValueCollId, ToMetadataValueKey(key));
+}
+
+absl::Status Snapshot::GetMessageA(gendb::tests::primitive::KeyEnum key,
+                                   MessageA& message_a) const {
+  return ToMessage(_snapshot.Get(MessageACollId, ToMessageAKey(key)), message_a);
+}
+
+gendb::ScanIterator<MessageA> Snapshot::ScanMessageA() const {
+  return gendb::ScanIterator<MessageA>(gendb::ScanCursor(_snapshot, MessageACollId));
 }
 
 absl::Status ScopedWrite::GetMessageA(gendb::tests::primitive::KeyEnum key,
                                       MessageA& message_a) const {
-  BytesConstView value;
-  RETURN_IF_ERROR(_layered_storage.Get(MessageACollId, ToMessageAKey(key), value));
-  message_a = MessageA{value};
-  return absl::OkStatus();
+  return ToMessage(_txn.Get(MessageACollId, ToMessageAKey(key)), message_a);
 }
 
-absl::Status ScopedWrite::PutMessageA(gendb::tests::primitive::KeyEnum key, Bytes message_a) {
-  auto key_ = ToMessageAKey(key);
-  _temp_storage.Put(MessageACollId, key_, std::move(message_a));
+absl::Status ScopedWrite::PutMessageA(gendb::tests::primitive::KeyEnum key,
+                                      gendb::BytesConstView message_a) {
+  _txn.Put(MessageACollId, ToMessageAKey(key), message_a);
   return absl::OkStatus();
 }
 
 absl::Status ScopedWrite::UpdateMessageA(gendb::tests::primitive::KeyEnum key,
                                          const gendb::MessagePatch& update) {
-  Bytes* ptr = nullptr;
-  auto key_ = ToMessageAKey(key);
-  RETURN_IF_ERROR(_layered_storage.EnsureInTempStorage(MessageACollId, key_, &ptr));
-  gendb::ApplyPatch(update, *ptr);
-  return absl::OkStatus();
+  return _txn.Update(MessageACollId, ToMessageAKey(key), update);
 }
 
-void ScopedWrite::Commit() {
-  std::unique_lock lock(_db._reader_mutex);
-  _layered_storage.MergeTempStorage();
+absl::Status ScopedWrite::DeleteMessageA(gendb::tests::primitive::KeyEnum key) {
+  return _txn.Delete(MessageACollId, ToMessageAKey(key));
 }
 
 }  // namespace gendb::tests::primitive

@@ -3,6 +3,7 @@ types:
     - tests/schemas/account.fbs
     - tests/schemas/position.fbs
     - tests/schemas/config.fbs
+    - tests/schemas/session.fbs
   include_prefix: ""  # Optional prefix path for generated includes
 
 options:
@@ -24,6 +25,12 @@ collections:
     type: gendb.tests.Config
     primary_key:
       - config_name
+
+  - name: sessions
+    type: gendb.tests.Session
+    ephemeral: true
+    primary_key:
+      - session_id
 
 sequences:
   - name: account_id_sequence

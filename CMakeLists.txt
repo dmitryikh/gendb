@@ -34,20 +34,21 @@ add_library(gendb_lib
     lib/gendb/math.h
     lib/gendb/message.h
     lib/gendb/message.cpp
-    lib/gendb/storage.h
-    lib/gendb/storage.cpp
-    lib/gendb/layered_storage.h
-    lib/gendb/layered_storage.cpp
+    lib/gendb/engine.h
+    lib/gendb/engine.cpp
+    lib/gendb/ordered_index.h
+    lib/gendb/record_table.h
+    lib/gendb/rocksdb_backend.h
+    lib/gendb/rocksdb_backend.cpp
 )
 target_include_directories(gendb_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/lib)
-target_link_libraries(gendb_lib PUBLIC absl::inlined_vector absl::hash absl::span absl::status absl::strings RocksDB::rocksdb)
+target_link_libraries(gendb_lib PUBLIC absl::btree absl::inlined_vector absl::hash absl::span absl::status absl::statusor RocksDB::rocksdb)
 add_dependencies(gendb_lib gendb_lib_codegen)
 
 add_executable(gendb_tests
     lib/gendb/bits_test.cpp
     lib/gendb/key_codec_test.cpp
     lib/gendb/message_test.cpp
-    lib/gendb/storage_test.cpp
 )
 target_include_directories(gendb_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/lib)
 target_link_libraries(gendb_tests PRIVATE gendb_lib GTest::gtest_main)

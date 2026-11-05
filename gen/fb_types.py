@@ -62,6 +62,7 @@ class Collection:
     type: str                  # link to Message.name
     primary_key: List[str]     # link to Message.fields[i].name(s)
     private: bool = False      # whether write methods should be private
+    ephemeral: bool = False    # never written to disk
 
 @dataclass
 class Database:

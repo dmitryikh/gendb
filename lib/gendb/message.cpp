@@ -296,10 +296,7 @@ size_t MessageBuilder::SerializeTo(std::span<uint8_t> out) {
   return _total;
 }
 
-bool ApplyPatchInplace(const MessagePatch& patch, std::span<uint8_t> bytes) noexcept {
-  auto message = MutableView::Open(bytes);
-  if (!message) return false;
-  const MessageView& view = message->View();
+bool CanApplyPatchInplace(const MessagePatch& patch, const MessageView& view) noexcept {
   for (const auto& e : patch.Changes()) {
     if (e.remove) return false;
     auto kind = view.KindOfField(e.id);
@@ -309,6 +306,12 @@ bool ApplyPatchInplace(const MessagePatch& patch, std::span<uint8_t> bytes) noex
       if (!current || current->size() != e.len) return false;
     }
   }
+  return true;
+}
+
+bool ApplyPatchInplace(const MessagePatch& patch, std::span<uint8_t> bytes) noexcept {
+  auto message = MutableView::Open(bytes);
+  if (!message || !CanApplyPatchInplace(patch, message->View())) return false;
   for (const auto& e : patch.Changes()) {
     if (e.kind == Kind::Var)
       message->SetBytes(e.id, {e.data, e.len});

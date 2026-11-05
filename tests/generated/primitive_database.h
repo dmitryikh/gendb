@@ -1,14 +1,18 @@
 // AUTO GENERATED. DO NOT EDIT.
 //
 #pragma once
+#include <array>
 #include <cstdint>
-#include <mutex>
-#include <shared_mutex>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <tuple>
 
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "gendb/bytes.h"
+#include "gendb/engine.h"
 #include "gendb/key_codec.h"
-#include "gendb/layered_storage.h"
 #include "gendb/message.h"
 #include "messageA.fbs.h"
 #include "metadata.fbs.h"
@@ -16,7 +20,7 @@
 namespace gendb::tests::primitive {
 
 // Forward declarations.
-class Guard;
+class Snapshot;
 class ScopedWrite;
 
 enum CollectionId {
@@ -54,69 +58,76 @@ inline std::array<uint8_t, 4> ToMessageAKey(MessageA message_a) {
   return ToMessageAKey(message_a.key());
 }
 
-class Db {
- public:
-  Guard SharedLock() const;
-  ScopedWrite CreateWriter();
-
- private:
-  friend class Guard;
-  friend class ScopedWrite;
-
-  std::mutex _writer_mutex;
-  mutable std::shared_mutex _reader_mutex;
-  MemoryStorage _storage;
+struct DbOptions {
+  // RocksDB directory, created if missing.
+  std::string path;
+  // Whether Commit returns only after an fsync.
+  bool sync_commits = true;
+  // Keep every change in a durable log, for engine().ReadChanges.
+  bool change_log = false;
 };
 
-class Guard {
+class Db {
+ public:
+  // In memory only.
+  Db();
+  // Recovers committed state from disk.
+  static absl::StatusOr<std::unique_ptr<Db>> Open(const DbOptions& options);
+
+  // A consistent view of committed state. It never blocks a commit, or is blocked by one.
+  Snapshot CreateSnapshot() const;
+  // The single writer: blocks until any other writer is done.
+  ScopedWrite CreateWriter();
+  // Change listeners, the durable change log, and stats.
+  gendb::Engine& engine() { return *_engine; }
+
+ private:
+  explicit Db(std::unique_ptr<gendb::Engine> engine) : _engine(std::move(engine)) {}
+
+  std::unique_ptr<gendb::Engine> _engine;
+};
+
+// Messages returned by a snapshot stay valid until it is destroyed. Db must outlive it.
+class Snapshot {
  public:
   absl::Status GetMetadataValue(const MetadataValueKey& key, MetadataValue& metadata_value) const;
+  gendb::ScanIterator<MetadataValue> ScanMetadataValue() const;
   absl::Status GetMessageA(gendb::tests::primitive::KeyEnum key, MessageA& message_a) const;
-  ~Guard() = default;
+  gendb::ScanIterator<MessageA> ScanMessageA() const;
 
  private:
   friend class Db;
-  Guard(const Db& db, std::shared_lock<std::shared_mutex> lock)
-      : _db(db),
-        _lock(std::move(lock)),
-        _layered_storage(const_cast<MemoryStorage&>(_db._storage), /*temp_storage_ptr=*/nullptr) {}
+  explicit Snapshot(const gendb::Engine& engine) : _snapshot(engine) {}
 
- private:
-  const Db& _db;
-  std::shared_lock<std::shared_mutex> _lock;
-  const gendb::LayeredStorage _layered_storage;
+  gendb::EngineSnapshot _snapshot;
 };
 
+// A transaction: reads its own writes, and Commit applies all of them atomically. Dropping it
+// without a commit rolls it back. Messages it returns are invalidated by the next write to that
+// key and by Commit.
 class ScopedWrite {
  private:
   absl::Status GetMetadataValue(const MetadataValueKey& key, MetadataValue& metadata_value) const;
-  absl::Status PutMetadataValue(const MetadataValueKey& key, std::vector<uint8_t> metadata_value);
+  absl::Status PutMetadataValue(const MetadataValueKey& key, gendb::BytesConstView metadata_value);
   absl::Status UpdateMetadataValue(const MetadataValueKey& key, const gendb::MessagePatch& update);
+  absl::Status DeleteMetadataValue(const MetadataValueKey& key);
 
  public:
   absl::Status GetMessageA(gendb::tests::primitive::KeyEnum key, MessageA& message_a) const;
-  absl::Status PutMessageA(gendb::tests::primitive::KeyEnum key, std::vector<uint8_t> message_a);
+  absl::Status PutMessageA(gendb::tests::primitive::KeyEnum key, gendb::BytesConstView message_a);
   absl::Status UpdateMessageA(gendb::tests::primitive::KeyEnum key,
                               const gendb::MessagePatch& update);
+  absl::Status DeleteMessageA(gendb::tests::primitive::KeyEnum key);
 
  public:
-  void Commit();
-  ~ScopedWrite() = default;
+  absl::Status Commit(gendb::CommitOptions options = {}) { return _txn.Commit(options); }
+  void Rollback() { _txn.Rollback(); }
 
  private:
   friend class Db;
-  ScopedWrite(Db& db, std::unique_lock<std::mutex> lock)
-      : _db(const_cast<Db&>(db)),
-        _lock(std::move(lock)),
-        _layered_storage(_db._storage, &_temp_storage) {}
+  explicit ScopedWrite(gendb::Engine& engine) : _txn(engine) {}
 
-  // Index update helpers
-
- private:
-  Db& _db;
-  std::unique_lock<std::mutex> _lock;
-  gendb::MemoryStorage _temp_storage;
-  gendb::LayeredStorage _layered_storage;
+  gendb::Transaction _txn;
 };
 
 }  // namespace gendb::tests::primitive

@@ -681,6 +681,8 @@ class MessagePatch {
   std::vector<std::unique_ptr<uint8_t[]>> _owned;
 };
 
+// Whether ApplyPatchInplace would succeed on these bytes.
+bool CanApplyPatchInplace(const MessagePatch& patch, const MessageView& view) noexcept;
 // All-or-nothing: preflights every change, then overwrites payload/slot bytes only.
 // False (bytes untouched) if a field is absent, changes storage class or length, or is removed.
 bool ApplyPatchInplace(const MessagePatch& patch, std::span<uint8_t> bytes) noexcept;
