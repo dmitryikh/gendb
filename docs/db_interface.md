@@ -16,17 +16,17 @@
 // SELECT trader_id FROM accounts WHERE age < 18 AND is_active = true;
 
 // Multiple concurrent writes? Can we delegate it to the user?
-// This function will compile only for Db under read lock or for Snapshots. Because it uses index traversing + zero-copy AccountFb.
+// This function will compile only for Db under read lock or for Snapshots. Because it uses index traversing + zero-copy Account.
 template <typename DbHandler>
 std::vector<int, B> MyFunc(DbHandler&& db) {
-    auto accounts = db.Collection<AccountFb>();
+    auto accounts = db.Collection<Account>();
 
     std::unordered_set<std::string> trader_ids;
 
     auto it = db.Index<AccountByAge>().Iterator(std::nullopt, 18);
     while (it) {
         int account_id = it->second;
-        AccountFb account = accounts.Get<AccountFb>(account_id);  // Zero copy method is available for DB under read lock or for Snapshots.
+        Account account = accounts.Get<Account>(account_id);  // Zero copy method is available for DB under read lock or for Snapshots.
         trader_ids.insert(account.trader_id());
         ++it;
     }
@@ -34,12 +34,12 @@ std::vector<int, B> MyFunc(DbHandler&& db) {
 }
 
 std::vector<int, B> GetAccountsByTraderId(DbSnapshot&& db, std::string trader_id) {
-    auto accounts = db.Collection<AccountFb>();
-    std::vector<AccountFb> accounts;
+    auto accounts = db.Collection<Account>();
+    std::vector<Account> accounts;
 
     std::vector<int> account_ids = db.Index<AccountByTrader>().Range(trader_id, trader_id);
     for (auto account_id : account_ids) {
-        AccountFb account = accounts.Get<AccountFb>(account_id);
+        Account account = accounts.Get<Account>(account_id);
         accounts.insert(account.trader_id());
     }
     return accounts;
@@ -55,10 +55,10 @@ by_trader_id_range
 
 class AccountBuf {
 public:
-    AccountBuf() : msg {GetDefultAccountFb()}
+    AccountBuf() : msg {GetDefultAccount()}
     {}
 
-    static AccountBuf From(AccountFb* msg) {
+    static AccountBuf From(Account* msg) {
         AccountBuf buf;
         buf.CopyFrom(msg);
     }
@@ -71,15 +71,15 @@ public:
         msg->name();
     }
 
-    void CopyFrom(AccountFb* msg) {
+    void CopyFrom(Account* msg) {
         buffer = BufferFrom(msg);
         msg = GetRoot(buffer);
     }
 
     std::vector<byte> buffer;
-    AccountFb* msg;
+    Account* msg;
 
-    static const AccountFb* GetDefultAccountFb();
+    static const Account* GetDefultAccount();
 };
 
 
@@ -102,33 +102,15 @@ public:
     ScopedWrite ScopedWrite();
 
 private:
-    std::unordered_map<int, bytes> accounts;  // collection of AccountFb.
+    std::unordered_map<int, bytes> accounts;  // collection of Account.
     std::multimap</*std::string*/, bytes*> by_trader_id; // Index for accounts.
 };
 
     // auto db_guard = db.guard();
-    // for (auto [id, is_active] : db_guard.Account().ByTraderId().Eq(trader_id).Project<AccountFb::account_id, AccountFb::is_active>()) {
+    // for (auto [id, is_active] : db_guard.Account().ByTraderId().Eq(trader_id).Project<Account::account_id, Account::is_active>()) {
     //     if (!active) continue;
     //     count << id << is_active << std::endl;
     // }
-
-struct Patch {
-    bitset<uint64_t> updated_fields;
-    std::vector<int8_t> buffer;
-};
-
-AccountFb::ApplyPatchInplace(Patch)
-
-AccountFb::CanPatchInplace(patch) {
-    // check that patch modifies only fixed-size fields.
-    // Removal is conserning.
-
-    updated_fields & buffer.presense_bit == updated_fields -> no unset.
-
-    updated_fields & fixed-size fields bits == updated_fields; -> updates only for fixed size fields
-
-    AccountFb::presense_bit & updated_fields = acc buffer has
-}
 
 High level patch API:
 {
@@ -232,12 +214,12 @@ public:
     PositionSnapshotAccessor Position() const;
 
     // account collection access by trader id.
-    Iterator<AccountFb> ByTraderIdRange(string_view from, string_view to) const;
-    Iterator<AccountFb> ByTraderIdEq(string_view value) const;
+    Iterator<Account> ByTraderIdRange(string_view from, string_view to) const;
+    Iterator<Account> ByTraderIdEq(string_view value) const;
 
     // account collection access by by age.
-    Iterator<AccountFb> ByAgeRange(int from, int to) const;
-    Iterator<AccountFb> ByAgeEq(int from, int to) const;
+    Iterator<Account> ByAgeRange(int from, int to) const;
+    Iterator<Account> ByAgeEq(int from, int to) const;
 
 };
 
@@ -263,7 +245,7 @@ class internal::DbContext {
 class AccountAccessor {
     // PK operations.
     status Put(int account_id);
-    status Get(int account_id, AccountFb&);
+    status Get(int account_id, Account&);
     status GetCopy(int account_id, AccountFub);
     status Delete(int account_id);
 
@@ -286,7 +268,7 @@ public:
     Iterator Eq(string_view value) const;
 
     class Iterator {
-        statusor<AccountFb> operator*() const;
+        statusor<Account> operator*() const;
 
         private:
         const Db& db_;
