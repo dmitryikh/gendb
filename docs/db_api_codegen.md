@@ -1,8 +1,9 @@
 ## Basic concepts of code generation
 
-This document is the design of the generated database API. Message classes, collections, secondary
-indices, sequences and `Guard`/`ScopedWrite` exist today; the sections below also sketch planned
-API such as `Snapshot` and collection accessors. See `tests/database_test.cpp` for what works now.
+This document is the original design of the generated database API. Message classes, collections,
+secondary indices and sequences work as described; for transactions and snapshots as implemented,
+see [storage_engine.md](storage_engine.md). The accessor style in the sections below
+(`db.Accounts().Get`) is a sketch that is not implemented, and `Guard` was replaced by `Snapshot`.
 
 ### Table definition
 Table fields are described in a FlatBuffers schema (`.fbs`). flatc only parses the schema: the

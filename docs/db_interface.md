@@ -1,3 +1,5 @@
+> Early design notes. [storage_engine.md](storage_engine.md) describes what was implemented.
+
 
 ## Focus:
 1. (Done) Deserialization-free message format.

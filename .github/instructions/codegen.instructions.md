@@ -21,5 +21,8 @@ applyTo: "**"
 
 Schemas evolve only in backward-compatible ways: a field keeps its ID and type forever, new fields are appended, and unused fields get `(deprecated)` instead of being removed.
 
+## Storage Engine
+`docs/storage_engine.md` describes transactions, snapshots, durability and change capture. Read it before changing `lib/gendb/engine.*`, `record_table.h`, `ordered_index.h` or `rocksdb_backend.*`. Their concurrency is lock-free with one writer: run `SnapshotTest` under ThreadSanitizer after any change.
+
 ## Generated Code
 `tests/generated` and `lib/gendb/generated` are generated and checked in. Edit the templates and regenerate by building; never edit the output by hand.

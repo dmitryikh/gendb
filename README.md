@@ -7,14 +7,14 @@ Features:
   * [x] Strong typed Key-Value collections.
   * [x] Schema-driven, code-generated C++ API
   * [x] Secondary indexes (efficient lookups on non-primary keys)
-  * [ ] Persistent storage
-  * [ ] Snapshot isolation (multi-version concurrency control)
-  * [ ] ACID transactions
-  * [ ] Write-ahead log (WAL) for crash recovery
-  * [ ] Durable atomic ID counters
-  * [ ] Ephemeral in-memory collections
-  * [ ] Change data capture
-  * [ ] Rocksdb as a storage engine
+  * [x] Persistent storage
+  * [x] Snapshot isolation (multi-version concurrency control)
+  * [x] ACID transactions
+  * [x] Write-ahead log (WAL) for crash recovery
+  * [x] Durable atomic ID counters
+  * [x] Ephemeral in-memory collections
+  * [x] Change data capture
+  * [x] Rocksdb as a storage engine
   * Message format:
     * [x] Zero-copy, deserialization-free O(1) field reads
     * [x] Forward and backward compatible schema evolution
@@ -30,6 +30,7 @@ Non goals:
 
 Documentation:
   * Message format: [specification](docs/message_format.md) and [interactive explorer](docs/message_format.html) (open it in a browser)
+  * Storage engine: [docs/storage_engine.md](docs/storage_engine.md)
   * Generated database API: [docs/db_api_codegen.md](docs/db_api_codegen.md)
   * Build and test in Docker: [docs/docker_build.md](docs/docker_build.md)
   * Benchmarks: [benchmarks/README.md](benchmarks/README.md)

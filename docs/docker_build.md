@@ -76,6 +76,10 @@ docker run --rm \
   '
 ```
 
+For ThreadSanitizer, use `-fsanitize=thread` in both flags and another build directory. Note that
+AddressSanitizer rules out `absl::flat_hash_map` in the engine here: Conan's prebuilt Abseil has a
+different table layout from sanitized code.
+
 ## Benchmarks
 
 See [benchmarks/README.md](../benchmarks/README.md).
