@@ -1,0 +1,721 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GenDB Message Format</title>
+<meta name="description" content="Interactive documentation of how GenDB messages are laid out in memory and how much they take.">
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #fbfaf7; --panel: #ffffff; --ink: #1d2126; --muted: #5f6771; --line: #dfdcd3; --accent: #1f5fbf;
+  --ok: #17693f; --warn: #94570a; --bad: #b3261e;
+  --header: #d9dde3; --bitmap: #f6d9a8; --boolval: #efc2d3; --s8: #bcd8f7; --s4: #bfe6c8; --ends: #dccbf5; --payload: #f7c9b6;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #15181c; --panel: #1d2126; --ink: #e8e6e1; --muted: #a0a7b0; --line: #343a42; --accent: #7fb0f5;
+    --ok: #6fd19c; --warn: #e6b566; --bad: #f28b82;
+    --header: #434a54; --bitmap: #6e5426; --boolval: #6f3f52; --s8: #2c5078; --s4: #2c6240; --ends: #553f7d; --payload: #7c4a35;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #15181c; --panel: #1d2126; --ink: #e8e6e1; --muted: #a0a7b0; --line: #343a42; --accent: #7fb0f5;
+  --ok: #6fd19c; --warn: #e6b566; --bad: #f28b82;
+  --header: #434a54; --bitmap: #6e5426; --boolval: #6f3f52; --s8: #2c5078; --s4: #2c6240; --ends: #553f7d; --payload: #7c4a35;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 1240px; margin: 0 auto; padding: 28px 16px 56px; }
+h1 { font-size: 28px; line-height: 1.2; margin: 0 0 8px; }
+h2 { font-size: 20px; margin: 40px 0 10px; }
+h3 { font-size: 14px; margin: 0 0 8px; }
+p { margin: 0 0 10px; max-width: 76ch; }
+a { color: var(--accent); }
+code { font-family: var(--mono); font-size: .92em; }
+.lead { color: var(--muted); font-size: 16px; }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+
+.presets { display: flex; flex-wrap: wrap; gap: 6px; margin: 18px 0 14px; }
+button { font: inherit; color: inherit; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+
+.layout { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 16px; align-items: start; }
+@media (max-width: 1100px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; min-width: 0; }
+.stack { display: grid; gap: 16px; min-width: 0; }
+
+.fields-scroll { overflow: auto; max-height: 470px; margin: 0 -14px; padding: 0 14px; }
+table { border-collapse: collapse; width: 100%; }
+th { text-align: left; font-size: 12px; font-weight: 600; color: var(--muted); padding: 4px 6px 6px 0; white-space: nowrap; }
+td { padding: 3px 6px 3px 0; vertical-align: middle; }
+.fields-scroll thead th { position: sticky; top: 0; background: var(--panel); z-index: 1; }
+#fields { min-width: 480px; }
+#fields input[type=text], #fields input[type=number], #fields select { font: 13px var(--mono); color: inherit; background: transparent; border: 1px solid var(--line); border-radius: 4px; padding: 3px 5px; width: 100%; min-width: 0; }
+#fields td.id { width: 62px; } #fields td.name { width: 24%; } #fields td.type { width: 88px; } #fields td.chk { width: 44px; text-align: center; } #fields td.del { width: 28px; }
+#fields tr.selected { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+#fields .invalid { border-color: var(--bad) !important; color: var(--bad); }
+.icon { border: 0; background: none; padding: 2px 6px; color: var(--muted); }
+.row-actions { display: flex; gap: 8px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+#errors { color: var(--bad); font-size: 13px; }
+
+.total { display: flex; flex-wrap: wrap; gap: 4px 18px; align-items: baseline; margin-bottom: 10px; }
+.total b { font: 600 30px/1.1 var(--mono); }
+.bar { display: flex; height: 22px; border-radius: 4px; overflow: hidden; border: 1px solid var(--line); }
+.bar span { min-width: 1px; }
+.legend { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 3px 14px; margin-top: 10px; font-size: 13px; }
+.legend div { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.legend i { width: 11px; height: 11px; border-radius: 2px; flex: none; }
+.legend span:last-child { margin-left: auto; font-family: var(--mono); color: var(--muted); white-space: nowrap; }
+
+.c-header { background: var(--header); } .c-bitmap { background: var(--bitmap); } .c-boolval { background: var(--boolval); }
+.c-s8 { background: var(--s8); } .c-s4 { background: var(--s4); } .c-ends { background: var(--ends); } .c-payload { background: var(--payload); }
+
+.map-scroll { max-height: 330px; overflow: auto; }
+#map { display: grid; grid-template-columns: 38px repeat(16, minmax(0, 1fr)); gap: 2px; font: 12px/1 var(--mono); min-width: 0; }
+@media (max-width: 480px) { #map { grid-template-columns: 30px repeat(8, minmax(0, 1fr)); } }
+#map .addr { color: var(--muted); font-size: 11px; padding: 6px 2px 0 0; text-align: right; }
+#map .b { padding: 6px 0; text-align: center; border-radius: 3px; cursor: pointer; border: 1px solid transparent; }
+#map .b.on { border-color: var(--ink); font-weight: 700; }
+#map .b.changed { box-shadow: inset 0 0 0 2px var(--warn); }
+#map .b.unknown { background-image: repeating-linear-gradient(135deg, transparent 0 4px, color-mix(in srgb, var(--ink) 16%, transparent) 4px 5px); }
+#inspect { min-height: 22px; margin-top: 8px; font: 12.5px/1.5 var(--mono); color: var(--muted); }
+.keys { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 6px; font-size: 12px; color: var(--muted); }
+.keys i { display: inline-block; width: 12px; height: 12px; vertical-align: -2px; margin-right: 4px; border-radius: 2px; }
+
+.edit { display: none; margin-bottom: 10px; padding: 7px 10px; border-left: 3px solid var(--warn); background: color-mix(in srgb, var(--warn) 9%, transparent); font-size: 13.5px; }
+.edit.show { display: block; }
+.steps { margin: 0; padding: 0; list-style: none; counter-reset: s; }
+.steps li { counter-increment: s; position: relative; padding: 0 0 8px 24px; }
+.steps li::before { content: counter(s); position: absolute; left: 0; top: 1px; width: 17px; height: 17px; border-radius: 50%; background: var(--line); font-size: 11px; text-align: center; line-height: 17px; }
+.steps code { overflow-wrap: anywhere; }
+
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 12px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+.card h3 { font-size: 14.5px; margin-bottom: 4px; }
+.card p { margin: 0; font-size: 13.5px; color: var(--muted); }
+.ref-scroll { overflow-x: auto; }
+#layout-table { min-width: 520px; font-size: 13.5px; }
+#layout-table td, #layout-table th { padding: 5px 12px 5px 0; border-top: 1px solid var(--line); }
+#layout-table td.n { text-align: right; font-family: var(--mono); }
+#layout-table i { display: inline-block; width: 11px; height: 11px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+pre { font: 13px/1.55 var(--mono); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; overflow-x: auto; margin: 0 0 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>GenDB message format</h1>
+  <p class="lead">Every record is one flat byte buffer that a reader uses in place, with no parsing and no schema of the writer. Edit the fields below and see where each byte goes and what the message costs.</p>
+
+  <div class="presets" id="presets" role="group" aria-label="Example messages"></div>
+
+  <div class="layout">
+    <section class="panel" aria-label="Message fields">
+      <div class="fields-scroll">
+        <table id="fields">
+          <thead><tr><th>ID</th><th>Name</th><th>Type</th><th>Value</th><th title="Whether the reader's schema knows this field">Known</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="row-actions">
+        <button id="add" type="button">Add field</button>
+        <span id="errors" role="status"></span>
+      </div>
+      <p class="small muted" style="margin:10px 0 0">Clear <b>Known</b> to read the message with an older schema that does not have the field.</p>
+    </section>
+
+    <div class="stack">
+      <section class="panel" aria-label="Message size">
+        <div class="total"><b id="total"></b><span class="muted" id="total-note"></span></div>
+        <div class="bar" id="bar" aria-hidden="true"></div>
+        <div class="legend" id="legend"></div>
+      </section>
+
+      <section class="panel" aria-label="Bytes in memory">
+        <div class="edit" id="edit" role="status"></div>
+        <h3>Bytes in memory</h3>
+        <div class="map-scroll"><div id="map"></div></div>
+        <div id="inspect">Hover a byte to see what it is. Click one, or a row, to look up that field.</div>
+        <div class="keys">
+          <span><i style="border:1px solid var(--ink)"></i>selected field</span>
+          <span><i style="box-shadow:inset 0 0 0 2px var(--warn)"></i>changed by the last edit</span>
+          <span><i class="c-payload" style="background-image:repeating-linear-gradient(135deg,transparent 0 3px,#0004 3px 4px)"></i>unknown to the reader</span>
+        </div>
+      </section>
+
+      <section class="panel" aria-label="Field lookup">
+        <h3 id="lookup-title">Reading a field</h3>
+        <div id="lookup"></div>
+      </section>
+    </div>
+  </div>
+
+  <h2>Layout of this message</h2>
+  <p>Sections follow each other with no padding, always in this order. The header holds every length, so a reader finds any section without scanning.</p>
+  <div class="panel ref-scroll"><table id="layout-table"></table></div>
+
+  <h2>Storage classes</h2>
+  <p>A field's type decides its class. The class is part of the wire encoding and never changes for a field ID.</p>
+  <div class="panel ref-scroll">
+    <table id="layout-table-classes" style="min-width:520px;font-size:13.5px">
+      <thead><tr><th>Class</th><th>Types</th><th>Where the value is</th></tr></thead>
+      <tbody>
+        <tr><td><code>S8</code></td><td>int64, uint64, double</td><td>8-byte slot</td></tr>
+        <tr><td><code>S4</code></td><td>int8, uint8, int16, uint16, int32, uint32, float</td><td>4-byte slot; value in the low bytes, the rest zero</td></tr>
+        <tr><td><code>Bit</code></td><td>bool</td><td>one bit of the value bitmap; no slot</td></tr>
+        <tr><td><code>Var</code></td><td>string, bytes, nested message</td><td>end offset and a slice of the payload</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>What the format guarantees</h2>
+  <div class="grid">
+    <div class="card"><h3>Zero-copy reads</h3><p>A getter returns a scalar or a <code>string_view</code> into the stored bytes. Nothing is parsed or allocated.</p></div>
+    <div class="card"><h3>O(1) access</h3><p>Any field, present or absent, is a bit test, a <code>popcount</code> and a load. Opening a message reads only the header.</p></div>
+    <div class="card"><h3>Self-describing</h3><p>Bitmap positions are field IDs, so a reader locates every field without the writer's schema.</p></div>
+    <div class="card"><h3>Backward compatible</h3><p>New code reads old messages: a field the message lacks is a clear bit and reads as its default.</p></div>
+    <div class="card"><h3>Forward compatible</h3><p>Old code reads new messages: addressing depends only on the bitmaps, so extra fields do not disturb known ones.</p></div>
+    <div class="card"><h3>Unknown fields survive</h3><p>Patches and rebuilds work on storage classes, not schemas. Fields a reader does not know are preserved byte for byte.</p></div>
+    <div class="card"><h3>Partial updates</h3><p>Any present scalar or equal-length string is overwritten in place. Other changes splice the payload or rebuild.</p></div>
+    <div class="card"><h3>Explicit presence</h3><p>A field set to <code>0</code>, <code>false</code> or <code>""</code> differs from an absent one: presence is its own bit.</p></div>
+    <div class="card"><h3>Canonical</h3><p>Equal field sets encode to equal bytes. Section order, ID order and all widths follow from the content.</p></div>
+    <div class="card"><h3>Safe on any input</h3><p>Reads of malformed bytes stay inside the buffer. <code>MessageView::Verify</code> detects them before use.</p></div>
+  </div>
+
+  <h2>Evolving a schema</h2>
+  <p>Only backward-compatible evolution is supported, by design.</p>
+  <pre>table Account {
+  id: ulong;                   // A field keeps its ID and type forever.
+  nickname: string (deprecated); // Unused fields are deprecated: no accessors, ID stays reserved.
+  email: string;               // New fields are appended.
+}</pre>
+  <p>Field IDs run from 1 to 2040. Bitmaps grow with the highest ID present in each class, so dense IDs are cheapest: try the <b>High field ID</b> example. The full specification is in <a href="message_format.md">message_format.md</a>.</p>
+</main>
+
+<script>
+"use strict";
+const GROUPS = {
+  header: { label: "Header", cls: "c-header" },
+  bitmap: { label: "Presence bitmaps", cls: "c-bitmap" },
+  boolval: { label: "Bool values", cls: "c-boolval" },
+  s8: { label: "S8 slots", cls: "c-s8" },
+  s4: { label: "S4 slots", cls: "c-s4" },
+  ends: { label: "End offsets", cls: "c-ends" },
+  payload: { label: "Payload", cls: "c-payload" },
+};
+const TYPES = {
+  int8: "S4", uint8: "S4", int16: "S4", uint16: "S4", int32: "S4", uint32: "S4", float: "S4",
+  int64: "S8", uint64: "S8", double: "S8", bool: "Bit", string: "Var", bytes: "Var",
+};
+const INT_RANGE = { int8: [8, true], uint8: [8, false], int16: [16, true], uint16: [16, false],
+  int32: [32, true], uint32: [32, false], int64: [64, true], uint64: [64, false] };
+const MAX_ID = 2040;
+const utf8 = new TextEncoder();
+
+// Returns the value in wire form: BigInt slot bits, 0/1, or bytes. Throws on invalid input.
+function encodeValue(type, text) {
+  const kind = TYPES[type];
+  if (kind === "Bit") {
+    if (text !== "true" && text !== "false") throw new Error("expected true or false");
+    return text === "true" ? 1n : 0n;
+  }
+  if (type === "string") return utf8.encode(text);
+  if (type === "bytes") {
+    const hex = text.replace(/\s+/g, "");
+    if (hex.length % 2 || /[^0-9a-fA-F]/.test(hex)) throw new Error("expected hex bytes");
+    return Uint8Array.from(hex.match(/../g) || [], (h) => parseInt(h, 16));
+  }
+  if (type === "float" || type === "double") {
+    const n = Number(text);
+    if (text.trim() === "" || Number.isNaN(n)) throw new Error("expected a number");
+    const buf = new DataView(new ArrayBuffer(8));
+    if (type === "float") { buf.setFloat32(0, n, true); return BigInt(buf.getUint32(0, true)); }
+    buf.setFloat64(0, n, true);
+    return buf.getBigUint64(0, true);
+  }
+  let v;
+  try { v = BigInt(text.trim()); } catch { throw new Error("expected an integer"); }
+  if (text.trim() === "") throw new Error("expected an integer");
+  const [bits, signed] = INT_RANGE[type];
+  const lo = signed ? -(1n << BigInt(bits - 1)) : 0n;
+  const hi = signed ? (1n << BigInt(bits - 1)) - 1n : (1n << BigInt(bits)) - 1n;
+  if (v < lo || v > hi) throw new Error(`outside ${lo}..${hi}`);
+  return BigInt.asUintN(bits, v);
+}
+
+// The same layout as gendb::MessageBuilder in lib/gendb/message.cpp.
+function encode(fields) {
+  const sorted = fields.map((f) => ({ ...f })).sort((a, b) => a.id - b.id);
+  const byKind = { S8: [], S4: [], Bit: [], Var: [] };
+  for (const f of sorted) byKind[TYPES[f.type]].push({ ...f, wire: encodeValue(f.type, f.value) });
+  const bitmapLen = (list) => Math.ceil((list.length ? list[list.length - 1].id : 0) / 8);
+  const [l8, l4, lb, lv] = [byKind.S8, byKind.S4, byKind.Bit, byKind.Var].map(bitmapLen);
+  const [n8, n4, nv] = [byKind.S8.length, byKind.S4.length, byKind.Var.length];
+  const payloadSize = byKind.Var.reduce((sum, f) => sum + f.wire.length, 0);
+  const widthCode = payloadSize <= 0xff ? 0 : payloadSize <= 0xffff ? 1 : 2;
+  const width = 1 << widthCode;
+  const wide = Math.max(n8, n4, nv) > 0xff;
+  const headerSize = wide ? 12 : 9;
+  const total = headerSize + l8 + l4 + 2 * lb + lv + 8 * n8 + 4 * n4 + width * nv + payloadSize;
+
+  const bytes = new Uint8Array(total);
+  const view = new DataView(bytes.buffer);
+  const info = new Array(total);
+  const sections = [];
+  let at = 0;
+  const section = (key, group, label, size, note) => {
+    const s = { key, group, label, start: at, size, note };
+    sections.push(s);
+    for (let i = 0; i < size; i++) info[at + i] = { section: s, index: i };
+    at += size;
+    return s;
+  };
+  const hdr = section("header", "header", "Header", headerSize, "Version, flags, bitmap lengths, counts");
+  bytes[0] = 1;
+  bytes[1] = widthCode | (wide ? 4 : 0);
+  bytes[2] = l8; bytes[3] = l4; bytes[4] = lb; bytes[5] = lv;
+  if (wide) { view.setUint16(6, n8, true); view.setUint16(8, n4, true); view.setUint16(10, nv, true); }
+  else { bytes[6] = n8; bytes[7] = n4; bytes[8] = nv; }
+  const headerNames = wide
+    ? ["version", "flags", "L8", "L4", "LB", "LV", "N8", "N8", "N4", "N4", "NV", "NV"]
+    : ["version", "flags", "L8", "L4", "LB", "LV", "N8", "N4", "NV"];
+  headerNames.forEach((name, i) => { info[hdr.start + i].name = name; });
+
+  const setBits = (s, list, value = () => true) => {
+    for (const f of list) {
+      const bit = f.id - 1;
+      if (value(f)) bytes[s.start + (bit >> 3)] |= 1 << (bit & 7);
+    }
+  };
+  const bm8 = section("bm8", "bitmap", "S8 presence", l8, "One bit per field ID up to the highest S8 field");
+  setBits(bm8, byKind.S8);
+  const bm4 = section("bm4", "bitmap", "S4 presence", l4, "One bit per field ID up to the highest S4 field");
+  setBits(bm4, byKind.S4);
+  const bmb = section("bmb", "bitmap", "Bit presence", lb, "Which bools are present");
+  setBits(bmb, byKind.Bit);
+  const bmv = section("bmv", "boolval", "Bit values", lb, "The bools themselves");
+  setBits(bmv, byKind.Bit, (f) => f.wire === 1n);
+  const bmvar = section("bmvar", "bitmap", "Var presence", lv, "One bit per field ID up to the highest Var field");
+  setBits(bmvar, byKind.Var);
+
+  const located = {};
+  const s8 = section("s8", "s8", "S8 slots", 8 * n8, "8 bytes per field");
+  byKind.S8.forEach((f, i) => {
+    view.setBigUint64(s8.start + 8 * i, f.wire, true);
+    located[f.id] = { field: f, kind: "S8", index: i, start: s8.start + 8 * i, size: 8 };
+  });
+  const s4 = section("s4", "s4", "S4 slots", 4 * n4, "4 bytes per field");
+  byKind.S4.forEach((f, i) => {
+    view.setUint32(s4.start + 4 * i, Number(f.wire), true);
+    located[f.id] = { field: f, kind: "S4", index: i, start: s4.start + 4 * i, size: 4 };
+  });
+  const ends = section("ends", "ends", "End offsets", width * nv, `${width} byte${width > 1 ? "s" : ""} per string or bytes field`);
+  const payload = section("payload", "payload", "Payload", payloadSize, "String and bytes contents, in ID order");
+  let offset = 0;
+  byKind.Var.forEach((f, i) => {
+    const start = offset;
+    bytes.set(f.wire, payload.start + offset);
+    offset += f.wire.length;
+    const endAt = ends.start + width * i;
+    if (width === 1) bytes[endAt] = offset;
+    else if (width === 2) view.setUint16(endAt, offset, true);
+    else view.setUint32(endAt, offset, true);
+    located[f.id] = { field: f, kind: "Var", index: i, start: payload.start + start, size: f.wire.length,
+      offsetStart: start, offsetEnd: offset, endAt, width };
+  });
+  byKind.Bit.forEach((f, i) => { located[f.id] = { field: f, kind: "Bit", index: i, size: 0 }; });
+
+  // Attribute slot, offset and payload bytes to their fields.
+  for (const loc of Object.values(located)) {
+    if (loc.kind === "Bit") continue;
+    for (let i = 0; i < loc.size; i++) info[loc.start + i].field = loc.field;
+    if (loc.kind === "Var") for (let i = 0; i < width; i++) info[loc.endAt + i].field = loc.field;
+  }
+  return { bytes, info, sections, located, sorted, sizes: { headerSize, l8, l4, lb, lv, n8, n4, nv, width, payloadSize, total } };
+}
+
+// How gendb::ApplyPatch would turn `before` into `after`.
+function patchPath(before, after) {
+  const prev = new Map(before.sorted.map((f) => [f.id, f]));
+  const next = new Map(after.sorted.map((f) => [f.id, f]));
+  const changes = [];
+  for (const [id, f] of next) {
+    const p = prev.get(id);
+    const same = p && p.type === f.type && p.value === f.value;
+    if (!same) changes.push({ id, op: p ? "set" : "insert", kind: TYPES[f.type] });
+  }
+  for (const id of prev.keys()) if (!next.has(id)) changes.push({ id, op: "remove" });
+  if (!changes.length) return null;
+  const inPlace = changes.every((c) => {
+    if (c.op !== "set" || TYPES[prev.get(c.id).type] !== c.kind) return false;
+    return c.kind !== "Var" || before.located[c.id].size === after.located[c.id].size;
+  });
+  if (inPlace) return { name: "In place", text: "every change overwrites a present field of the same class and length, so only these bytes are written." };
+  const c = changes[0];
+  if (changes.length === 1 && c.op === "set" && c.kind === "Var" && TYPES[prev.get(c.id).type] === "Var"
+      && before.sizes.width === after.sizes.width) {
+    return { name: "Splice", text: "one string changed length. Header, bitmaps and slots are copied as a block, later end offsets shift, and the payload is joined around the new bytes." };
+  }
+  return { name: "Re-encode", text: "the set of fields, a storage class, or the offset width changed, so the message is rebuilt. Untouched fields, known or unknown, keep their bytes." };
+}
+
+const F = (id, name, type, value, known = true) => ({ id, name, type, value, known });
+const wide = (present) => {
+  const out = [];
+  for (let id = 1; id <= 64; id++) if (present(id)) out.push(F(id, `f${id}`, "uint64", String(1000 + id)));
+  return out;
+};
+const PRESETS = {
+  "Position": () => [F(1, "position_id", "int32", "1001"), F(2, "account_id", "int32", "42"), F(3, "volume", "int32", "250"),
+    F(4, "instrument", "string", "EURUSD"), F(5, "open_price", "float", "1.2345"), F(6, "direction", "uint32", "1")],
+  "Account": () => [F(1, "account_id", "uint64", "42"), F(2, "trader_id", "string", "TRADER-00042"), F(3, "name", "string", "Alice Example"),
+    F(4, "address", "string", "42 Benchmark Avenue, Zurich"), F(5, "age", "int32", "31"), F(6, "is_active", "bool", "true"),
+    F(7, "balance", "float", "1024.5"), F(8, "config_name", "string", "default-risk")],
+  "Sparse account": () => [F(1, "account_id", "uint64", "42"), F(6, "is_active", "bool", "true")],
+  "64 integers": () => wide(() => true),
+  "8 of 64 integers": () => wide((id) => [1, 2, 8, 16, 24, 32, 48, 64].includes(id)),
+  "Newer writer": () => [F(1, "id", "uint64", "7"), F(2, "name", "string", "Ann"), F(5, "email", "string", "ann@example.com", false),
+    F(6, "score", "double", "9.5", false), F(7, "vip", "bool", "true", false)],
+  "High field ID": () => [F(1, "id", "int32", "1"), F(2000, "future", "int32", "2")],
+  "Empty": () => [],
+};
+
+let state = { fields: PRESETS.Position(), selected: 4, preset: "Position", lastGood: null, edit: null };
+const $ = (id) => document.getElementById(id);
+const hex2 = (b) => b.toString(16).padStart(2, "0");
+const bin8 = (b) => b.toString(2).padStart(8, "0");
+
+function renderPresets() {
+  $("presets").replaceChildren(...Object.keys(PRESETS).map((name) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = name;
+    b.setAttribute("aria-pressed", String(state.preset === name));
+    b.onclick = () => {
+      state = { fields: PRESETS[name](), selected: null, preset: name, lastGood: null, edit: null };
+      state.selected = state.fields.length ? state.fields[0].id : null;
+      renderPresets(); renderRows(); update();
+    };
+    return b;
+  }));
+}
+
+function renderRows() {
+  const body = document.querySelector("#fields tbody");
+  body.replaceChildren(...state.fields.map((f, i) => {
+    const tr = document.createElement("tr");
+    tr.dataset.index = i;
+    const cell = (cls, el) => { const td = document.createElement("td"); td.className = cls; td.append(el); tr.append(td); return el; };
+    const input = (type, value, label) => {
+      const el = document.createElement("input");
+      el.type = type; el.value = value; el.setAttribute("aria-label", label);
+      el.onfocus = () => select(state.fields[i].id);
+      return el;
+    };
+    const id = cell("id", input("number", f.id, "Field ID"));
+    id.min = 1; id.max = MAX_ID; id.dataset.role = "id";
+    id.oninput = () => { f.id = Number(id.value); state.selected = f.id; changed(); };
+    const name = cell("name", input("text", f.name, "Field name"));
+    name.oninput = () => { f.name = name.value; update(); };
+    const type = cell("type", document.createElement("select"));
+    type.setAttribute("aria-label", "Field type");
+    for (const t of Object.keys(TYPES)) type.add(new Option(t, t, false, t === f.type));
+    type.onchange = () => {
+      f.type = type.value;
+      f.value = f.type === "bool" ? "true" : f.type === "string" ? "text" : f.type === "bytes" ? "00ff" : "1";
+      renderRows(); changed();
+    };
+    if (f.type === "bool") {
+      const v = cell("value", document.createElement("select"));
+      v.setAttribute("aria-label", "Field value");
+      v.add(new Option("true", "true", false, f.value === "true"));
+      v.add(new Option("false", "false", false, f.value === "false"));
+      v.onchange = () => { f.value = v.value; changed(); };
+    } else {
+      const v = cell("value", input("text", f.value, "Field value"));
+      v.dataset.role = "value";
+      v.oninput = () => { f.value = v.value; changed(); };
+    }
+    const known = cell("chk", input("checkbox", "", "Known to the reader's schema"));
+    known.checked = f.known;
+    known.onchange = () => { f.known = known.checked; update(); };
+    const del = cell("del", document.createElement("button"));
+    del.type = "button"; del.className = "icon"; del.textContent = "×"; del.setAttribute("aria-label", `Remove field ${f.id}`);
+    del.onclick = () => {
+      state.fields.splice(i, 1);
+      if (state.selected === f.id) state.selected = null;
+      renderRows(); changed();
+    };
+    return tr;
+  }));
+}
+
+function select(id) {
+  if (state.selected === id) return;
+  state.selected = id;
+  update();
+}
+function changed() { state.preset = null; renderPresets(); update(true); }
+
+function validate() {
+  const errors = [];
+  const seen = new Set();
+  const rows = document.querySelectorAll("#fields tbody tr");
+  state.fields.forEach((f, i) => {
+    const idInput = rows[i]?.querySelector('[data-role="id"]');
+    const valueInput = rows[i]?.querySelector('[data-role="value"]');
+    let bad = null;
+    if (!Number.isInteger(f.id) || f.id < 1 || f.id > MAX_ID) bad = `Field ID ${f.id || "?"} is outside 1..${MAX_ID}.`;
+    else if (seen.has(f.id)) bad = `Field ID ${f.id} is used twice.`;
+    idInput?.classList.toggle("invalid", !!bad);
+    if (bad) errors.push(bad);
+    seen.add(f.id);
+    let valueBad = null;
+    try { encodeValue(f.type, f.value); } catch (e) { valueBad = `${f.name || f.id}: ${e.message}.`; }
+    valueInput?.classList.toggle("invalid", !!valueBad);
+    if (valueBad) errors.push(valueBad);
+  });
+  return errors;
+}
+
+function update(isEdit = false) {
+  const errors = validate();
+  $("errors").textContent = errors.join(" ");
+  if (errors.length) return; // Keep showing the last valid message.
+  const encoded = encode(state.fields);
+  let changedBytes = null;
+  if (isEdit && state.lastGood) {
+    const path = patchPath(state.lastGood, encoded);
+    if (path) {
+      state.edit = path;
+      if (encoded.bytes.length === state.lastGood.bytes.length) {
+        changedBytes = new Set();
+        encoded.bytes.forEach((b, i) => { if (b !== state.lastGood.bytes[i]) changedBytes.add(i); });
+      }
+      state.changedBytes = changedBytes;
+    }
+  } else if (!isEdit && !state.lastGood) {
+    state.edit = null; state.changedBytes = null;
+  }
+  state.lastGood = encoded;
+  renderSummary(encoded);
+  renderMap(encoded);
+  renderLookup(encoded);
+  renderLayoutTable(encoded);
+  document.querySelectorAll("#fields tbody tr").forEach((tr, i) => {
+    tr.classList.toggle("selected", state.fields[i]?.id === state.selected);
+  });
+}
+
+function renderSummary(m) {
+  const s = m.sizes;
+  const unknown = Object.values(m.located).filter((l) => !l.field.known);
+  const framing = s.total - m.sections.filter((x) => ["s8", "s4", "payload"].includes(x.group)).reduce((a, x) => a + x.size, 0);
+  $("total").textContent = `${s.total} bytes`;
+  let note = `${m.sorted.length} field${m.sorted.length === 1 ? "" : "s"}, ${framing} bytes of framing`;
+  if (unknown.length) {
+    const bytes = unknown.reduce((a, l) => a + l.size + (l.kind === "Var" ? l.width : 0), 0);
+    note += `. The reader skips ${unknown.length} unknown field${unknown.length === 1 ? "" : "s"} (${bytes} bytes of values) and a rewrite preserves them.`;
+  }
+  $("total-note").textContent = note;
+  const groups = {};
+  for (const sec of m.sections) groups[sec.group] = (groups[sec.group] || 0) + sec.size;
+  $("bar").replaceChildren(...Object.keys(GROUPS).filter((g) => groups[g]).map((g) => {
+    const span = document.createElement("span");
+    span.className = GROUPS[g].cls;
+    span.style.flexGrow = groups[g];
+    span.title = `${GROUPS[g].label}: ${groups[g]} bytes`;
+    return span;
+  }));
+  $("legend").replaceChildren(...Object.keys(GROUPS).map((g) => {
+    const div = document.createElement("div");
+    const i = document.createElement("i"); i.className = GROUPS[g].cls;
+    const label = document.createElement("span"); label.textContent = GROUPS[g].label;
+    const value = document.createElement("span"); value.textContent = groups[g] || 0;
+    div.append(i, label, value);
+    return div;
+  }));
+  const edit = $("edit");
+  edit.classList.toggle("show", !!state.edit);
+  edit.replaceChildren();
+  if (state.edit) {
+    const b = document.createElement("b"); b.textContent = `${state.edit.name}: `;
+    edit.append(b, state.edit.text);
+  }
+}
+
+function fieldBytes(m, id) {
+  const set = new Set();
+  const loc = m.located[id];
+  if (!loc) return set;
+  for (let i = 0; i < loc.size; i++) set.add(loc.start + i);
+  if (loc.kind === "Var") for (let i = 0; i < loc.width; i++) set.add(loc.endAt + i);
+  const bit = id - 1;
+  const bitmapKey = { S8: "bm8", S4: "bm4", Bit: "bmb", Var: "bmvar" }[loc.kind];
+  const bitmap = m.sections.find((s) => s.key === bitmapKey);
+  set.add(bitmap.start + (bit >> 3));
+  if (loc.kind === "Bit") set.add(m.sections.find((s) => s.key === "bmv").start + (bit >> 3));
+  return set;
+}
+
+function describeByte(m, i) {
+  const info = m.info[i];
+  const sec = info.section;
+  let text = `offset ${i}: 0x${hex2(m.bytes[i])} · ${sec.label}`;
+  if (info.name) {
+    text += ` · ${info.name}`;
+  } else if (["bm8", "bm4", "bmb", "bmv", "bmvar"].includes(sec.key)) {
+    const first = info.index * 8 + 1;
+    text += ` · bits for IDs ${first}..${first + 7} · ${bin8(m.bytes[i])}`;
+  } else if (info.field) {
+    text += ` · field ${info.field.id} ${info.field.name}`;
+    if (!info.field.known) text += " (unknown to the reader)";
+  }
+  return text;
+}
+
+function renderMap(m) {
+  const selectedBytes = state.selected != null ? fieldBytes(m, state.selected) : new Set();
+  const perRow = matchMedia("(max-width: 480px)").matches ? 8 : 16;
+  const frag = document.createDocumentFragment();
+  m.bytes.forEach((b, i) => {
+    if (i % perRow === 0) {
+      const addr = document.createElement("div");
+      addr.className = "addr"; addr.textContent = i;
+      frag.append(addr);
+    }
+    const el = document.createElement("div");
+    const info = m.info[i];
+    el.className = `b ${GROUPS[info.section.group].cls}`;
+    if (selectedBytes.has(i)) el.classList.add("on");
+    if (state.changedBytes?.has(i)) el.classList.add("changed");
+    if (info.field && !info.field.known) el.classList.add("unknown");
+    el.textContent = hex2(b);
+    el.dataset.i = i;
+    frag.append(el);
+  });
+  $("map").replaceChildren(frag);
+  $("map").onmouseover = (e) => {
+    const i = e.target.dataset?.i;
+    if (i !== undefined) $("inspect").textContent = describeByte(m, Number(i));
+  };
+  $("map").onclick = (e) => {
+    const i = e.target.dataset?.i;
+    if (i === undefined) return;
+    const info = m.info[Number(i)];
+    if (info.field) { select(info.field.id); return; }
+    const sec = info.section;
+    if (["bm8", "bm4", "bmb", "bmv", "bmvar"].includes(sec.key)) {
+      const byte = m.bytes[Number(i)];
+      for (let bit = 0; bit < 8; bit++) {
+        if (byte >> bit & 1) { select(info.index * 8 + bit + 1); return; }
+      }
+    }
+  };
+}
+
+function code(text) { const c = document.createElement("code"); c.textContent = text; return c; }
+function li(...parts) { const el = document.createElement("li"); el.append(...parts); return el; }
+function maskOf(id) {
+  const bit = id - 1;
+  return bit < 8 ? `0b${bin8((1 << bit) - 1)}` : `all bits below ${bit}`;
+}
+function popcountBelow(bytes, start, bit) {
+  let count = 0;
+  for (let b = 0; b < bit; b++) if (bytes[start + (b >> 3)] >> (b & 7) & 1) count++;
+  return count;
+}
+
+function renderLookup(m) {
+  const box = $("lookup");
+  const loc = state.selected != null ? m.located[state.selected] : null;
+  box.replaceChildren();
+  if (!loc) {
+    $("lookup-title").textContent = "Reading a field";
+    const p = document.createElement("p");
+    p.className = "small muted"; p.style.margin = 0;
+    p.textContent = "Select a field to see the steps a getter takes. An absent field stops at the first step: its bit is clear.";
+    box.append(p);
+    return;
+  }
+  const f = loc.field;
+  $("lookup-title").textContent = `Reading field ${f.id}, ${f.name || "unnamed"} (${f.type}, class ${loc.kind})`;
+  const ol = document.createElement("ol");
+  ol.className = "steps";
+  const bit = f.id - 1;
+  const key = { S8: "bm8", S4: "bm4", Bit: "bmb", Var: "bmvar" }[loc.kind];
+  const bm = m.sections.find((s) => s.key === key);
+  const byteAt = bm.start + (bit >> 3);
+  ol.append(li(`Test bit ${bit % 8} of byte `, code(`${byteAt}`), ` in ${bm.label}: `, code(`0b${bin8(m.bytes[byteAt])}`), ". It is set, so the field is present."));
+  if (loc.kind === "Bit") {
+    const values = m.sections.find((s) => s.key === "bmv");
+    const at = values.start + (bit >> 3);
+    ol.append(li("Bools have no slot. Read the same bit in Bit values: ", code(`0b${bin8(m.bytes[at])}`), ` gives `, code(f.value), "."));
+  } else {
+    const rank = popcountBelow(m.bytes, bm.start, bit);
+    ol.append(li("Count the present fields before it: ", code(`popcount(bitmap & ${maskOf(f.id)}) = ${rank}`), "."));
+    if (loc.kind === "Var") {
+      const ends = m.sections.find((s) => s.key === "ends");
+      ol.append(li(rank === 0 ? "It is the first string, so it starts at payload offset " : `Its start is the end of the previous string, `, code(`${loc.offsetStart}`), `. Its end is `, code(`end[${rank}] = ${loc.offsetEnd}`), ` at offset ${ends.start + rank * loc.width}.`));
+      const text = f.type === "string" ? JSON.stringify(f.value) : `${loc.size} bytes`;
+      ol.append(li("Return a view of payload bytes ", code(`${loc.offsetStart}..${loc.offsetEnd}`), `: ${text}. Nothing is copied.`));
+    } else {
+      const slots = m.sections.find((s) => s.key === (loc.kind === "S8" ? "s8" : "s4"));
+      const size = loc.kind === "S8" ? 8 : 4;
+      ol.append(li("The slot is at ", code(`${slots.start} + ${size} × ${rank} = ${loc.start}`), "."));
+      const raw = [...m.bytes.slice(loc.start, loc.start + loc.size)].map(hex2).join(" ");
+      ol.append(li("Load ", code(raw), " with ", code("memcpy"), ": ", code(f.value), ". Slots have no alignment guarantee."));
+    }
+  }
+  if (!f.known) {
+    ol.append(li("This reader's schema has no such field, so it never takes these steps. A rewrite copies the field as is, because the bitmap already gives its class."));
+  }
+  box.append(ol);
+}
+
+function renderLayoutTable(m) {
+  const s = m.sizes;
+  const table = $("layout-table");
+  const head = document.createElement("thead");
+  head.innerHTML = "<tr><th>Section</th><th>Contents</th><th style='text-align:right'>Offset</th><th style='text-align:right'>Bytes</th></tr>";
+  const body = document.createElement("tbody");
+  for (const sec of m.sections) {
+    const tr = document.createElement("tr");
+    const name = document.createElement("td");
+    const i = document.createElement("i"); i.className = GROUPS[sec.group].cls;
+    name.append(i, sec.label);
+    const note = document.createElement("td"); note.className = "muted"; note.textContent = sec.note;
+    const off = document.createElement("td"); off.className = "n"; off.textContent = sec.start;
+    const size = document.createElement("td"); size.className = "n"; size.textContent = sec.size;
+    tr.append(name, note, off, size);
+    body.append(tr);
+  }
+  const foot = document.createElement("tr");
+  const label = document.createElement("td"); label.colSpan = 3;
+  label.append(code(`size = ${s.headerSize} + ${s.l8} + ${s.l4} + 2×${s.lb} + ${s.lv} + 8×${s.n8} + 4×${s.n4} + ${s.width}×${s.nv} + ${s.payloadSize}`));
+  const total = document.createElement("td"); total.className = "n"; total.textContent = s.total;
+  foot.append(label, total);
+  body.append(foot);
+  table.replaceChildren(head, body);
+}
+
+$("add").onclick = () => {
+  const id = state.fields.reduce((max, f) => Math.max(max, f.id || 0), 0) + 1;
+  state.fields.push(F(id, `field_${id}`, "int32", "1"));
+  state.selected = id;
+  renderRows(); changed();
+};
+matchMedia("(max-width: 480px)").addEventListener("change", () => update());
+
+window.GenDbMessage = { encode, PRESETS };
+renderPresets();
+renderRows();
+update();
+</script>
+</body>
+</html>

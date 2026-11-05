@@ -1,5 +1,7 @@
 #pragma once
 
+#include <bit>
+#include <cassert>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
@@ -138,7 +140,7 @@ bool EncodeTupleToView(const Tuple& t, BytesView out) {
 
 // Decode fields (allocation-free with string_view)
 template <typename T>
-inline T DecodeField(BytesConstView& in) {
+inline T DecodeField(BytesConstView&) {
   static_assert(false);
 }
 

@@ -9,7 +9,7 @@
 #include "absl/status/status.h"
 #include "gendb/status.h"
 #include "gendb/bytes.h"
-#include "gendb/message_patch.h"
+#include "gendb/message.h"
 #include "gendb/iterator.h"
 
 {% if indices|length > 0 %}
@@ -71,7 +71,7 @@ absl::Status ScopedWrite::Put{{coll.type}}(
 
 absl::Status ScopedWrite::Update{{coll.type}}(
   {% if coll.pk_fields | length > 1 %}const {{coll.type}}Key& key{% else %}{{ coll.pk_fields[0].const_ref_type }} {{ coll.pk_fields[0].name }}{% endif %},
-  const MessagePatch& update
+  const gendb::MessagePatch& update
 ) {
   Bytes* ptr = nullptr;
   auto key_ = {% if coll.pk_fields | length > 1 %}To{{coll.type}}Key(key){% else %}To{{coll.type}}Key({{ coll.pk_fields[0].name }}){% endif %};
@@ -81,7 +81,7 @@ absl::Status ScopedWrite::Update{{coll.type}}(
   MaybeUpdate{{ idx.name_pascal_case }}Index(key_, *ptr, &update);
   {% endif %}
   {% endfor %}
-  gendb::ApplyPatch<{{ coll.type }}>(update, *ptr);
+  gendb::ApplyPatch(update, *ptr);
   return absl::OkStatus();
 }
 {% endfor %}
@@ -117,10 +117,10 @@ gendb::Iterator<{{ idx.type }}> ScopedWrite::Get{{ idx.name_pascal_case }}Equal(
 
 void ScopedWrite::MaybeUpdate{{ idx.name_pascal_case }}Index(std::array<uint8_t, sizeof({{ idx.value_cpp_type }})> key,
                                                gendb::BytesConstView {{ idx.type_snake_case }}_buffer,
-                                               const MessagePatch* update) {
+                                               const gendb::MessagePatch* update) {
   std::optional<{{ idx.key_cpp_type }}> {{ idx.field }}_before = std::nullopt;
   std::optional<{{ idx.key_cpp_type }}> {{ idx.field }}_after = std::nullopt;
-  if (update != nullptr  && !DoModifyField(*update, {{ idx.type }}::{{ idx.field_enum }})) {
+  if (update != nullptr  && !update->Modifies({{ idx.type }}::{{ idx.field_enum }})) {
     // This is update op which doesn't touch the indexed field.
     return;
   }
@@ -129,10 +129,7 @@ void ScopedWrite::MaybeUpdate{{ idx.name_pascal_case }}Index(std::array<uint8_t,
     {{ idx.field }}_before = {{ idx.type_snake_case }}.{{ idx.field }}();
   }
   if (update != nullptr) {
-    {{ idx.type }} {{ idx.type_snake_case }}_update{update->buffer};
-    if ({{ idx.type_snake_case }}_update.has_{{ idx.field }}()) {
-      {{ idx.field }}_after = {{ idx.type_snake_case }}_update.{{ idx.field }}();
-    }
+    {{ idx.field }}_after = update->ScalarValue<{{ idx.key_cpp_type }}>({{ idx.type }}::{{ idx.field_enum }});
   }
   if ({{ idx.field }}_before.has_value()) {
     _temp_indices.{{ idx.name }}.Insert({{ idx.field }}_before.value(), key,

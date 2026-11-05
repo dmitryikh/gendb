@@ -1,4 +1,3 @@
-
 // AUTO GENERATED. DO NOT EDIT.
 //
 #pragma once
@@ -6,11 +5,9 @@
 #include <cstdint>
 #include <span>
 #include <string_view>
+#include <utility>
 
-#include "gendb/bits.h"
-#include "gendb/message_base.h"
-#include "gendb/message_builder.h"
-#include "gendb/message_patch.h"
+#include "gendb/message.h"
 #include "gendb/reflection.h"
 
 // Enum definitions
@@ -29,212 +26,159 @@ static constexpr std::array<gendb::EnumValueInfo, 2> kMetadataTypeValues = {
 
 // Message classes
 namespace gendb {
-// GeneratedClass
-class MetadataValue : private gendb::MessageBase {
+// Zero-copy view of a serialized MetadataValue. Does not own the bytes.
+class MetadataValue {
  public:
-  enum Field : int { Type = 1, Id = 2, IntValue = 3, StringValue = 4, FloatValue = 5, MaxFields };
-
-  static constexpr std::array<uint32_t, 1> kFixedSizeFields = gendb::MakeConstexprFieldBitmask<1>({
-      Type,
-      Id,
-      IntValue,
-      FloatValue,
-  });
-
-  static constexpr std::array<gendb::FixedFieldDescriptor, 4> kFixedFieldDescriptors = {
-      gendb::FixedFieldDescriptor{Type, 4, gendb::FixedStorageWidth::Byte4, 0, 0, 0u, 0},
-      gendb::FixedFieldDescriptor{Id, 4, gendb::FixedStorageWidth::Byte4, 1, 1, 1u, 0},
-      gendb::FixedFieldDescriptor{IntValue, 4, gendb::FixedStorageWidth::Byte4, 2, 2, 3u, 0},
-      gendb::FixedFieldDescriptor{FloatValue, 4, gendb::FixedStorageWidth::Byte4, 3, 3, 7u, 0},
+  enum Field : gendb::FieldId {
+    Type = 1,
+    Id = 2,
+    IntValue = 3,
+    StringValue = 4,
+    FloatValue = 5,
   };
-
-  static constexpr std::array<uint8_t, gendb::kFixedStorageClassCount> kFixedWordCounts = {
-      0,
-      1,
-      0,
-  };
-
-  static constexpr gendb::MessageLayout kLayout{kFixedFieldDescriptors, kFixedWordCounts};
 
   // Field reflection metadata using common FieldInfo struct
   static constexpr std::array<gendb::FieldInfo, 5> kFieldsInfo = {
-      gendb::FieldInfo{"type", Type, gendb::FieldInfo::ENUM, gendb::FieldInfo::UNKNOWN_SCALAR,
+      gendb::FieldInfo{"type", Type, gendb::FieldInfo::ENUM, gendb::FieldInfo::UINT32,
                        "gendb::MetadataType",
                        std::span<const gendb::EnumValueInfo>(kMetadataTypeValues)},
-      gendb::FieldInfo{"id", Id, gendb::FieldInfo::SCALAR, gendb::FieldInfo::UNKNOWN_SCALAR, "",
+      gendb::FieldInfo{"id", Id, gendb::FieldInfo::SCALAR, gendb::FieldInfo::UINT32, "",
                        std::span<const gendb::EnumValueInfo>()},
       gendb::FieldInfo{"int_value", IntValue, gendb::FieldInfo::SCALAR, gendb::FieldInfo::INT32, "",
                        std::span<const gendb::EnumValueInfo>()},
       gendb::FieldInfo{"string_value", StringValue, gendb::FieldInfo::STRING,
-                       gendb::FieldInfo::UNKNOWN_SCALAR, "",
-                       std::span<const gendb::EnumValueInfo>()},
+                       gendb::FieldInfo::NOT_SCALAR, "", std::span<const gendb::EnumValueInfo>()},
       gendb::FieldInfo{"float_value", FloatValue, gendb::FieldInfo::SCALAR, gendb::FieldInfo::FLOAT,
                        "", std::span<const gendb::EnumValueInfo>()},
   };
 
-  MetadataValue() : MessageBase(&kLayout) {}
-  MetadataValue(std::span<const uint8_t> span) : MessageBase(span, &kLayout) {}
+  MetadataValue() = default;
+  // The bytes must outlive the view. Malformed bytes read as an empty message; check untrusted
+  // input with gendb::MessageView::Verify first.
+  MetadataValue(std::span<const uint8_t> bytes) : _view(gendb::MessageView::OpenOrEmpty(bytes)) {}
 
-  bool has_type() const { return HasField(Type); }
+  bool has_type() const { return _view.Has<Type, gendb::KindOf<uint32_t>>(); }
   gendb::MetadataType type() const {
-    return static_cast<gendb::MetadataType>(
-        ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[0], uint32_t>(0));
+    return static_cast<gendb::MetadataType>(_view.Get<Type, uint32_t>(0));
   }
-  bool has_id() const { return HasField(Id); }
-  uint32_t id() const {
-    return ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[1], uint32_t>(0);
-  }
-  bool has_int_value() const { return HasField(IntValue); }
-  int32_t int_value() const {
-    return ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[2], int32_t>(0);
-  }
-  bool has_string_value() const { return HasField(StringValue); }
-  std::string_view string_value() const { return ReadSparseKnownStringField(StringValue, ""); }
-  bool has_float_value() const { return HasField(FloatValue); }
-  float float_value() const {
-    return ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[3], float>(0.0f);
-  }
+  bool has_id() const { return _view.Has<Id, gendb::KindOf<uint32_t>>(); }
+  uint32_t id() const { return _view.Get<Id, uint32_t>(0); }
+  bool has_int_value() const { return _view.Has<IntValue, gendb::KindOf<int32_t>>(); }
+  int32_t int_value() const { return _view.Get<IntValue, int32_t>(0); }
+  bool has_string_value() const { return _view.Has<StringValue, gendb::Kind::Var>(); }
+  std::string_view string_value() const { return _view.GetString<StringValue>(); }
+  bool has_float_value() const { return _view.Has<FloatValue, gendb::KindOf<float>>(); }
+  float float_value() const { return _view.Get<FloatValue, float>(0.0f); }
 
-  // MessageBase methods.
-  using gendb::MessageBase::FieldCount;
-  using gendb::MessageBase::GetFieldsMask;
-  using gendb::MessageBase::HasField;
-  static constexpr const gendb::MessageLayout* LayoutPtr() { return &kLayout; }
-  std::span<const uint8_t> FieldRaw(int field_id) const {
-    return gendb::MessageBase::FieldRaw(field_id);
-  }
+  // Any field by ID, including unknown ones: this schema's future or deprecated fields.
+  bool HasField(gendb::FieldId id) const { return _view.Has(id); }
+  uint32_t FieldCount() const { return _view.FieldCount(); }
+  const gendb::MessageView& View() const { return _view; }
 
-  friend class MetadataValueBuilder;
+ private:
+  gendb::MessageView _view;
 };
 
+// Builds a serialized MetadataValue. Strings are borrowed: they must stay alive until Build().
 class MetadataValueBuilder : public gendb::MessageBuilder {
  public:
-  MetadataValueBuilder() : MessageBuilder(MetadataValue::LayoutPtr()) {}
-  MetadataValueBuilder(MetadataValue& obj) : MessageBuilder(obj) {}
+  MetadataValueBuilder() = default;
+  // Starts from all fields of `source`, known or unknown; its bytes must outlive the builder.
+  explicit MetadataValueBuilder(const MetadataValue& source) : MessageBuilder(source.View()) {}
 
   MetadataValueBuilder& set_type(gendb::MetadataType value) {
     AddField<uint32_t>(MetadataValue::Type, static_cast<uint32_t>(value));
+    return *this;
+  }
+  MetadataValueBuilder& clear_type() {
+    ClearField(MetadataValue::Type);
     return *this;
   }
   MetadataValueBuilder& set_id(uint32_t value) {
     AddField<uint32_t>(MetadataValue::Id, value);
     return *this;
   }
-  MetadataValueBuilder& set_int_value(int32_t value) {
-    AddField<int32_t>(MetadataValue::IntValue, value);
-    return *this;
-  }
-  MetadataValueBuilder& set_string_value(std::string_view value) {
-    AddStringField(MetadataValue::StringValue, value);
-    return *this;
-  }
-  MetadataValueBuilder& set_float_value(float value) {
-    AddField<float>(MetadataValue::FloatValue, value);
-    return *this;
-  }
-
-  MetadataValueBuilder& clear_type() {
-    ClearField(MetadataValue::Type);
-    return *this;
-  }
   MetadataValueBuilder& clear_id() {
     ClearField(MetadataValue::Id);
+    return *this;
+  }
+  MetadataValueBuilder& set_int_value(int32_t value) {
+    AddField<int32_t>(MetadataValue::IntValue, value);
     return *this;
   }
   MetadataValueBuilder& clear_int_value() {
     ClearField(MetadataValue::IntValue);
     return *this;
   }
+  MetadataValueBuilder& set_string_value(std::string_view value) {
+    AddStringField(MetadataValue::StringValue, value);
+    return *this;
+  }
+  template <gendb::TemporaryString S>
+  MetadataValueBuilder& set_string_value(S&&) = delete;
   MetadataValueBuilder& clear_string_value() {
     ClearField(MetadataValue::StringValue);
+    return *this;
+  }
+  MetadataValueBuilder& set_float_value(float value) {
+    AddField<float>(MetadataValue::FloatValue, value);
     return *this;
   }
   MetadataValueBuilder& clear_float_value() {
     ClearField(MetadataValue::FloatValue);
     return *this;
   }
-
-  std::vector<uint8_t> Build() { return MessageBuilder::Build(); }
 };
 
+// Builds a partial update of MetadataValue. Owns its string values.
 class MetadataValuePatchBuilder {
  public:
   MetadataValuePatchBuilder() = default;
-  // TODO: Add constructor with primary key fields.
 
   MetadataValuePatchBuilder&& set_type(gendb::MetadataType value) && {
-    _builder.set_type(value);
-    SetFieldBit(modified, MetadataValue::Type);
-    UnsetFieldBit(removed, MetadataValue::Type);
+    _patch.Set<uint32_t>(MetadataValue::Type, static_cast<uint32_t>(value));
     return std::move(*this);
   }
   MetadataValuePatchBuilder&& clear_type() && {
-    SetFieldBit(removed, MetadataValue::Type);
-    UnsetFieldBit(modified, MetadataValue::Type);
-    _builder.clear_type();
+    _patch.Remove(MetadataValue::Type);
     return std::move(*this);
   }
   MetadataValuePatchBuilder&& set_id(uint32_t value) && {
-    _builder.set_id(value);
-    SetFieldBit(modified, MetadataValue::Id);
-    UnsetFieldBit(removed, MetadataValue::Id);
+    _patch.Set<uint32_t>(MetadataValue::Id, value);
     return std::move(*this);
   }
   MetadataValuePatchBuilder&& clear_id() && {
-    SetFieldBit(removed, MetadataValue::Id);
-    UnsetFieldBit(modified, MetadataValue::Id);
-    _builder.clear_id();
+    _patch.Remove(MetadataValue::Id);
     return std::move(*this);
   }
   MetadataValuePatchBuilder&& set_int_value(int32_t value) && {
-    _builder.set_int_value(value);
-    SetFieldBit(modified, MetadataValue::IntValue);
-    UnsetFieldBit(removed, MetadataValue::IntValue);
+    _patch.Set<int32_t>(MetadataValue::IntValue, value);
     return std::move(*this);
   }
   MetadataValuePatchBuilder&& clear_int_value() && {
-    SetFieldBit(removed, MetadataValue::IntValue);
-    UnsetFieldBit(modified, MetadataValue::IntValue);
-    _builder.clear_int_value();
+    _patch.Remove(MetadataValue::IntValue);
     return std::move(*this);
   }
   MetadataValuePatchBuilder&& set_string_value(std::string_view value) && {
-    _builder.set_string_value(value);
-    SetFieldBit(modified, MetadataValue::StringValue);
-    UnsetFieldBit(removed, MetadataValue::StringValue);
+    _patch.CopyString(MetadataValue::StringValue, value);
     return std::move(*this);
   }
   MetadataValuePatchBuilder&& clear_string_value() && {
-    SetFieldBit(removed, MetadataValue::StringValue);
-    UnsetFieldBit(modified, MetadataValue::StringValue);
-    _builder.clear_string_value();
+    _patch.Remove(MetadataValue::StringValue);
     return std::move(*this);
   }
   MetadataValuePatchBuilder&& set_float_value(float value) && {
-    _builder.set_float_value(value);
-    SetFieldBit(modified, MetadataValue::FloatValue);
-    UnsetFieldBit(removed, MetadataValue::FloatValue);
+    _patch.Set<float>(MetadataValue::FloatValue, value);
     return std::move(*this);
   }
   MetadataValuePatchBuilder&& clear_float_value() && {
-    SetFieldBit(removed, MetadataValue::FloatValue);
-    UnsetFieldBit(modified, MetadataValue::FloatValue);
-    _builder.clear_float_value();
+    _patch.Remove(MetadataValue::FloatValue);
     return std::move(*this);
   }
 
-  gendb::MessagePatch Build() && {
-    gendb::MessagePatch patch;
-    patch.modified = std::move(modified);
-    patch.removed = std::move(removed);
-    patch.layout = MetadataValue::LayoutPtr();
-    patch.buffer = _builder.Build();
-    return patch;
-  }
+  gendb::MessagePatch Build() && { return std::move(_patch); }
 
  private:
-  gendb::Bitmask modified;
-  gendb::Bitmask removed;
-  MetadataValueBuilder _builder;
+  gendb::MessagePatch _patch;
 };
 }  // namespace gendb

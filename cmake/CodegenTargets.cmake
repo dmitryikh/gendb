@@ -20,6 +20,7 @@ function(gen_db_messages TARGET_NAME FBS_DIR OUTPUT_DIR)
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/gen/generate_message_class.py
                 --fbs_dir ${FBS_DIR} --output_dir ${OUTPUT_DIR}
         DEPENDS ${FBS_FILES} ${CMAKE_SOURCE_DIR}/gen/generate_message_class.py
+                ${CMAKE_SOURCE_DIR}/gen/templates/message_class_template.h.jinja2
         COMMENT "Generating C++ headers from schemas in ${FBS_DIR}"
     )
     # Add OUTPUT_DIR to the global include directories

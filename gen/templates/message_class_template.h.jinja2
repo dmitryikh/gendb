@@ -1,21 +1,18 @@
-
 // AUTO GENERATED. DO NOT EDIT.
 //
 #pragma once
-#include <cstdint>
 #include <array>
-#include <string_view>
+#include <cstdint>
 #include <span>
+#include <string_view>
+#include <utility>
 
-#include "gendb/message_base.h"
-#include "gendb/message_builder.h"
-#include "gendb/bits.h"
-#include "gendb/message_patch.h"
+#include "gendb/message.h"
 #include "gendb/reflection.h"
 
 // Enum definitions
 {% for enum in enums.values() %}
-{% if enum.namespace %}namespace {{ enum.namespace.replace('.', '::') }} {
+{% if enum.namespace %}namespace {{ enum.namespace }} {
 {% endif %}
 enum class {{ enum.name }} : {{ enum.underlying_type }} {
   {% for value_name, value in enum.vals %}
@@ -23,7 +20,7 @@ enum class {{ enum.name }} : {{ enum.underlying_type }} {
   {% endfor %}
 };
 {% if enum.namespace %}
-} // namespace {{ enum.namespace.replace('.', '::') }}
+} // namespace {{ enum.namespace }}
 {% endif %}
 
 // Enum value arrays for reflection
@@ -38,134 +35,109 @@ static constexpr std::array<gendb::EnumValueInfo, {{ enum.vals | length }}> k{{ 
 {% for table in tables %}
 {% if table.namespace %}namespace {{ table.namespace }} {
 {% endif %}
-// GeneratedClass
-class {{ table.name }} : private gendb::MessageBase {
+// Zero-copy view of a serialized {{ table.name }}. Does not own the bytes.
+class {{ table.name }} {
  public:
-
-  enum Field : int {
+  enum Field : gendb::FieldId {
     {% for field in table.fields %}
     {{ field.name | pascalcase }} = {{ field.id }},
     {% endfor %}
-    MaxFields
-  };
-
-  static constexpr std::array<uint32_t, {{ table.K }}> kFixedSizeFields = gendb::MakeConstexprFieldBitmask<{{ table.K }}>({
-    {% for field in table.fixed_fields %}
-      {{ field.name | pascalcase }},
-    {% endfor %}
-  });
-
-  static constexpr std::array<gendb::FixedFieldDescriptor, {{ table.fixed_fields | length }}> kFixedFieldDescriptors = {
-    {% for field in table.fixed_fields %}
-    gendb::FixedFieldDescriptor{ {{ field.name | pascalcase }}, {{ field.logical_size }}, gendb::FixedStorageWidth::Byte{{ field.storage_width }}, {{ field.bit_index_within_class }}, {{ field.ordinal_within_class }}, {{ field.mask_before_within_word }}u, {{ field.word_index_within_class }} },
+    {% for field in table.deprecated_fields %}
+    // {{ field.id }} is reserved: `{{ field.name }}` is deprecated. Never reuse this ID.
     {% endfor %}
   };
-
-  static constexpr std::array<uint8_t, gendb::kFixedStorageClassCount> kFixedWordCounts = {
-      {{ table.fixed_word_counts[1] }},
-      {{ table.fixed_word_counts[4] }},
-      {{ table.fixed_word_counts[8] }},
-  };
-
-  static constexpr gendb::MessageLayout kLayout{kFixedFieldDescriptors, kFixedWordCounts};
 
   // Field reflection metadata using common FieldInfo struct
   static constexpr std::array<gendb::FieldInfo, {{ table.fields | length }}> kFieldsInfo = {
     {% for field in table.fields %}
-    gendb::FieldInfo{"{{ field.name }}", {{ field.name | pascalcase }}, 
-      {% if field.cpp_type == 'std::string' %}gendb::FieldInfo::STRING{% elif field.field_kind == FieldKind.ENUM %}gendb::FieldInfo::ENUM{% else %}gendb::FieldInfo::SCALAR{% endif %}, 
-      {% if field.cpp_type == 'uint64_t' %}gendb::FieldInfo::UINT64{% elif field.cpp_type == 'int32_t' %}gendb::FieldInfo::INT32{% elif field.cpp_type == 'bool' %}gendb::FieldInfo::BOOL{% elif field.cpp_type == 'float' %}gendb::FieldInfo::FLOAT{% else %}gendb::FieldInfo::UNKNOWN_SCALAR{% endif %}, 
+    gendb::FieldInfo{"{{ field.name }}", {{ field.name | pascalcase }},
+      {% if field.cpp_type == 'std::string' %}gendb::FieldInfo::STRING{% elif field.field_kind == FieldKind.ENUM %}gendb::FieldInfo::ENUM{% else %}gendb::FieldInfo::SCALAR{% endif %},
+      gendb::FieldInfo::{{ field | scalar_type_name }},
       {% if field.field_kind == FieldKind.ENUM %}"{{ field.cpp_type }}"{% else %}""{% endif %},
       {% if field.field_kind == FieldKind.ENUM %}std::span<const gendb::EnumValueInfo>(k{{ enums[field.type].name }}Values){% else %}std::span<const gendb::EnumValueInfo>(){% endif %}},
     {% endfor %}
   };
 
-  {{ table.name }}() : MessageBase(&kLayout) {}
-  {{ table.name }}(std::span<const uint8_t> span) : MessageBase(span, &kLayout) {}
+  {{ table.name }}() = default;
+  // The bytes must outlive the view. Malformed bytes read as an empty message; check untrusted
+  // input with gendb::MessageView::Verify first.
+  {{ table.name }}(std::span<const uint8_t> bytes) : _view(gendb::MessageView::OpenOrEmpty(bytes)) {}
 
   {% for field in table.fields %}
-  bool has_{{field.name}}() const { return HasField({{ field.name | pascalcase }}); }
   {% if field.cpp_type == 'std::string' %}
-  std::string_view {{field.name}}() const { return ReadSparseKnownStringField({{ field.name | pascalcase }}, ""); }
-  {% elif field.is_fixed_size and field.field_kind == FieldKind.ENUM %}
-  {{ field.cpp_type }} {{field.name}}() const { return static_cast<{{ field.cpp_type }}>(ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[{{ field.fixed_descriptor_index }}], {{field.underlying_type}}>({{ field.default }})); }
-  {% elif field.is_fixed_size %}
-  {{ field.cpp_type }} {{field.name}}() const { return ReadFixedScalarFieldByDescriptor<kFixedFieldDescriptors[{{ field.fixed_descriptor_index }}], {{ field.cpp_type }}>({{ field.default }}); }
+  bool has_{{field.name}}() const { return _view.Has<{{ field.name | pascalcase }}, gendb::Kind::Var>(); }
+  std::string_view {{field.name}}() const { return _view.GetString<{{ field.name | pascalcase }}>(); }
   {% elif field.field_kind == FieldKind.ENUM %}
-  {{ field.cpp_type }} {{field.name}}() const { return static_cast<{{ field.cpp_type }}>(ReadScalarField<{{field.underlying_type}}>({{ field.name | pascalcase }}, {{ field.default }})); }
+  bool has_{{field.name}}() const { return _view.Has<{{ field.name | pascalcase }}, gendb::KindOf<{{ field.underlying_type }}>>(); }
+  {{ field.cpp_type }} {{field.name}}() const { return static_cast<{{ field.cpp_type }}>(_view.Get<{{ field.name | pascalcase }}, {{ field.underlying_type }}>({{ field.default }})); }
   {% else %}
-  {{ field.cpp_type }} {{field.name}}() const { return ReadScalarField<{{ field.cpp_type }}>({{ field.name | pascalcase }}, {{ field.default }}); }
+  bool has_{{field.name}}() const { return _view.Has<{{ field.name | pascalcase }}, gendb::KindOf<{{ field.cpp_type }}>>(); }
+  {{ field.cpp_type }} {{field.name}}() const { return _view.Get<{{ field.name | pascalcase }}, {{ field.cpp_type }}>({{ field.default }}); }
   {% endif %}
   {% endfor %}
 
+  // Any field by ID, including unknown ones: this schema's future or deprecated fields.
+  bool HasField(gendb::FieldId id) const { return _view.Has(id); }
+  uint32_t FieldCount() const { return _view.FieldCount(); }
+  const gendb::MessageView& View() const { return _view; }
 
-  // MessageBase methods.
-  using gendb::MessageBase::FieldCount;
-  using gendb::MessageBase::HasField;
-  using gendb::MessageBase::GetFieldsMask;
-  static constexpr const gendb::MessageLayout* LayoutPtr() { return &kLayout; }
-  std::span<const uint8_t> FieldRaw(int field_id) const {
-    return gendb::MessageBase::FieldRaw(field_id);
-  }
-
-  friend class {{table.name}}Builder;
+ private:
+  gendb::MessageView _view;
 };
 
+// Builds a serialized {{ table.name }}. Strings are borrowed: they must stay alive until Build().
 class {{table.name}}Builder : public gendb::MessageBuilder {
  public:
-  {{table.name}}Builder() : MessageBuilder({{table.name}}::LayoutPtr()) {}
-  {{table.name}}Builder({{table.name}}& obj) : MessageBuilder(obj) {}
+  {{table.name}}Builder() = default;
+  // Starts from all fields of `source`, known or unknown; its bytes must outlive the builder.
+  explicit {{table.name}}Builder(const {{table.name}}& source) : MessageBuilder(source.View()) {}
 
   {% for field in table.fields %}
   {% if field.cpp_type == 'std::string' %}
   {{table.name}}Builder& set_{{field.name}}(std::string_view value) { AddStringField({{ table.name }}::{{ field.name | pascalcase }}, value); return *this; }
+  template <gendb::TemporaryString S>
+  {{table.name}}Builder& set_{{field.name}}(S&&) = delete;
   {% elif field.field_kind == FieldKind.ENUM %}
   {{table.name}}Builder& set_{{field.name}}({{ field.cpp_type }} value) { AddField<{{ field.underlying_type }}>({{ table.name }}::{{ field.name | pascalcase }}, static_cast<{{ field.underlying_type }}>(value)); return *this; }
   {% else %}
   {{table.name}}Builder& set_{{field.name}}({{ field.const_ref_type }} value) { AddField<{{ field.cpp_type }}>({{ table.name }}::{{ field.name | pascalcase }}, value); return *this; }
   {% endif %}
-  {% endfor %}
-
-  {% for field in table.fields %}
   {{table.name}}Builder& clear_{{field.name}}() { ClearField({{ table.name }}::{{ field.name | pascalcase }}); return *this; }
   {% endfor %}
-
-  std::vector<uint8_t> Build() { return MessageBuilder::Build(); }
 };
 
+// Builds a partial update of {{ table.name }}. Owns its string values.
 class {{table.name}}PatchBuilder {
  public:
   {{table.name}}PatchBuilder() = default;
-  // TODO: Add constructor with primary key fields.
 
   {% for field in table.fields %}
-  {{table.name}}PatchBuilder&& set_{{field.name}}({{ field.const_ref_type }} value) && {
-    _builder.set_{{field.name}}(value);
-    SetFieldBit(modified, {{ table.name }}::{{ field.name | pascalcase }});
-    UnsetFieldBit(removed, {{ table.name }}::{{ field.name | pascalcase }});
+  {% if field.cpp_type == 'std::string' %}
+  {{table.name}}PatchBuilder&& set_{{field.name}}(std::string_view value) && {
+    _patch.CopyString({{ table.name }}::{{ field.name | pascalcase }}, value);
     return std::move(*this);
   }
+  {% elif field.field_kind == FieldKind.ENUM %}
+  {{table.name}}PatchBuilder&& set_{{field.name}}({{ field.cpp_type }} value) && {
+    _patch.Set<{{ field.underlying_type }}>({{ table.name }}::{{ field.name | pascalcase }}, static_cast<{{ field.underlying_type }}>(value));
+    return std::move(*this);
+  }
+  {% else %}
+  {{table.name}}PatchBuilder&& set_{{field.name}}({{ field.const_ref_type }} value) && {
+    _patch.Set<{{ field.cpp_type }}>({{ table.name }}::{{ field.name | pascalcase }}, value);
+    return std::move(*this);
+  }
+  {% endif %}
   {{table.name}}PatchBuilder&& clear_{{field.name}}() && {
-    SetFieldBit(removed, {{ table.name }}::{{ field.name | pascalcase }});
-    UnsetFieldBit(modified, {{ table.name }}::{{ field.name | pascalcase }});
-    _builder.clear_{{field.name}}();
+    _patch.Remove({{ table.name }}::{{ field.name | pascalcase }});
     return std::move(*this);
   }
   {% endfor %}
 
-  gendb::MessagePatch Build() && {
-    gendb::MessagePatch patch;
-    patch.modified = std::move(modified);
-    patch.removed = std::move(removed);
-    patch.layout = {{table.name}}::LayoutPtr();
-    patch.buffer = _builder.Build();
-    return patch;
-  }
+  gendb::MessagePatch Build() && { return std::move(_patch); }
 
  private:
-  gendb::Bitmask modified;
-  gendb::Bitmask removed;
-  {{table.name}}Builder _builder;
+  gendb::MessagePatch _patch;
 };
 {% if table.namespace %}
 } // namespace {{ table.namespace }}

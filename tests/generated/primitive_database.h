@@ -9,7 +9,7 @@
 #include "gendb/bytes.h"
 #include "gendb/key_codec.h"
 #include "gendb/layered_storage.h"
-#include "gendb/message_patch.h"
+#include "gendb/message.h"
 #include "messageA.fbs.h"
 #include "metadata.fbs.h"
 
@@ -91,12 +91,13 @@ class ScopedWrite {
  private:
   absl::Status GetMetadataValue(const MetadataValueKey& key, MetadataValue& metadata_value) const;
   absl::Status PutMetadataValue(const MetadataValueKey& key, std::vector<uint8_t> metadata_value);
-  absl::Status UpdateMetadataValue(const MetadataValueKey& key, const MessagePatch& update);
+  absl::Status UpdateMetadataValue(const MetadataValueKey& key, const gendb::MessagePatch& update);
 
  public:
   absl::Status GetMessageA(gendb::tests::primitive::KeyEnum key, MessageA& message_a) const;
   absl::Status PutMessageA(gendb::tests::primitive::KeyEnum key, std::vector<uint8_t> message_a);
-  absl::Status UpdateMessageA(gendb::tests::primitive::KeyEnum key, const MessagePatch& update);
+  absl::Status UpdateMessageA(gendb::tests::primitive::KeyEnum key,
+                              const gendb::MessagePatch& update);
 
  public:
   void Commit();

@@ -1,12 +1,22 @@
+#include "gendb/message.h"
+
 #include <gtest/gtest.h>
 
 #include "account.fbs.h"
-#include "gendb/message_patch.h"
+#include "evolution.fbs.h"
 #include "lib/message_matchers.h"
 #include "lib/parse_text.h"
 #include "position.fbs.h"
 
 using namespace gendb::tests;
+
+namespace {
+// Applies a patch to a copy of the message.
+std::vector<uint8_t> Patched(const gendb::MessagePatch& patch, std::vector<uint8_t> message) {
+  gendb::ApplyPatch(patch, message);
+  return message;
+}
+}  // namespace
 
 class AccountPatchTest : public ::testing::Test {
  protected:
@@ -25,44 +35,43 @@ class AccountPatchTest : public ::testing::Test {
 
 TEST_F(AccountPatchTest, ModifyFixedSizeField) {
   auto patch = AccountPatchBuilder().set_account_id(24).Build();
-  EXPECT_TRUE(CanApplyPatchInplace<Account>(patch, buffer));
-  EXPECT_TRUE(ApplyPatchInplace(patch, buffer, Account::LayoutPtr()));
+  EXPECT_TRUE(ApplyPatchInplace(patch, buffer));
   EXPECT_EQ(account.account_id(), 24);
 }
 
 TEST_F(AccountPatchTest, ModifyNonFixedSizeField) {
   auto patch = AccountPatchBuilder().set_name("TestName").Build();
-  EXPECT_FALSE(CanApplyPatchInplace<Account>(patch, buffer));
+  EXPECT_FALSE(ApplyPatchInplace(patch, buffer));
 }
 
 TEST_F(AccountPatchTest, RemoveFixedSizeField) {
   auto patch = AccountPatchBuilder().clear_account_id().Build();
-  EXPECT_FALSE(CanApplyPatchInplace<Account>(patch, buffer));
+  EXPECT_FALSE(ApplyPatchInplace(patch, buffer));
 }
 
 TEST_F(AccountPatchTest, RemoveNonFixedSizeField) {
   auto patch = AccountPatchBuilder().clear_name().Build();
-  EXPECT_FALSE(CanApplyPatchInplace<Account>(patch, buffer));
+  EXPECT_FALSE(ApplyPatchInplace(patch, buffer));
 }
 
 TEST_F(AccountPatchTest, ModifyAndRemoveFields) {
   auto patch = AccountPatchBuilder().set_age(31).set_balance(200.0f).clear_name().Build();
-  EXPECT_FALSE(CanApplyPatchInplace<Account>(patch, buffer));
+  EXPECT_FALSE(ApplyPatchInplace(patch, buffer));
 }
 
 TEST_F(AccountPatchTest, ModifyAndRemoveExistingFields) {
   auto patch = AccountPatchBuilder().set_age(31).set_balance(200.0f).clear_account_id().Build();
-  EXPECT_FALSE(CanApplyPatchInplace<Account>(patch, buffer));
+  EXPECT_FALSE(ApplyPatchInplace(patch, buffer));
 }
 
 TEST_F(AccountPatchTest, ModifyNonFixedAndRemoveFixed) {
   auto patch = AccountPatchBuilder().set_name("TestName").clear_account_id().Build();
-  EXPECT_FALSE(CanApplyPatchInplace<Account>(patch, buffer));
+  EXPECT_FALSE(ApplyPatchInplace(patch, buffer));
 }
 
 TEST_F(AccountPatchTest, ModifyAndRemoveNonFixed) {
   auto patch = AccountPatchBuilder().set_name("TestName").clear_config_name().Build();
-  EXPECT_FALSE(CanApplyPatchInplace<Account>(patch, buffer));
+  EXPECT_FALSE(ApplyPatchInplace(patch, buffer));
 }
 
 TEST(PositionTest, SetGetFields) {
@@ -147,40 +156,44 @@ TEST(AccountTest, FixedGettersHandleMissingEarlierFields) {
   EXPECT_FLOAT_EQ(account.balance(), 321.5f);
 }
 
-TEST(AccountTest, SparseStringReadsRemainStableAcrossRepeatedLookups) {
+TEST(AccountTest, UnknownFieldIsReadableThroughTheView) {
   AccountBuilder builder;
   builder.set_account_id(77);
-  builder.set_name("Repeated Name");
-  builder.set_address("Repeated Address");
   builder.AddStringField(99, "unknown");
   std::vector<uint8_t> buffer = builder.Build();
   Account account{buffer};
 
-  const auto first_name = account.name();
-  const auto second_name = account.name();
-  const auto first_address = account.address();
-  const auto second_address = account.address();
-
-  EXPECT_EQ(first_name, "Repeated Name");
-  EXPECT_EQ(second_name, "Repeated Name");
-  EXPECT_EQ(first_address, "Repeated Address");
-  EXPECT_EQ(second_address, "Repeated Address");
-  EXPECT_EQ(account.FieldRaw(99).size(), std::string_view("unknown").size());
+  EXPECT_EQ(account.account_id(), 77);
+  EXPECT_TRUE(account.HasField(99));
+  EXPECT_EQ(account.View().GetString(99), "unknown");
+  EXPECT_EQ(account.FieldCount(), 2u);
 }
 
-TEST(AccountTest, FixedFieldRawMatchesStoredWidths) {
+TEST(AccountTest, FieldsUseTheStorageClassOfTheirType) {
   AccountBuilder builder;
   builder.set_account_id(11);
   builder.set_age(22);
   builder.set_is_active(true);
   builder.set_balance(33.5f);
+  builder.set_name("n");
   std::vector<uint8_t> buffer = builder.Build();
   Account account{buffer};
+  const auto& view = account.View();
 
-  EXPECT_EQ(account.FieldRaw(Account::AccountId).size(), sizeof(uint64_t));
-  EXPECT_EQ(account.FieldRaw(Account::Age).size(), sizeof(int32_t));
-  EXPECT_EQ(account.FieldRaw(Account::IsActive).size(), sizeof(bool));
-  EXPECT_EQ(account.FieldRaw(Account::Balance).size(), sizeof(float));
+  EXPECT_EQ(view.KindOfField(Account::AccountId), gendb::Kind::S8);
+  EXPECT_EQ(view.KindOfField(Account::Age), gendb::Kind::S4);
+  EXPECT_EQ(view.KindOfField(Account::IsActive), gendb::Kind::Bit);
+  EXPECT_EQ(view.KindOfField(Account::Balance), gendb::Kind::S4);
+  EXPECT_EQ(view.KindOfField(Account::Name), gendb::Kind::Var);
+}
+
+TEST(AccountTest, MalformedBytesReadAsEmptyMessage) {
+  std::vector<uint8_t> buffer = AccountBuilder().set_account_id(5).Build();
+  buffer.push_back(0);  // Trailing byte.
+  EXPECT_FALSE(gendb::MessageView::Verify(buffer));
+  Account account{buffer};
+  EXPECT_FALSE(account.has_account_id());
+  EXPECT_EQ(account.account_id(), 0u);
 }
 
 TEST(PositionTest, AllFieldsSetGet) {
@@ -247,57 +260,6 @@ TEST(PositionTest, PartialUpdate) {
   EXPECT_EQ(patch_position.instrument(), "GOOG");
 }
 
-TEST(AccountTest, PatchWithUnknownFields) {
-  AccountBuilder builder;
-  builder.set_account_id(123456);
-  builder.set_is_active(false);
-  builder.set_name("Test User");
-  std::vector<uint8_t> buffer = builder.Build();
-  Account account{buffer};
-
-  // {
-  //   gendb::MessageBuilder patch_builder{account};
-  //   patch_builder.AddStringField(6, "New Field#6");
-  //   patch_builder.AddField<int32_t>(8, 321);
-  //   std::vector<uint8_t> patch_buffer = patch_builder.Build();
-  //   Account patch_account{patch_buffer};
-
-  //   // Known fields are accessible as usual.
-  //   EXPECT_EQ(patch_account.account_id(), 123456);
-  //   EXPECT_EQ(patch_account.is_active(), false);
-  //   EXPECT_EQ(patch_account.name(), "Test User");
-
-  //   // Unknown fields can be accessible by the base API.
-  //   EXPECT_EQ(patch_account.ReadScalarField<int32_t>(8, 0), 321);
-  //   EXPECT_EQ(patch_account.ReadStringField(6, ""), "New Field#6");
-  // }
-}
-
-TEST(AccountTest, PatchUnknownField) {
-  AccountBuilder builder;
-  builder.set_account_id(123456);
-  builder.set_is_active(false);
-  builder.set_name("Test User");
-  builder.AddStringField(6, "Unknown Field#6");
-  std::vector<uint8_t> buffer = builder.Build();
-  Account account{buffer};
-
-  // {
-  //   gendb::MessageBuilder patch_builder{account};
-  //   patch_builder.AddStringField(6, "Patched Field#6");
-  //   std::vector<uint8_t> patch_buffer = patch_builder.Build();
-  //   Account patch_account{patch_buffer};
-
-  //   // Known fields are accessible as usual.
-  //   EXPECT_EQ(patch_account.account_id(), 123456);
-  //   EXPECT_EQ(patch_account.is_active(), false);
-  //   EXPECT_EQ(patch_account.name(), "Test User");
-
-  //   // Unknown fields.
-  //   EXPECT_EQ(patch_account.ReadStringField(6, ""), "Patched Field#6");
-  // }
-}
-
 TEST(AccountTest, ApplyPatch_ModifyFixedField) {
   AccountBuilder builder;
   builder.set_account_id(42);
@@ -308,8 +270,7 @@ TEST(AccountTest, ApplyPatch_ModifyFixedField) {
   Account account(buffer);
 
   auto patch = AccountPatchBuilder().set_balance(200.0f).Build();
-  std::vector<uint8_t> patched_buffer;
-  ApplyPatch(patch, buffer, patched_buffer);
+  std::vector<uint8_t> patched_buffer = Patched(patch, buffer);
   Account patched(patched_buffer);
   EXPECT_EQ(patched.balance(), 200.0f);
   EXPECT_EQ(patched.account_id(), 42);
@@ -325,8 +286,7 @@ TEST(AccountTest, ApplyPatch_ModifyNonFixedField) {
   Account account(buffer);
 
   auto patch = AccountPatchBuilder().set_name("NewName").Build();
-  std::vector<uint8_t> patched_buffer;
-  ApplyPatch(patch, buffer, patched_buffer);
+  std::vector<uint8_t> patched_buffer = Patched(patch, buffer);
   Account patched(patched_buffer);
   EXPECT_EQ(patched.name(), "NewName");
   EXPECT_EQ(patched.account_id(), 42);
@@ -340,8 +300,7 @@ TEST(AccountTest, ApplyPatch_RemoveFixedField) {
   Account account(buffer);
 
   auto patch = AccountPatchBuilder().clear_age().Build();
-  std::vector<uint8_t> patched_buffer;
-  ApplyPatch(patch, buffer, patched_buffer);
+  std::vector<uint8_t> patched_buffer = Patched(patch, buffer);
   Account patched(patched_buffer);
   EXPECT_FALSE(patched.has_age());
   EXPECT_EQ(patched.account_id(), 42);
@@ -355,8 +314,7 @@ TEST(AccountTest, ApplyPatch_RemoveNonFixedField) {
   Account account(buffer);
 
   auto patch = AccountPatchBuilder().clear_name().Build();
-  std::vector<uint8_t> patched_buffer;
-  ApplyPatch(patch, buffer, patched_buffer);
+  std::vector<uint8_t> patched_buffer = Patched(patch, buffer);
   Account patched(patched_buffer);
   EXPECT_THAT(patched, MessageEqual<Account>(R"m(
     account_id: 42
@@ -373,8 +331,7 @@ TEST(AccountTest, ApplyPatch_ModifyAndRemoveFields) {
   Account account(buffer);
 
   auto patch = AccountPatchBuilder().set_balance(200.0f).clear_name().Build();
-  std::vector<uint8_t> patched_buffer;
-  ApplyPatch(patch, buffer, patched_buffer);
+  std::vector<uint8_t> patched_buffer = Patched(patch, buffer);
   Account patched(patched_buffer);
 
   EXPECT_THAT(patched, MessageEqual<Account>(R"m(
@@ -384,70 +341,69 @@ TEST(AccountTest, ApplyPatch_ModifyAndRemoveFields) {
   )m"));
 }
 
-TEST(AccountTest, InplacePatchRequiresEqualLengthForSparseField) {
+TEST(AccountTest, InplacePatchRequiresEqualLengthForStringField) {
   std::vector<uint8_t> buffer = ParseText<Account>(R"m(
     account_id: 42
     name: "OldName"
   )m");
 
   auto same_size_patch = AccountPatchBuilder().set_name("NewName").Build();
-  EXPECT_TRUE(CanApplyPatchInplace<Account>(same_size_patch, buffer));
-  EXPECT_TRUE(ApplyPatchInplace(same_size_patch, buffer, Account::LayoutPtr()));
+  EXPECT_TRUE(ApplyPatchInplace(same_size_patch, buffer));
   EXPECT_EQ(Account(buffer).name(), "NewName");
 
+  const std::vector<uint8_t> before = buffer;
   auto different_size_patch = AccountPatchBuilder().set_name("LongerName").Build();
-  EXPECT_FALSE(CanApplyPatchInplace<Account>(different_size_patch, buffer));
+  EXPECT_FALSE(ApplyPatchInplace(different_size_patch, buffer));
+  EXPECT_EQ(buffer, before);
 }
 
-TEST(AccountTest, UnknownSparseFieldSurvivesKnownFieldRewrite) {
+TEST(AccountTest, PatchOwnsItsStrings) {
+  gendb::MessagePatch patch;
+  {
+    std::string name = "a name long enough to be on the heap";
+    patch = AccountPatchBuilder().set_name(name).Build();
+    name.assign(name.size(), 'x');
+  }
+  std::vector<uint8_t> patched = Patched(patch, ParseText<Account>("account_id: 1"));
+  EXPECT_EQ(Account(patched).name(), "a name long enough to be on the heap");
+}
+
+TEST(AccountTest, PatchReportsItsChanges) {
+  auto patch = AccountPatchBuilder().set_age(7).clear_balance().Build();
+  EXPECT_TRUE(patch.Modifies(Account::Age));
+  EXPECT_TRUE(patch.Modifies(Account::Balance));
+  EXPECT_FALSE(patch.Modifies(Account::Name));
+  EXPECT_EQ(patch.ScalarValue<int32_t>(Account::Age), 7);
+  EXPECT_EQ(patch.ScalarValue<float>(Account::Balance), std::nullopt);
+  EXPECT_EQ(patch.ScalarValue<int32_t>(Account::Name), std::nullopt);
+}
+
+TEST(AccountTest, UnknownFieldSurvivesKnownFieldRewrite) {
   AccountBuilder builder;
   builder.set_account_id(42);
   builder.set_name("Alice");
   builder.AddStringField(1000, "future");
   std::vector<uint8_t> buffer = builder.Build();
 
-  auto patch = AccountPatchBuilder().set_account_id(77).Build();
-  ApplyPatch<Account>(patch, buffer);
+  gendb::ApplyPatch(AccountPatchBuilder().set_name("Alice Cooper").clear_account_id().Build(),
+                    buffer);
 
   Account patched(buffer);
-  gendb::MessageBase raw(buffer, Account::LayoutPtr());
-  EXPECT_EQ(patched.account_id(), 77);
-  EXPECT_EQ(patched.name(), "Alice");
-  ASSERT_TRUE(raw.HasField(1000));
-  EXPECT_EQ(std::string_view(reinterpret_cast<const char*>(raw.FieldRaw(1000).data()),
-                             raw.FieldRaw(1000).size()),
-            "future");
+  EXPECT_FALSE(patched.has_account_id());
+  EXPECT_EQ(patched.name(), "Alice Cooper");
+  EXPECT_EQ(patched.View().GetString(1000), "future");
 }
 
-TEST(AccountTest, UnknownSparseFieldSupportsEqualLengthInplacePatch) {
+TEST(AccountTest, UnknownFieldSupportsEqualLengthInplacePatch) {
   AccountBuilder builder;
   builder.set_account_id(42);
   builder.AddStringField(1000, "future");
   std::vector<uint8_t> buffer = builder.Build();
 
-  gendb::MessageBuilder patch_builder;
-  patch_builder.AddStringField(1000, "past!!");
   gendb::MessagePatch patch;
-  gendb::SetFieldBit(patch.modified, 1000);
-  patch.buffer = patch_builder.Build();
-
-  EXPECT_TRUE(CanApplyPatchInplace<Account>(patch, buffer));
-  EXPECT_TRUE(ApplyPatchInplace(patch, buffer, Account::LayoutPtr()));
-
-  gendb::MessageBase raw(buffer, Account::LayoutPtr());
-  ASSERT_TRUE(raw.HasField(1000));
-  EXPECT_EQ(std::string_view(reinterpret_cast<const char*>(raw.FieldRaw(1000).data()),
-                             raw.FieldRaw(1000).size()),
-            "past!!");
-}
-
-TEST(AccountTest, SparseUnknownFieldUsesCompactStorageForLargeFieldId) {
-  gendb::MessageBuilder builder;
-  builder.AddField<uint8_t>(1000, 7);
-  std::vector<uint8_t> buffer = builder.Build();
-
-  const size_t dense_baseline = 2 + (1001 * sizeof(uint16_t)) + sizeof(uint8_t);
-  EXPECT_LT(buffer.size(), dense_baseline / 20);
+  patch.SetString(1000, "past!!");
+  EXPECT_TRUE(ApplyPatchInplace(patch, buffer));
+  EXPECT_EQ(Account(buffer).View().GetString(1000), "past!!");
 }
 
 TEST(ClosedPositionTest, SetGetFields) {
@@ -527,14 +483,13 @@ TEST(PositionTest, PatchDirectionEnum) {
   EXPECT_TRUE(position.has_direction());
 
   // Change direction and check
-  std::vector<uint8_t> patched_buffer;
-  ApplyPatch(PositionPatchBuilder{}.set_direction(Direction::kSell).Build(), buffer,
-             patched_buffer);
+  std::vector<uint8_t> patched_buffer =
+      Patched(PositionPatchBuilder{}.set_direction(Direction::kSell).Build(), buffer);
   Position patched{patched_buffer};
   EXPECT_EQ(patched.direction(), Direction::kSell);
 
-  std::vector<uint8_t> patched_buffer2;
-  ApplyPatch(PositionPatchBuilder{}.clear_direction().Build(), patched_buffer, patched_buffer2);
+  std::vector<uint8_t> patched_buffer2 =
+      Patched(PositionPatchBuilder{}.clear_direction().Build(), patched_buffer);
   Position cleared{patched_buffer2};
   EXPECT_EQ(cleared.direction(), Direction::kUnknown);
   EXPECT_FALSE(cleared.has_direction());
@@ -658,7 +613,85 @@ TEST(MessageMatcherTest, MessageEqualPartially_WrongValueFails) {
   )m")));
 }
 
-int main(int argc, char **argv) {
-  ::testing::InitGoogleTest(&argc, argv);
-  return RUN_ALL_TESTS();
+// Schema evolution between two generated versions of a table, as in tests/schemas/evolution.fbs.
+namespace evolution = gendb::tests::evolution;
+
+template <typename T>
+concept HasNicknameGetter = requires(const T& message) { message.nickname(); };
+template <typename T>
+concept HasNicknameSetter = requires(T& builder) { builder.set_nickname(""); };
+
+TEST(SchemaEvolutionTest, NewReaderSeesOldMessageWithDefaults) {
+  std::vector<uint8_t> v1 =
+      evolution::AccountV1Builder().set_id(1).set_name("Ann").set_age(30).Build();
+  evolution::AccountV2 account{v1};
+
+  EXPECT_EQ(account.id(), 1u);
+  EXPECT_EQ(account.name(), "Ann");
+  EXPECT_FALSE(account.has_email());
+  EXPECT_EQ(account.email(), "");
+  EXPECT_FALSE(account.has_score());
+  EXPECT_EQ(account.score(), 0.0);
+}
+
+TEST(SchemaEvolutionTest, OldReaderIgnoresNewFields) {
+  std::vector<uint8_t> v2 = evolution::AccountV2Builder()
+                                .set_id(2)
+                                .set_name("Bob")
+                                .set_email("bob@example.com")
+                                .set_score(9.5)
+                                .set_vip(true)
+                                .Build();
+  evolution::AccountV1 account{v2};
+
+  EXPECT_EQ(account.id(), 2u);
+  EXPECT_EQ(account.name(), "Bob");
+  EXPECT_EQ(account.FieldCount(), 5u);
+}
+
+TEST(SchemaEvolutionTest, OldWriterPreservesNewFieldsAcrossEveryPatchPath) {
+  std::vector<uint8_t> v2 = evolution::AccountV2Builder()
+                                .set_id(3)
+                                .set_name("Cleo")
+                                .set_email("cleo@example.com")
+                                .set_score(1.5)
+                                .set_vip(true)
+                                .Build();
+  // In place.
+  gendb::ApplyPatch(evolution::AccountV1PatchBuilder().set_id(4).Build(), v2);
+  // String splice.
+  gendb::ApplyPatch(evolution::AccountV1PatchBuilder().set_name("Cleopatra").Build(), v2);
+  // Re-encoding: inserts a field the message did not have.
+  gendb::ApplyPatch(evolution::AccountV1PatchBuilder().set_age(40).Build(), v2);
+  // Read-modify-write through the generated builder.
+  evolution::AccountV1 old_view{v2};
+  evolution::AccountV1Builder rewrite{old_view};
+  rewrite.set_id(5);
+  std::vector<uint8_t> rewritten = rewrite.Build();
+
+  evolution::AccountV2 account{rewritten};
+  EXPECT_TRUE(gendb::MessageView::Verify(rewritten));
+  EXPECT_EQ(account.id(), 5u);
+  EXPECT_EQ(account.name(), "Cleopatra");
+  EXPECT_EQ(account.email(), "cleo@example.com");
+  EXPECT_EQ(account.score(), 1.5);
+  EXPECT_TRUE(account.vip());
+}
+
+TEST(SchemaEvolutionTest, DeprecatedFieldHasNoAccessorsButItsDataSurvives) {
+  static_assert(HasNicknameGetter<evolution::AccountV1>);
+  static_assert(HasNicknameSetter<evolution::AccountV1Builder>);
+  static_assert(!HasNicknameGetter<evolution::AccountV2>);
+  static_assert(!HasNicknameSetter<evolution::AccountV2Builder>);
+  for (const auto& field : evolution::AccountV2::kFieldsInfo) {
+    EXPECT_NE(field.name, "nickname");
+  }
+
+  std::vector<uint8_t> v1 =
+      evolution::AccountV1Builder().set_id(6).set_nickname("dee").set_age(50).Build();
+  gendb::ApplyPatch(evolution::AccountV2PatchBuilder().set_email("dee@example.com").Build(), v1);
+
+  evolution::AccountV1 old_view{v1};
+  EXPECT_EQ(old_view.nickname(), "dee");
+  EXPECT_EQ(old_view.age(), 50);
 }

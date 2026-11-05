@@ -10,7 +10,7 @@ template <typename SecKey, typename PrimKey>
 struct IndexRecord {
   SecKey sec_key;
   PrimKey prim_key;
-  bool is_deleted;
+  bool is_deleted = false;
 
   // Lexicographical comparison: SecKey, then PrimKey
   auto operator<=>(const IndexRecord& other) const {

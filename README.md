@@ -16,9 +16,10 @@ Features:
   * [ ] Change data capture
   * [ ] Rocksdb as a storage engine
   * Message format:
-    * [x] Deserialization-free O(1) field reads
-    * [x] Full forward and backward compatible schema evolution
-    * [x] Partial updates
+    * [x] Zero-copy, deserialization-free O(1) field reads
+    * [x] Forward and backward compatible schema evolution
+    * [x] Unknown fields preserved through every update
+    * [x] Partial updates, in place when the size does not change
 
 
 Non goals:
@@ -27,5 +28,8 @@ Non goals:
   * Multi-language bindings (C++ is the first-class and only target)
   * Ad-hoc SQL query engine (no query parser or optimizer, API-only access)
 
-Build and test instructions:
-  * Docker workflow: [docs/docker_build.md](/Users/dmitry/code/gendb/docs/docker_build.md)
+Documentation:
+  * Message format: [specification](docs/message_format.md) and [interactive explorer](docs/message_format.html) (open it in a browser)
+  * Generated database API: [docs/db_api_codegen.md](docs/db_api_codegen.md)
+  * Build and test in Docker: [docs/docker_build.md](docs/docker_build.md)
+  * Benchmarks: [benchmarks/README.md](benchmarks/README.md)

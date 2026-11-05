@@ -1,6 +1,6 @@
 #pragma once
 
-#include <cmath>
+#include <algorithm>
 #include <set>
 #include <sstream>
 #include <string>
@@ -13,7 +13,7 @@
 
 namespace gendb::tests {
 
-// Matcher for comparing FlatBuffers messages with text representations
+// Matcher for comparing messages with text representations
 template <typename MessageType>
 class MessageEqualMatcher : public ::testing::MatcherInterface<const MessageType&> {
  public:
@@ -116,7 +116,6 @@ class MessageEqualMatcher : public ::testing::MatcherInterface<const MessageType
     return field_names;
   }
 
-  // Compare two field values using serialization to binary representation
   bool CompareFieldValue(const MessageType& actual, const MessageType& expected,
                          const gendb::FieldInfo& field_info,
                          ::testing::MatchResultListener* listener) const {
@@ -138,17 +137,17 @@ class MessageEqualMatcher : public ::testing::MatcherInterface<const MessageType
       return true;  // Both don't have the field
     }
 
-    // Get raw field data for comparison
-    auto actual_raw = actual.FieldRaw(field_info.field_id);
-    auto expected_raw = expected.FieldRaw(field_info.field_id);
-
-    bool match = (actual_raw.size() == expected_raw.size()) &&
-                 std::equal(actual_raw.begin(), actual_raw.end(), expected_raw.begin());
+    // Compare the stored representation: slot bits for scalars, payload bytes for strings.
+    const auto actual_field = actual.View().GetField(field_info.field_id);
+    const auto expected_field = expected.View().GetField(field_info.field_id);
+    const bool match = actual_field.has_value() && expected_field.has_value() &&
+                       actual_field->kind == expected_field->kind &&
+                       actual_field->value == expected_field->value &&
+                       std::ranges::equal(actual_field->bytes, expected_field->bytes);
 
     if (!match && listener->IsInterested()) {
       std::string field_name{field_info.name};
       *listener << "\n  " << field_name << ": field values differ";
-      // For better debugging, we could add specific type-based value printing here
     }
 
     return match;
