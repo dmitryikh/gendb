@@ -1,29 +1,31 @@
 # Storage engine
 
-The engine under the generated `Db` classes: transactions, snapshots, durability, and change
-capture. The code is in `lib/gendb/engine.{h,cpp}`, `record_table.h`, `ordered_index.h` and
-`rocksdb_backend.{h,cpp}`. **This design is awaiting approval**; see
+The engine under the generated `Db` classes: transactions, snapshots, durability and change
+subscriptions. The code is in `lib/gendb/`: `engine.{h,cpp}`, `record_table.h`, `ordered_index.h`,
+`log_format.h`, `wal.{h,cpp}`, `checkpoint.{h,cpp}` and `file_io.{h,cpp}`. Replication has
+[its own document](replication.md). **This design is awaiting approval**; see
 [Decisions to confirm](#decisions-to-confirm).
 
 ## Overview
 
-All data lives in memory, where reads use it in place. RocksDB holds the durable copy and is read
-only when the database opens.
+All data lives in memory, where reads use it in place. The disk holds a write-ahead log and a
+checkpoint, and is read only when the database opens. There are no other dependencies: the log,
+the checkpoints and their file handling are about 1,200 lines of this repository.
 
 ```text
  Snapshot (any thread)            ScopedWrite (one at a time)
    |  lock-free reads               |  private write set; reads its own writes
    |                                |  Commit:
-   |                                |    1. one atomic batch ---------> RocksDB
-   |                                |       (records, last seq,        (WAL + LSM)
-   v                                v        change log)
- +---------------------------------------+       |
- | Record tables    key -> version chain | <-----+ loaded on open;
- | Ordered indices  field + key          |         indices are rebuilt
- +---------------------------------------+
-                                    |    2. link new versions, publish seq
-                                    |    3. notify change listeners
-                                    |    4. free what no snapshot can reach
+   |                                |    1. one frame in the log ---------+
+   |                                |       write, and fsync if durable   |
+   v                                v                                     v
+ +---------------------------------------+               <dir>/wal-<first LSN>.log ...
+ | Record tables    key -> version chain |   loaded      <dir>/checkpoint-<LSN>.gdb
+ | Ordered indices  field + key          | <------------         ^
+ +---------------------------------------+   on open             |
+       |                            |    2. link new versions, publish
+       |  a pinned snapshot         |    3. deliver to subscribers
+       +--- background checkpoint --+    4. free what no snapshot can reach
 ```
 
 ## API
@@ -52,7 +54,8 @@ for (auto it = snapshot.GetAccountByAgeRange(18, 65); it.Valid(); it.Next()) {
 for (auto it = snapshot.ScanAccount(); it.Valid(); it.Next()) { /* any order */ }
 ```
 
-Collections are declared in the schema YAML. `ephemeral: true` keeps one out of RocksDB:
+Collections are declared in the schema YAML. `ephemeral: true` keeps one out of the log, checkpoints
+and replication; it can still be subscribed to:
 
 ```yaml
 collections:
@@ -67,11 +70,98 @@ collections:
 
 | Property | How it holds |
 | --- | --- |
-| **Atomicity** | A commit is one RocksDB write batch, and becomes visible by publishing one sequence number. Dropping a transaction discards it. |
+| **Atomicity** | A commit is one checksummed frame in the log, and becomes visible by publishing one sequence number. Dropping a transaction discards it. |
 | **Consistency** | Indices and sequences change in the same transaction as the records. |
 | **Isolation** | Writers are serial. Each snapshot sees exactly the commits up to its sequence number: snapshot isolation for readers, serializable for writers. |
-| **Durability** | With `sync_commits` (the default), `Commit` returns after the WAL is fsynced. Without it, a crash can lose the latest commits but leaves a consistent prefix of them; `engine().SyncWal()` closes that window on demand. |
-| **Crash recovery** | RocksDB replays its WAL up to the last intact batch (point-in-time recovery). Partial commits cannot appear, across collections included. |
+| **Durability** | See the next section. |
+| **Crash recovery** | The log is replayed up to the last intact frame. Partial commits cannot appear, across collections included. |
+
+## Durable and non-durable commits
+
+`sync_commits` picks the default, and `CommitOptions::sync` overrides it per commit:
+
+| Mode | `Commit` returns after | Process dies | Power fails | Cost here |
+| --- | --- | --- | --- | ---: |
+| Durable (`true`, default) | `write` + `fdatasync` (`F_FULLFSYNC` on macOS) | nothing lost | nothing lost | 164 µs |
+| Non-durable (`false`) | `write` | nothing lost | latest commits lost | 1.2 µs |
+
+Non-durable commits always leave a consistent prefix: the log is ordered and each frame is
+checksummed, so a lost commit takes only later commits with it. Two tools narrow the window:
+`background_sync_interval` fsyncs periodically, and `engine().SyncWal()` does it on demand. A durable
+commit also covers every commit before it.
+
+A failed write or fsync stops the log: what reached the disk is unknown, and after a failed fsync
+the OS may have dropped the dirty pages, so retrying could report success falsely. Commits then fail,
+reads keep working, and reopening the database recovers from what is really on disk.
+
+## Files
+
+```text
+<dir>/LOCK                                    flock: one process at a time
+<dir>/wal-00000000000000000001.log            log segments, named by their first LSN
+<dir>/wal-00000000000000012345.log
+<dir>/checkpoint-00000000000000012300.gdb     the latest checkpoint, named by its LSN
+```
+
+Everything is a sequence of frames, `[crc32c: u32] [size: u32] [type: u8] [body]`, defined in
+`log_format.h`. A commit frame moves byte for byte between the log, the network and a replica's log.
+
+The **LSN** numbers logged commits contiguously: a gap in the log is detectable. Commits that touch
+only ephemeral collections do not get one. Collections are identified in frames by the CRC of their
+name, so reordering them in the schema is safe, at 4 bytes per entry.
+
+**Log format.** Each segment starts with a header (format version, history ID, first LSN, collection
+names). A commit is `[lsn: u64] [count: u32]`, then for each record `[collection: u32] [deleted: u8]
+[key size: varint] [value size: varint] key value`, which is 21 bytes per commit and 7 or more per
+record on top of keys and values. Records are logged whole, even after a patch: recovery does not
+depend on the patch code, and a reader of the log needs no earlier state.
+
+**A new segment** starts at `wal_segment_bytes`. The old one is fsynced before the new one exists,
+which is what makes the next rule safe.
+
+## Recovery
+
+1. Remove leftover `*.tmp` files.
+2. Load the newest checkpoint, rebuilding indices.
+3. Replay the log after it, checking that LSNs are contiguous.
+
+| Found | Means | Result |
+| --- | --- | --- |
+| Torn or zeroed frame at the end of the **last** segment | The crash interrupted a write | Cut it off and continue; it was never acknowledged as durable |
+| Damage in any **other** segment, or a gap in LSNs | The disk lost acknowledged data | `DataLoss` |
+| Damage in the checkpoint | The same | `DataLoss` |
+| A collection the schema does not have | Probably a mistake | `FailedPrecondition`, unless `discard_unknown_collections` |
+
+The last row exists because a checkpoint writes only what the schema has: without it, removing a
+collection from the YAML would silently delete it soon after.
+
+Damage in the middle of the last segment looks the same as a torn tail, so it loses the commits after
+it without an error. Telling them apart reliably needs a record of the synced position, which the
+format does not hold yet.
+
+## Compaction
+
+The log only grows, so a checkpoint replaces it: the full state at one LSN, in a new file, after
+which older segments can go. `Engine::Checkpoint` does this on demand, and a background thread does
+it automatically:
+
+1. Under the writer lock for a moment, take the LSN, start a new log segment, and pin an MVCC
+   snapshot at exactly that commit.
+2. With no lock held, scan the snapshot into `checkpoint-<LSN>.gdb.tmp`. Writers and readers keep
+   running; this is what MVCC buys.
+3. Fsync, rename, fsync the directory. Remove the previous checkpoint.
+4. Remove segments holding only older commits, except for `wal_retain_bytes`, and what connected
+   replicas still need, up to `wal_replica_limit_bytes`.
+
+A crash at any point leaves the old checkpoint and its log intact.
+
+The automatic trigger is the log growing by `max(checkpoint_wal_bytes, size of the last checkpoint)`.
+Writing a checkpoint costs in proportion to the data, so tying it to the checkpoint's size keeps the
+total written to about twice the log's size, for any amount of data, while disk use stays below about
+three times the data plus the thresholds.
+
+The cost during a checkpoint is memory: versions replaced while it runs stay until the snapshot is
+released. On a 100,000-record database a checkpoint takes about 11 ms, at about 11 M records/s.
 
 ## Snapshots and versions
 
@@ -100,83 +190,128 @@ snapshot held across many commits keeps every version they replaced. `engine().S
 
 1. **Write set.** `Put`, `Update` and `Delete` build new versions privately. Index changes are
    computed here from the old and new messages, and a change and its opposite cancel out.
-2. **Durable write.** Everything goes in one `WriteBatch`: records, the new sequence number, and
-   change log entries. On failure nothing has been applied, and the transaction is rolled back.
+2. **Log.** All the records go into one frame. On failure nothing has been applied, and the
+   transaction is rolled back.
 3. **Apply.** Versions and index entries are linked in, then the sequence number is published.
-4. **Notify and reclaim.**
+4. **Deliver and reclaim.**
 
 The in-memory apply cannot fail except by running out of memory, which is treated as fatal.
-
-## Recovery
-
-`Db::Open` loads each persistent collection and rebuilds its indices, so open time and memory are
-proportional to the data: 100,000 records take about 85 ms in the benchmark below. Column
-families are named after collections, so reordering collections in the schema is safe, and those of
-removed collections stay on disk untouched.
 
 ## Counters
 
 A sequence is a record in the private `metadata` collection, so it commits and rolls back with its
 transaction: IDs are durable, atomic with the data, and committed IDs have no gaps.
 
-## Change data capture
+## Change subscriptions
 
-Two consumers, both in commit order:
+Another part of the program can follow the changes to chosen collections after each commit:
 
-| | Live listener | Durable change log |
+```cpp
+auto subscription = db->Subscribe({
+    .on_account = [](const AccountChange& change) {
+      switch (change.kind()) {
+        case gendb::ChangeKind::kInsert: Added(change.after()); break;
+        case gendb::ChangeKind::kDelete: Removed(change.before()); break;
+        case gendb::ChangeKind::kUpdate:
+          if (change.balance_changed()) {
+            Moved(change.before().balance(), change.after().balance());
+          }
+          break;
+      }
+    },
+    .on_position = [](const PositionChange& change) { /* ... */ },
+    .on_commit = [](uint64_t seq) { /* all changes of this commit have been delivered */ },
+});
+// Ends when `subscription` is destroyed.
+```
+
+Only collections with a handler are delivered. All handlers of a subscription run on one thread in
+commit order, so changes to different collections stay in order, and `on_commit` marks transaction
+boundaries. Rolled-back transactions are never seen.
+
+**What changed** is answered by comparison, not by a patch. Each change has the whole message
+`before()` and `after()`, and a generated `<field>_changed()` for each field. This costs nothing
+unless asked, and has one meaning for every way of writing: a `Put` that replaces a record reports
+exactly the fields that differ, which a patch could not tell. A patch would also say what was
+requested, and a field set to its current value would look changed.
+
+| | `Delivery::kQueued` (default) | `Delivery::kInline` |
 | --- | --- | --- |
-| API | `engine().AddChangeListener(fn)` | `EngineOptions/DbOptions::change_log`, `engine().ReadChanges(after_seq, fn)`, `TruncateChanges(seq)` |
-| Delivery | During `Commit`, on the writer's thread | Polled; the consumer stores its position, so delivery is at-least-once across restarts |
-| Ephemeral collections | Included | Excluded |
-| Cost | None without listeners; a slow listener delays writers | Doubles the bytes written, only if enabled |
+| Runs | On the subscription's own thread | During `Commit`, on the writer's thread |
+| Handler may | Anything, including commit | Read through a snapshot; must not start a transaction |
+| Views | Copied per change | Zero-copy |
+| Commit, 1 scalar patch | 1.9 µs | 513 ns (483 ns with no subscriber) |
+| A slow handler | Fills the queue | Delays every writer directly |
 
-A `Change` holds the collection, key, whether it was deleted, and the full new message.
+A queued subscription never loses a change: once its queue reaches `max_queue_bytes`, new
+transactions wait until it has drained to half, except those started by a handler, which would
+otherwise wait for themselves. The limit is soft, as a transaction already running can still commit.
+`WaitUntilDelivered()` blocks until the handler has seen every commit made so far.
+
+Subscribers also work on a replica, where a whole checkpoint arrives as one commit reporting just the
+records that differ. Delivery is in memory only: a subscriber that must not miss changes across
+restarts should compare with a snapshot when it starts.
 
 ## Performance
 
-Measured on an Apple M4 Pro in a Docker Linux VM, Release, 100,000 accounts of about 100 bytes, with
-the previous implementation for comparison: `unordered_map` behind a `shared_mutex`, with locks held
-for a reader's whole lifetime. Raw results are in
-[benchmarks/reference/db.txt](../benchmarks/reference/db.txt).
+Measured on an Apple M4 Pro in a Docker Linux VM, Release, 100,000 accounts of about 100 bytes. Raw
+results are in [benchmarks/reference/db.txt](../benchmarks/reference/db.txt). The comparison is with
+the RocksDB backend this replaced, built from commit `589e03e` and run alternately with this code in
+one session. The machine itself drifts between runs by up to 50%, so only the ratios in this table
+mean much.
 
-| Operation | Before | Now |
+| Operation | RocksDB backend | Now |
 | --- | ---: | ---: |
-| Get by key, 1 thread | 323 ns | 95 ns |
-| Get by key, 8 threads (per thread) | 279 ns | 74 ns |
-| Index scan | 3.2 M rows/s | 23.8 M rows/s |
-| Commit one scalar patch, memory only | 535 ns | 478 ns |
-| Commit under a long-lived snapshot | blocked until it ends | 289 ns |
-| Snapshot open and close, uncontended | — | 20 ns |
-| Snapshot open and close, 8 threads | — | 497 ns |
-| Full collection scan | — | 22 M rows/s |
-| Persistent commit, no fsync | — | 1.9 µs |
-| Persistent commit, fsync per commit | — | 149 µs |
+| Commit, non-durable | 1.94 µs | 1.19 µs |
+| Commit, durable | 166 µs | 164 µs |
+| Open with 100,000 records, from the log | 112 ms | 118 ms |
+| Open with 100,000 records, from a checkpoint | n/a | 115 ms |
+| Write a checkpoint of 100,000 records | n/a | 11 ms |
+| Get by key, 1 thread | 101 ns | 106 ns |
+| Index scan | 19.0 M rows/s | 17.1 M rows/s |
+| Full collection scan | 17.7 M rows/s | 17.1 M rows/s |
+| Commit one scalar patch, memory only | 465 ns | 468 ns |
+| Commit under a long-lived snapshot | 350 ns | 366 ns |
+
+Non-durable commits are 40% faster. Everything else is within this machine's noise, as expected: the
+read path did not change, and a durable commit is one `fdatasync` either way. Most of the time to open
+goes to inserting into the skip list; building indices from sorted keys would be the next thing to
+try.
+
+The binary also loses RocksDB and its compression libraries, the write buffers and block cache (up to
+72 MB) are gone, and the log is directly useful for replication.
 
 Memory per record, beyond key and value: 48 bytes of headers for the node and version, 11–23 bytes
 of table slots, and about 43 bytes per index entry plus its key, before allocator overhead.
-RocksDB's write buffers are capped at 64 MB, and its block cache at 8 MB, since reads do not use it.
 
 ## Limitations
 
 - **The whole dataset must fit in memory**, and on disk too.
-- Open time grows with the data, as nothing in memory is checkpointed.
-- One writer at a time: a long transaction delays other writers, though no reader.
-- Each synced commit pays its own fsync, as commits are serial. Batch work into one transaction, or
-  commit with `{.sync = false}` and call `SyncWal()` periodically.
+- Open time grows with the data, as indices are rebuilt in memory.
+- One writer at a time: a long transaction delays other writers, though no reader. It also delays
+  anything that needs a moment of the writer lock: starting a checkpoint or a replica's session.
+- Each durable commit pays its own fsync, as commits are serial; there is no group commit. Batch work
+  into one transaction, or commit non-durably and call `SyncWal()` periodically.
+- `Checkpoint()` must not be called while holding a transaction on the same thread.
 - Views from a `ScopedWrite` are invalidated by writing that key and by `Commit`. Views from a
   `Snapshot` live until it is destroyed.
-- The crash test uses `fork` and is skipped under ThreadSanitizer. Disk failures are not injected.
+- Tested by killing processes and by cutting and damaging files. Power loss itself and failing disks
+  are not simulated, so the ordering of fsyncs is checked by review only. The kill tests use `fork`
+  and are skipped under ThreadSanitizer.
 
 ## Decisions to confirm
 
-1. **Memory-first with RocksDB as the durable copy**, rather than reading from RocksDB. This is what
-   provides zero-copy reads and the numbers above, at the price of holding everything in RAM. A
-   dataset larger than memory would need a read-through tier.
-2. **RocksDB's WAL as the WAL**, rather than a custom log and checkpoints. It is less code and
-   already handles torn writes, at the price of a heavy dependency for little of its functionality.
-3. **`Guard` is gone**: `SharedLock()` became `CreateSnapshot()`, as a snapshot is equally cheap and
+1. **Memory-first with a log and checkpoints**, rather than an on-disk structure. This is what
+   provides zero-copy reads, at the price of holding everything in RAM. A dataset larger than memory
+   would need a read-through tier.
+2. **Full checkpoints**, rather than incremental ones. The write cost is the whole dataset each time,
+   amortized by the trigger above. Far simpler, and the same bytes seed a replica.
+3. **Whole records in the log**, rather than patches. Larger logs for small updates to large
+   messages, but recovery and replicas do not depend on the patch code. The entry has room for a
+   patch form if logs turn out to matter.
+4. **Before and after states for subscribers**, rather than patches, as explained above.
+5. **Backpressure rather than loss** when a queued subscriber falls behind.
+6. **Sync by default.** Safe, and about 140 times slower than no sync here.
+7. **`Guard` is gone**: `SharedLock()` became `CreateSnapshot()`, as a snapshot is equally cheap and
    does not block commits. The accessor style in `db_api_codegen.md` (`db.Accounts().Get`) is not
    implemented; the flat `GetAccount` names stayed.
-4. **A separate change log column family**, rather than tailing RocksDB's WAL with
-   `GetUpdatesSince`. It doubles writes when enabled, but retention follows consumers, not WAL TTLs.
-5. **Sync by default.** Safe, and about 80 times slower than no sync here.

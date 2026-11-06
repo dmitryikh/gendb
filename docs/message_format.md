@@ -258,4 +258,4 @@ Stored data depends on these bytes. When changing `message.h` or `message.cpp`:
 | `gen/templates/message_class_template.h.jinja2` | Generated classes |
 | `gen/schema_validator.py` | Schema checks; `MAX_FIELD_ID` must match `kMaxFieldId` |
 | `tests/message_test.cpp` | Generated API and schema evolution tests |
-| `tests/database_test.cpp` | Messages through transactions, indices, sequences and RocksDB |
+| `tests/database_test.cpp` | Messages through transactions, indices, sequences and recovery |

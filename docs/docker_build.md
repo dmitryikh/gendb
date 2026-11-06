@@ -12,7 +12,7 @@ docker build -t gendb-dev .
 
 ## Configure, Build, And Test
 
-The named volume `gendb-conan` keeps Conan's package cache between runs, so RocksDB and the other dependencies are built only once. Run the full workflow from the repo root:
+The named volume `gendb-conan` keeps Conan's package cache between runs, so the dependencies are built only once. Run the full workflow from the repo root:
 
 ```bash
 docker run --rm \
@@ -24,7 +24,7 @@ docker run --rm \
     set -euo pipefail
     sudo chown dev:dev /home/dev/.conan2
     /home/dev/.local/bin/conan profile detect --force
-    /home/dev/.local/bin/conan install . --output-folder=build/docker-debug --build=missing -s build_type=Debug
+    /home/dev/.local/bin/conan install . --output-folder=build/docker-debug --build=missing -s build_type=Debug -o "&:with_grpc=False"
     rm -f CMakeUserPresets.json
     cmake -S . -B build/docker-debug -G Ninja \
       -DCMAKE_BUILD_TYPE=Debug \
@@ -34,6 +34,8 @@ docker run --rm \
     ctest --test-dir build/docker-debug --output-on-failure
   '
 ```
+
+This leaves out the gRPC transport, as gRPC takes a long time to build from source. To include it and its test, drop `-o "&:with_grpc=False"`, which also adds `replication_grpc_test` and gRPC to `replication_demo`. The Release build in `scripts/docker-bench-release.sh` includes it.
 
 The build regenerates the message classes and database code, including `lib/gendb/generated` and `tests/generated`. `ctest` runs the C++ tests and the generator's Python tests.
 
@@ -78,7 +80,8 @@ docker run --rm \
 
 For ThreadSanitizer, use `-fsanitize=thread` in both flags and another build directory. Note that
 AddressSanitizer rules out `absl::flat_hash_map` in the engine here: Conan's prebuilt Abseil has a
-different table layout from sanitized code.
+different table layout from sanitized code. Sanitize without gRPC, since its uninstrumented libraries
+give false reports under ThreadSanitizer.
 
 ## Benchmarks
 

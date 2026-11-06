@@ -22,7 +22,10 @@ applyTo: "**"
 Schemas evolve only in backward-compatible ways: a field keeps its ID and type forever, new fields are appended, and unused fields get `(deprecated)` instead of being removed.
 
 ## Storage Engine
-`docs/storage_engine.md` describes transactions, snapshots, durability and change capture. Read it before changing `lib/gendb/engine.*`, `record_table.h`, `ordered_index.h` or `rocksdb_backend.*`. Their concurrency is lock-free with one writer: run `SnapshotTest` under ThreadSanitizer after any change.
+`docs/storage_engine.md` describes transactions, snapshots, durability, compaction and subscriptions. Read it before changing `lib/gendb/engine.*`, `record_table.h`, `ordered_index.h`, `wal.*`, `checkpoint.*`, `log_format.h` or `file_io.*`. Their concurrency is lock-free with one writer: run `SnapshotTest` and `ReplicationTest` under ThreadSanitizer after any change. Files on disk must stay readable across versions, or bump `kFormatVersion`.
+
+## Replication
+`docs/replication.md` describes the protocol and how transports plug in. The core in `lib/gendb/replication.*` must not depend on any network library: gRPC stays in `replication_grpc.*` and its optional target.
 
 ## Generated Code
 `tests/generated` and `lib/gendb/generated` are generated and checked in. Edit the templates and regenerate by building; never edit the output by hand.

@@ -1,64 +1,28 @@
-2026-11-05T23:27:11+00:00
----------------------------------------------------------------------------------------
-Benchmark                                             Time             CPU   Iterations
----------------------------------------------------------------------------------------
-SnapshotOpenClose/real_time/threads:1_mean         19.8 ns         19.8 ns            7
-SnapshotOpenClose/real_time/threads:1_median       19.7 ns         19.7 ns            7
-SnapshotOpenClose/real_time/threads:1_stddev      0.245 ns        0.245 ns            7
-SnapshotOpenClose/real_time/threads:1_cv           1.24 %          1.24 %             7
-SnapshotOpenClose/real_time/threads:2_mean          188 ns          180 ns            7
-SnapshotOpenClose/real_time/threads:2_median        188 ns          180 ns            7
-SnapshotOpenClose/real_time/threads:2_stddev       5.01 ns         5.19 ns            7
-SnapshotOpenClose/real_time/threads:2_cv           2.67 %          2.89 %             7
-SnapshotOpenClose/real_time/threads:4_mean          198 ns          147 ns            7
-SnapshotOpenClose/real_time/threads:4_median        197 ns          147 ns            7
-SnapshotOpenClose/real_time/threads:4_stddev       3.55 ns         3.49 ns            7
-SnapshotOpenClose/real_time/threads:4_cv           1.79 %          2.37 %             7
-SnapshotOpenClose/real_time/threads:8_mean          498 ns          324 ns            7
-SnapshotOpenClose/real_time/threads:8_median        497 ns          323 ns            7
-SnapshotOpenClose/real_time/threads:8_stddev       11.6 ns         7.22 ns            7
-SnapshotOpenClose/real_time/threads:8_cv           2.33 %          2.23 %             7
-SnapshotGet/real_time/threads:1_mean               95.0 ns         95.0 ns            7 items_per_second=10.5287M/s
-SnapshotGet/real_time/threads:1_median             94.5 ns         94.5 ns            7 items_per_second=10.578M/s
-SnapshotGet/real_time/threads:1_stddev             1.43 ns         1.43 ns            7 items_per_second=154.271k/s
-SnapshotGet/real_time/threads:1_cv                 1.50 %          1.50 %             7 items_per_second=1.47%
-SnapshotGet/real_time/threads:2_mean               82.3 ns         82.3 ns            7 items_per_second=12.1557M/s
-SnapshotGet/real_time/threads:2_median             82.5 ns         82.5 ns            7 items_per_second=12.1274M/s
-SnapshotGet/real_time/threads:2_stddev            0.838 ns        0.838 ns            7 items_per_second=124.327k/s
-SnapshotGet/real_time/threads:2_cv                 1.02 %          1.02 %             7 items_per_second=1.02%
-SnapshotGet/real_time/threads:4_mean               81.5 ns         81.5 ns            7 items_per_second=12.3287M/s
-SnapshotGet/real_time/threads:4_median             80.0 ns         80.0 ns            7 items_per_second=12.5033M/s
-SnapshotGet/real_time/threads:4_stddev             6.25 ns         6.25 ns            7 items_per_second=851.051k/s
-SnapshotGet/real_time/threads:4_cv                 7.67 %          7.67 %             7 items_per_second=6.90%
-SnapshotGet/real_time/threads:8_mean               75.8 ns         75.4 ns            7 items_per_second=13.3365M/s
-SnapshotGet/real_time/threads:8_median             73.6 ns         73.6 ns            7 items_per_second=13.5793M/s
-SnapshotGet/real_time/threads:8_stddev             9.02 ns         8.27 ns            7 items_per_second=1.48688M/s
-SnapshotGet/real_time/threads:8_cv                11.90 %         10.96 %             7 items_per_second=11.15%
-IndexEqualScan_mean                               52635 ns        52623 ns            7 items_per_second=23.7567M/s
-IndexEqualScan_median                             52528 ns        52525 ns            7 items_per_second=23.7982M/s
-IndexEqualScan_stddev                               656 ns          634 ns            7 items_per_second=283.908k/s
-IndexEqualScan_cv                                  1.25 %          1.21 %             7 items_per_second=1.20%
-CollectionScan_mean                             4507367 ns      4506374 ns            7 items_per_second=22.2M/s
-CollectionScan_median                           4542872 ns      4542555 ns            7 items_per_second=22.014M/s
-CollectionScan_stddev                             97694 ns        99032 ns            7 items_per_second=490.967k/s
-CollectionScan_cv                                  2.17 %          2.20 %             7 items_per_second=2.21%
-CommitOneScalarPatch_mean                           479 ns          479 ns            7
-CommitOneScalarPatch_median                         478 ns          478 ns            7
-CommitOneScalarPatch_stddev                        5.97 ns         5.97 ns            7
-CommitOneScalarPatch_cv                            1.25 %          1.25 %             7
-CommitUnderSnapshot_mean                            312 ns          312 ns            7
-CommitUnderSnapshot_median                          289 ns          289 ns            7
-CommitUnderSnapshot_stddev                         41.3 ns         41.3 ns            7
-CommitUnderSnapshot_cv                            13.21 %         13.21 %             7
-PersistentCommit/0_mean                            1911 ns         1907 ns            7
-PersistentCommit/0_median                          1903 ns         1895 ns            7
-PersistentCommit/0_stddev                          25.2 ns         25.6 ns            7
-PersistentCommit/0_cv                              1.32 %          1.34 %             7
-PersistentCommit/1_mean                          148382 ns        19772 ns            7
-PersistentCommit/1_median                        149240 ns        19979 ns            7
-PersistentCommit/1_stddev                          4275 ns          609 ns            7
-PersistentCommit/1_cv                              2.88 %          3.08 %             7
-Recover_mean                                       86.4 ms         82.9 ms            7 items_per_second=1.20767M/s
-Recover_median                                     83.2 ms         81.6 ms            7 items_per_second=1.22499M/s
-Recover_stddev                                     5.60 ms         2.24 ms            7 items_per_second=31.8835k/s
-Recover_cv                                         6.48 %          2.70 %             7 items_per_second=2.64%
+2026-11-06T08:05:52+00:00
+Running ./benchmarks/db_benchmarks
+Run on (12 X 48 MHz CPU s)
+Load Average: 2.88, 1.88, 1.04
+--------------------------------------------------------------------------------
+Benchmark                                      Time             CPU   Iterations
+--------------------------------------------------------------------------------
+SnapshotOpenClose/real_time/threads:1       19.7 ns         19.7 ns     35321470
+SnapshotOpenClose/real_time/threads:2        181 ns          173 ns      3700582
+SnapshotOpenClose/real_time/threads:4        175 ns          127 ns      4073688
+SnapshotOpenClose/real_time/threads:8        447 ns          285 ns      1516952
+SnapshotGet/real_time/threads:1              105 ns          105 ns      7133719 items_per_second=9.48487M/s
+SnapshotGet/real_time/threads:2             90.9 ns         90.9 ns      7474556 items_per_second=10.9996M/s
+SnapshotGet/real_time/threads:4             85.7 ns         85.7 ns      8260720 items_per_second=11.665M/s
+SnapshotGet/real_time/threads:8             93.5 ns         93.5 ns      7659520 items_per_second=10.6985M/s
+IndexEqualScan                             69040 ns        69018 ns         9964 items_per_second=18.1112M/s
+CollectionScan                           5862777 ns      5862184 ns          129 items_per_second=17.0585M/s
+CommitOneScalarPatch                         483 ns          483 ns      1195621
+CommitUnderSnapshot                          359 ns          359 ns      1857311
+CommitWithSubscriber/queued:0                513 ns          513 ns      1124656
+CommitWithSubscriber/queued:1               1857 ns         1466 ns       459886
+PersistentCommit/0                          1192 ns         1191 ns       626915
+PersistentCommit/1                        167387 ns        20265 ns        44121
+CheckpointWrite                             11.2 ms         8.65 ms           70 bytes=6.70023M items_per_second=11.5559M/s
+Recover/from_checkpoint:0                    120 ms          119 ms            6 items_per_second=837.868k/s
+Recover/from_checkpoint:1                    114 ms          113 ms            7 items_per_second=885.966k/s
+ReplicaSeed/real_time                       72.5 ms         18.1 ms            9 items_per_second=1.37898M/s
+ReplicaFollow/real_time                     2271 ns         1490 ns       313397

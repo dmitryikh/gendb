@@ -62,5 +62,5 @@ fixture is checked before timing, and buffers escape through benchmark barriers.
 ## Database benchmarks
 
 `db_benchmark.cpp` measures the generated API over 100,000 records: gets, index and collection
-scans, commits, and recovery. The same script records them in
-[reference/db.txt](reference/db.txt).
+scans, commits durable and not, subscribers, checkpoints, recovery, and replication over an
+in-process transport. The same script records them in [reference/db.txt](reference/db.txt).

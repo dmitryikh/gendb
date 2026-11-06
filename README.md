@@ -13,8 +13,9 @@ Features:
   * [x] Write-ahead log (WAL) for crash recovery
   * [x] Durable atomic ID counters
   * [x] Ephemeral in-memory collections
-  * [x] Change data capture
-  * [x] Rocksdb as a storage engine
+  * [x] Change subscriptions: follow chosen tables after each commit, with what changed
+  * [x] Own write-ahead log, durable or non-durable per commit, and background compaction into checkpoints
+  * [x] Replication: a replica fetches a checkpoint and streams commits, over a transport you choose (gRPC included)
   * Message format:
     * [x] Zero-copy, deserialization-free O(1) field reads
     * [x] Forward and backward compatible schema evolution
@@ -31,6 +32,7 @@ Non goals:
 Documentation:
   * Message format: [specification](docs/message_format.md) and [interactive explorer](docs/message_format.html) (open it in a browser)
   * Storage engine: [docs/storage_engine.md](docs/storage_engine.md)
+  * Replication and writing a transport: [docs/replication.md](docs/replication.md)
   * Generated database API: [docs/db_api_codegen.md](docs/db_api_codegen.md)
   * Build and test in Docker: [docs/docker_build.md](docs/docker_build.md)
   * Benchmarks: [benchmarks/README.md](benchmarks/README.md)
