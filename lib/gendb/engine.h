@@ -370,8 +370,12 @@ class Engine {
   void BecomeReplica() noexcept { _replica.store(true, std::memory_order_release); }
   absl::StatusOr<std::unique_ptr<internal::CheckpointStage>> NewCheckpointStage() const;
   // Atomically replaces all durable collections with the checkpoint in `stage`. Readers see the
-  // old state until the new one is whole.
-  absl::Status InstallCheckpoint(internal::CheckpointStage& stage, const LogPosition& position);
+  // old state until the new one is whole. `around_publish` must call what it is given: that is the
+  // moment the new state appears, so whatever the caller does around it appears together with it.
+  // It runs under the writer lock, so what it locks must not be held while taking that lock.
+  absl::Status InstallCheckpoint(
+      internal::CheckpointStage& stage, const LogPosition& position,
+      const std::function<void(const std::function<void()>& publish)>& around_publish);
   // Logs and applies whole commit frames from a primary, which must continue this engine's log.
   absl::Status ApplyReplicated(std::string_view frames);
 

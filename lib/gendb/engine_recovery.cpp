@@ -396,7 +396,9 @@ absl::StatusOr<std::unique_ptr<CheckpointStage>> Engine::NewCheckpointStage() co
                                  absl::StrCat(_options.path, "/incoming", kTempSuffix));
 }
 
-absl::Status Engine::InstallCheckpoint(CheckpointStage& stage, const LogPosition& position) {
+absl::Status Engine::InstallCheckpoint(
+    CheckpointStage& stage, const LogPosition& position,
+    const std::function<void(const std::function<void()>& publish)>& around_publish) {
   std::lock_guard serial(_checkpoint_mutex);
   auto writer = AcquireWriterFirst();
 
@@ -438,8 +440,10 @@ absl::Status Engine::InstallCheckpoint(CheckpointStage& stage, const LogPosition
     _state_digest.store(ComputeStateDigest(), std::memory_order_relaxed);
   }
   _ring->Reset(position.lsn, _state_digest.load(std::memory_order_relaxed));
-  _lsn.store(position.lsn, std::memory_order_release);
-  _committed_seq.store(seq, std::memory_order_seq_cst);
+  around_publish([&] {
+    _lsn.store(position.lsn, std::memory_order_release);
+    _committed_seq.store(seq, std::memory_order_seq_cst);
+  });
   Notify(seq, changes);
   ReclaimUnpinned(seq);
   return absl::OkStatus();

@@ -548,12 +548,15 @@ absl::Status Replica::ReceiveCheckpoint(Connection& connection,
     RETURN_IF_ERROR(SendAck(connection, 0));
   }
 
-  RETURN_IF_ERROR(_engine.InstallCheckpoint(**stage, position));
-  std::lock_guard lock(_mutex);
-  ++_checkpoints_installed;
-  _force_checkpoint = false;
-  _made_progress = true;
-  _primary_lsn = std::max(_primary_lsn, position.lsn);
+  // Under the mutex, so that nobody who sees the new state gets a status from before it.
+  RETURN_IF_ERROR(_engine.InstallCheckpoint(**stage, position, [&](const auto& publish) {
+    std::lock_guard lock(_mutex);
+    publish();
+    ++_checkpoints_installed;
+    _force_checkpoint = false;
+    _made_progress = true;
+    _primary_lsn = std::max(_primary_lsn, position.lsn);
+  }));
   _cv.notify_all();
   return absl::OkStatus();
 }
