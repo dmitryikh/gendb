@@ -48,3 +48,15 @@ indices:
     collection: positions
     fields:
       - account_id
+
+  - name: position_by_account_and_instrument
+    collection: positions
+    fields:
+      - account_id
+      - instrument
+
+  - name: account_by_address
+    collection: accounts
+    unique: true
+    fields:
+      - address

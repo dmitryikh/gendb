@@ -45,6 +45,7 @@ Engine::Engine(EngineSchema schema, EngineOptions options)
     : _schema(std::move(schema)),
       _options(std::move(options)),
       _replica(_options.replica),
+      _file_system(_options.file_system != nullptr ? _options.file_system : DefaultFileSystem()),
       _ring(std::make_unique<CommitRing>()) {
   const size_t schema_size = _schema.collections.size();
   _collections.resize(schema_size + kMaxForeignCollections);

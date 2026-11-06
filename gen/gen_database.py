@@ -48,7 +48,8 @@ def build_store_from_yaml(db_cfg):
         index = Index(
             name=idx["name"],
             collection=idx["collection"],
-            field=idx["fields"][0] if isinstance(idx["fields"], list) else idx["fields"]
+            fields=idx["fields"] if isinstance(idx["fields"], list) else [idx["fields"]],
+            unique=idx.get("unique", False),
         )
         store.add_index(index)
 
@@ -150,15 +151,17 @@ def main():
     indices = []
     for idx in store.indices.values():
         collection = store.get_collection(idx.collection)
-        key_type = store.get_field(collection.type, idx.field).type
         col_type = naming.split_namespace_class(collection.type)[1]
         indices.append({
             "name": idx.name,
             "name_pascal_case": naming.PascalCase(idx.name),
             "collection_enum": naming.PascalCase(col_type) + "CollId",
             "type": col_type,
-            "field": idx.field,
-            "key_param_type": base_types.const_ref_type(key_type),
+            "unique": idx.unique,
+            "fields": [
+                {"name": name, "param": store.get_field(collection.type, name).const_ref_type}
+                for name in idx.fields
+            ],
         })
 
     # Compose sequences info

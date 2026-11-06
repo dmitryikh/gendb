@@ -1,9 +1,11 @@
 #include <chrono>
 #include <utility>
 
+#include "absl/strings/str_cat.h"
 #include "gendb/commit_ring.h"
 #include "gendb/engine.h"
 #include "gendb/engine_internal.h"
+#include "gendb/status.h"
 #include "gendb/wal.h"
 
 namespace gendb {
@@ -91,7 +93,31 @@ void Transaction::UpdateIndices(size_t collection, std::string_view key,
   }
 }
 
-void Transaction::Put(size_t collection, BytesConstView key, BytesConstView value) {
+absl::Status Transaction::CheckUnique(size_t collection, std::string_view key,
+                                      BytesConstView value) const {
+  std::string secondary;
+  for (size_t i : _engine->_collections[collection]->indices) {
+    const IndexDef& index = _engine->_schema.indices[i];
+    if (!index.unique) continue;
+    secondary.clear();
+    if (!index.extract(value, secondary)) continue;
+    for (IndexCursor it(*this, i, secondary, PrefixSuccessor(secondary)); it.Valid(); it.Next()) {
+      if (it.primary_key() != key) {
+        return absl::AlreadyExistsError(
+            absl::StrCat("Another record has the same value in unique index ", index.name));
+      }
+    }
+  }
+  return absl::OkStatus();
+}
+
+absl::Status Transaction::Put(size_t collection, BytesConstView key, BytesConstView value) {
+  RETURN_IF_ERROR(CheckUnique(collection, AsStringView(key), value));
+  PutUnchecked(collection, key, value);
+  return absl::OkStatus();
+}
+
+void Transaction::PutUnchecked(size_t collection, BytesConstView key, BytesConstView value) {
   const std::string_view key_view = AsStringView(key);
   if (!_engine->_collections[collection]->indices.empty()) {
     UpdateIndices(collection, key_view, Get(collection, key), value);
@@ -133,6 +159,10 @@ absl::Status Transaction::Update(size_t collection, BytesConstView key, const Me
   }
   if (next == nullptr) return absl::DataLossError("Malformed stored message");
 
+  if (absl::Status unique = CheckUnique(collection, key_view, next->bytes()); !unique.ok()) {
+    Version::Destroy(next);
+    return unique;
+  }
   if (!_engine->_collections[collection]->indices.empty()) {
     UpdateIndices(collection, key_view, current, next->bytes());
   }

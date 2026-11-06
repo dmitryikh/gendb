@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -63,7 +64,8 @@ using DbOptions = gendb::EngineOptions;
 
 // What a commit did to one record, valid only during the callback. Whole messages before and after
 // are available, and the *_changed() methods compare one field across them. On insert or delete
-// the missing side reads as an empty message.
+// the missing side reads as an empty message. While catching up with SubscribeFrom, there is no
+// `before`: kUpsert gives the current state, and kDelete only the key.
 class MessageAChange {
  public:
   explicit MessageAChange(const gendb::Change& change)
@@ -92,8 +94,9 @@ class MessageAChange {
 // to different collections keep their order.
 struct ChangeHandlers {
   std::function<void(const MessageAChange&)> on_message_a;
-  // After the changes of each commit that had any, for acting on a commit as a whole.
-  std::function<void(uint64_t seq)> on_commit;
+  // After the changes of each commit that had any, for acting on a commit as a whole. Store the
+  // position to resume from later with SubscribeFrom.
+  std::function<void(const gendb::ChangePosition& position)> on_commit;
 };
 
 class Db {
@@ -109,6 +112,10 @@ class Db {
   ScopedWrite CreateWriter();
   // Delivers changes committed after this call until the returned handle is destroyed.
   gendb::Subscription Subscribe(ChangeHandlers handlers, gendb::SubscribeOptions options = {});
+  // The same, starting with what changed since `position`. See gendb::Engine::SubscribeFrom.
+  absl::StatusOr<gendb::Subscription> SubscribeFrom(const gendb::ChangePosition& position,
+                                                    ChangeHandlers handlers,
+                                                    gendb::SubscribeOptions options = {});
   // Durability controls, stats, and the handle replication attaches to.
   gendb::Engine& engine() { return *_engine; }
 
@@ -144,6 +151,8 @@ class ScopedWrite {
   // A patch cannot change the primary key: that is another record.
   absl::Status UpdateMetadataValue(const MetadataValueKey& key, const gendb::MessagePatch& update);
   absl::Status DeleteMetadataValue(const MetadataValueKey& key);
+  // Includes this transaction's changes. Writing or committing during the scan ends its validity.
+  gendb::ScanIterator<MetadataValue> ScanMetadataValue() const;
 
  public:
   absl::Status GetMessageA(gendb::tests::primitive::KeyEnum key, MessageA& message_a) const;
@@ -153,6 +162,8 @@ class ScopedWrite {
   absl::Status UpdateMessageA(gendb::tests::primitive::KeyEnum key,
                               const gendb::MessagePatch& update);
   absl::Status DeleteMessageA(gendb::tests::primitive::KeyEnum key);
+  // Includes this transaction's changes. Writing or committing during the scan ends its validity.
+  gendb::ScanIterator<MessageA> ScanMessageA() const;
 
  public:
   absl::Status Commit(gendb::CommitOptions options = {}) { return _txn.Commit(options); }

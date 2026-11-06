@@ -38,6 +38,15 @@ target_link_libraries(database_test PRIVATE gendb_lib GTest::gtest_main GTest::g
 add_dependencies(database_test codegen db_codegen primitive_db_codegen)
 add_test(NAME database_test COMMAND database_test)
 
+add_executable(index_test
+    index_test.cpp
+    generated/database.h
+    generated/database.cpp
+)
+target_link_libraries(index_test PRIVATE gendb_lib GTest::gtest_main GTest::gmock)
+add_dependencies(index_test codegen db_codegen)
+add_test(NAME index_test COMMAND index_test)
+
 add_executable(persistence_test
     persistence_test.cpp
     generated/database.h

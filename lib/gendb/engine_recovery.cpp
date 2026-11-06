@@ -151,7 +151,6 @@ class Engine::CheckpointLoader final : public internal::CheckpointHandler {
 absl::Status Engine::Recover() {
   const auto started = std::chrono::steady_clock::now();
   const std::string& path = _options.path;
-  _file_system = _options.file_system != nullptr ? _options.file_system : DefaultFileSystem();
   RETURN_IF_ERROR(_file_system->CreateDirectories(path));
 
   auto lock = _file_system->Lock(absl::StrCat(path, "/LOCK"));
@@ -251,7 +250,7 @@ absl::Status Engine::ApplyCommitFrame(Transaction& txn, const Frame& frame) {
     }
     switch (entry.op) {
       case internal::CommitOp::kPut:
-        txn.Put(*collection, AsBytes(entry.key), AsBytes(entry.value));
+        txn.PutUnchecked(*collection, AsBytes(entry.key), AsBytes(entry.value));
         break;
       case internal::CommitOp::kDelete:
         if (!txn.Delete(*collection, AsBytes(entry.key)).ok()) {

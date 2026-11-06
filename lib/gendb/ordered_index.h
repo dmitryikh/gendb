@@ -68,6 +68,20 @@ class OrderedIndex {
     return e->next()[0].load(std::memory_order_acquire);
   }
 
+  // Any thread, with a pinned snapshot: the last entry with key < `key`, or the last of all if
+  // `key` is empty.
+  const IndexEntry* LastBefore(std::string_view key) const noexcept {
+    const IndexEntry* e = _head;
+    for (int level = _height.load(std::memory_order_relaxed) - 1; level >= 0; --level) {
+      for (const IndexEntry* n = e->next()[level].load(std::memory_order_acquire);
+           n != nullptr && (key.empty() || n->key() < key);
+           n = e->next()[level].load(std::memory_order_acquire)) {
+        e = n;
+      }
+    }
+    return e == _head ? nullptr : e;
+  }
+
   static const IndexEntry* Next(const IndexEntry* e) noexcept {
     return e->next()[0].load(std::memory_order_acquire);
   }

@@ -25,10 +25,15 @@ gendb::EngineSchema MakeSchema() {
       {"{{ idx.name }}", {{ idx.collection_enum }},
        [](gendb::BytesConstView bytes, std::string& out) {
          const {{ idx.type }} message{bytes};
-         if (!message.has_{{ idx.field }}()) return false;
-         internal::key_codec::AppendField(message.{{ idx.field }}(), out);
+{% for f in idx.fields %}
+         if (!message.has_{{ f.name }}()) return false;
+{% endfor %}
+{% for f in idx.fields %}
+         internal::key_codec::AppendField(message.{{ f.name }}(), out);
+{% endfor %}
          return true;
-       }});
+       },
+       /*unique=*/{{ 'true' if idx.unique else 'false' }}});
 {% endfor %}
   return schema;
 }
@@ -60,32 +65,50 @@ ScopedWrite Db::CreateWriter() {
   return ScopedWrite(*_engine);
 }
 
-gendb::Subscription Db::Subscribe(ChangeHandlers handlers, gendb::SubscribeOptions options) {
-  options.collections.clear();
+namespace {
+
+std::vector<size_t> FollowedCollections(const ChangeHandlers& handlers) {
+  std::vector<size_t> collections;
 {% for coll in collections if not coll.private %}
-  if (handlers.on_{{ coll.type_snake_case }}) options.collections.push_back({{ coll.enum_name }});
+  if (handlers.on_{{ coll.type_snake_case }}) collections.push_back({{ coll.enum_name }});
 {% endfor %}
-  if (options.collections.empty()) {
+  if (collections.empty()) {
 {% for coll in collections if not coll.private %}
-    options.collections.push_back({{ coll.enum_name }});
+    collections.push_back({{ coll.enum_name }});
 {% endfor %}
   }
-  return _engine->Subscribe(
-      [handlers = std::move(handlers)](const gendb::CommitEvent& event) {
-        for (const gendb::Change& change : event.changes) {
-          switch (change.collection) {
+  return collections;
+}
+
+gendb::ChangeCallback ToCallback(ChangeHandlers handlers) {
+  return [handlers = std::move(handlers)](const gendb::CommitEvent& event) {
+    for (const gendb::Change& change : event.changes) {
+      switch (change.collection) {
 {% for coll in collections if not coll.private %}
-            case {{ coll.enum_name }}:
-              if (handlers.on_{{ coll.type_snake_case }}) handlers.on_{{ coll.type_snake_case }}({{ coll.type }}Change(change));
-              break;
+        case {{ coll.enum_name }}:
+          if (handlers.on_{{ coll.type_snake_case }}) handlers.on_{{ coll.type_snake_case }}({{ coll.type }}Change(change));
+          break;
 {% endfor %}
-            default:
-              break;
-          }
-        }
-        if (handlers.on_commit) handlers.on_commit(event.seq);
-      },
-      std::move(options));
+        default:
+          break;
+      }
+    }
+    if (handlers.on_commit) handlers.on_commit(event.position);
+  };
+}
+
+}  // namespace
+
+gendb::Subscription Db::Subscribe(ChangeHandlers handlers, gendb::SubscribeOptions options) {
+  options.collections = FollowedCollections(handlers);
+  return _engine->Subscribe(ToCallback(std::move(handlers)), std::move(options));
+}
+
+absl::StatusOr<gendb::Subscription> Db::SubscribeFrom(const gendb::ChangePosition& position,
+                                                      ChangeHandlers handlers,
+                                                      gendb::SubscribeOptions options) {
+  options.collections = FollowedCollections(handlers);
+  return _engine->SubscribeFrom(position, ToCallback(std::move(handlers)), std::move(options));
 }
 
 {% for coll in collections %}
@@ -101,13 +124,16 @@ absl::Status ScopedWrite::Get{{coll.type}}({{ key_param(coll) }}, {{ coll.type }
   return ToMessage(_txn.Get({{ coll.enum_name }}, {{ key_expr(coll) }}), {{ coll.type_snake_case }});
 }
 
+gendb::ScanIterator<{{ coll.type }}> ScopedWrite::Scan{{ coll.type }}() const {
+  return gendb::ScanIterator<{{ coll.type }}>(gendb::ScanCursor(_txn, {{ coll.enum_name }}));
+}
+
 absl::Status ScopedWrite::Put{{coll.type}}(gendb::BytesConstView {{ coll.type_snake_case }}) {
   const {{ coll.type }} message{ {{- coll.type_snake_case -}} };
 {% for pk in coll.pk_fields %}
   if (!message.has_{{ pk.name }}()) return absl::InvalidArgumentError("{{ coll.type }}: the primary key field {{ pk.name }} is not set");
 {% endfor %}
-  _txn.Put({{ coll.enum_name }}, To{{ coll.type }}Key(message), {{ coll.type_snake_case }});
-  return absl::OkStatus();
+  return _txn.Put({{ coll.enum_name }}, To{{ coll.type }}Key(message), {{ coll.type_snake_case }});
 }
 
 absl::Status ScopedWrite::Update{{coll.type}}({{ key_param(coll) }}, const gendb::MessagePatch& update) {
@@ -122,33 +148,49 @@ absl::Status ScopedWrite::Delete{{coll.type}}({{ key_param(coll) }}) {
 }
 
 {% endfor %}
+{% macro index_impl(idx, class, source) %}
+{% for count in range(1, idx.fields | length + 1) %}
+gendb::IndexIterator<{{ idx.type }}> {{ class }}::Get{{ idx.name_pascal_case }}Equal({% for f in idx.fields[:count] %}{{ f.param }} {{ f.name }}, {% endfor %}gendb::ScanOptions options) const {
+  std::string lo;
+{% for f in idx.fields[:count] %}
+  internal::key_codec::AppendField({{ f.name }}, lo);
+{% endfor %}
+  return gendb::IndexIterator<{{ idx.type }}>(gendb::IndexCursor({{ source }}, {{ idx.name_pascal_case }}IndexId, lo, gendb::PrefixSuccessor(lo), options));
+}
+
+{% endfor %}
+{% for count in range(0, idx.fields | length) %}
+{% set last = idx.fields[count] %}
+gendb::IndexIterator<{{ idx.type }}> {{ class }}::Get{{ idx.name_pascal_case }}Range({% for f in idx.fields[:count] %}{{ f.param }} {{ f.name }}, {% endfor %}std::optional<{{ last.param }}> min_{{ last.name }}, std::optional<{{ last.param }}> max_{{ last.name }}, gendb::ScanOptions options) const {
+  std::string lo;
+{% for f in idx.fields[:count] %}
+  internal::key_codec::AppendField({{ f.name }}, lo);
+{% endfor %}
+  std::string hi;
+  if (max_{{ last.name }}.has_value()) {
+    hi = lo;
+    internal::key_codec::AppendField(*max_{{ last.name }}, hi);
+  } else {
+    hi = gendb::PrefixSuccessor(lo);
+  }
+  if (min_{{ last.name }}.has_value()) internal::key_codec::AppendField(*min_{{ last.name }}, lo);
+  return gendb::IndexIterator<{{ idx.type }}>(gendb::IndexCursor({{ source }}, {{ idx.name_pascal_case }}IndexId, lo, std::move(hi), options));
+}
+
+{% endfor %}
+{% if idx.unique %}
+absl::Status {{ class }}::Get{{ idx.name_pascal_case }}({% for f in idx.fields %}{{ f.param }} {{ f.name }}, {% endfor %}{{ idx.type }}& out) const {
+  auto it = Get{{ idx.name_pascal_case }}Equal({% for f in idx.fields %}{{ f.name }}, {% endfor %}{.limit = 1});
+  if (!it.Valid()) return absl::NotFoundError("No such value in {{ idx.name }}");
+  out = it.Value();
+  return absl::OkStatus();
+}
+
+{% endif %}
+{% endmacro %}
 {% for idx in indices %}
-gendb::IndexIterator<{{ idx.type }}> Snapshot::Get{{ idx.name_pascal_case }}Range({{ idx.key_param_type }} min_{{ idx.field }}, {{ idx.key_param_type }} max_{{ idx.field }}) const {
-  std::string lo, hi;
-  internal::key_codec::AppendField(min_{{ idx.field }}, lo);
-  internal::key_codec::AppendField(max_{{ idx.field }}, hi);
-  return gendb::IndexIterator<{{ idx.type }}>(gendb::IndexCursor(_snapshot, {{ idx.name_pascal_case }}IndexId, lo, std::move(hi)));
-}
-
-gendb::IndexIterator<{{ idx.type }}> Snapshot::Get{{ idx.name_pascal_case }}Equal({{ idx.key_param_type }} {{ idx.field }}) const {
-  std::string lo;
-  internal::key_codec::AppendField({{ idx.field }}, lo);
-  return gendb::IndexIterator<{{ idx.type }}>(gendb::IndexCursor(_snapshot, {{ idx.name_pascal_case }}IndexId, lo, gendb::PrefixSuccessor(lo)));
-}
-
-gendb::IndexIterator<{{ idx.type }}> ScopedWrite::Get{{ idx.name_pascal_case }}Range({{ idx.key_param_type }} min_{{ idx.field }}, {{ idx.key_param_type }} max_{{ idx.field }}) const {
-  std::string lo, hi;
-  internal::key_codec::AppendField(min_{{ idx.field }}, lo);
-  internal::key_codec::AppendField(max_{{ idx.field }}, hi);
-  return gendb::IndexIterator<{{ idx.type }}>(gendb::IndexCursor(_txn, {{ idx.name_pascal_case }}IndexId, lo, std::move(hi)));
-}
-
-gendb::IndexIterator<{{ idx.type }}> ScopedWrite::Get{{ idx.name_pascal_case }}Equal({{ idx.key_param_type }} {{ idx.field }}) const {
-  std::string lo;
-  internal::key_codec::AppendField({{ idx.field }}, lo);
-  return gendb::IndexIterator<{{ idx.type }}>(gendb::IndexCursor(_txn, {{ idx.name_pascal_case }}IndexId, lo, gendb::PrefixSuccessor(lo)));
-}
-
+{{ index_impl(idx, 'Snapshot', '_snapshot') }}
+{{ index_impl(idx, 'ScopedWrite', '_txn') }}
 {% endfor %}
 {% for seq in sequences %}
 absl::Status ScopedWrite::Next{{ seq.name | pascalcase }}({{seq.ref_type}} next_id) {

@@ -444,7 +444,7 @@ constexpr size_t kOrders = 1;
 
 void PutRaw(gendb::Engine& engine, size_t collection, gendb::BytesConstView key) {
   gendb::Transaction txn(engine);
-  txn.Put(collection, key, kValue);
+  ASSERT_TRUE(txn.Put(collection, key, kValue).ok());
   ASSERT_TRUE(txn.Commit().ok());
 }
 
@@ -550,7 +550,7 @@ TEST_F(ReplicationTest, ForeignDataStaysApartFromAnEphemeralCollectionOfTheSameN
   const std::array<uint8_t, 1> local{7};
   {
     gendb::Transaction txn(replica_engine);
-    txn.Put(kOrders, kKey1, local);
+    ASSERT_TRUE(txn.Put(kOrders, kKey1, local).ok());
     ASSERT_TRUE(txn.Commit().ok());
   }
   std::vector<size_t> heard;

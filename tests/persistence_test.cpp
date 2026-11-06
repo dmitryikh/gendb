@@ -543,8 +543,8 @@ TEST_F(PersistentDbTest, CollectionMissingFromTheSchemaIsKeptUntilDiscarded) {
     auto engine = gendb::Engine::Open(full, {.path = _path});
     ASSERT_TRUE(engine.ok());
     gendb::Transaction txn(**engine);
-    txn.Put(0, key, value);
-    txn.Put(1, key, value);
+    ASSERT_TRUE(txn.Put(0, key, value).ok());
+    ASSERT_TRUE(txn.Put(1, key, value).ok());
     ASSERT_TRUE(txn.Commit().ok());
   }
   // It survives in the log, then in a checkpoint, and with commits on top of it.
@@ -554,7 +554,7 @@ TEST_F(PersistentDbTest, CollectionMissingFromTheSchemaIsKeptUntilDiscarded) {
     EXPECT_THAT((*engine)->Stats().foreign_collections, ::testing::ElementsAre("removed_later"));
     {
       gendb::Transaction txn(**engine);
-      txn.Put(0, key, value);
+      ASSERT_TRUE(txn.Put(0, key, value).ok());
       ASSERT_TRUE(txn.Commit().ok());
     }
     if (checkpoint) ASSERT_TRUE((*engine)->Checkpoint().ok());
@@ -582,4 +582,56 @@ TEST_F(PersistentDbTest, CollectionMissingFromTheSchemaIsKeptUntilDiscarded) {
   auto engine = gendb::Engine::Open(full, {.path = _path, .wal_retain_bytes = 0});
   ASSERT_TRUE(engine.ok()) << engine.status();
   EXPECT_FALSE(has_record(**engine));
+}
+
+TEST_F(PersistentDbTest, BackupRestoresTheStateAsOfThen) {
+  const std::string backup_path = _path + ".backup";
+  std::filesystem::remove_all(backup_path);
+  {
+    auto db = OpenDb();
+    {
+      auto writer = db->CreateWriter();
+      ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(1).set_age(7).Build()).ok());
+      ASSERT_TRUE(writer.Commit().ok());
+    }
+    const auto info = db->engine().Backup(backup_path);
+    ASSERT_TRUE(info.ok()) << info.status();
+    EXPECT_EQ(info->lsn, 1u);
+    EXPECT_GT(info->bytes, 0u);
+    EXPECT_EQ(db->engine().Backup(backup_path).status().code(), absl::StatusCode::kAlreadyExists);
+
+    auto later = db->CreateWriter();
+    ASSERT_TRUE(later.PutAccount(AccountBuilder().set_account_id(2).Build()).ok());
+    ASSERT_TRUE(later.Commit().ok());
+  }
+  {
+    auto restored = Db::Open({.path = backup_path});
+    ASSERT_TRUE(restored.ok()) << restored.status();
+    EXPECT_EQ((*restored)->engine().Stats().lsn, 1u);
+    auto snapshot = (*restored)->CreateSnapshot();
+    Account account;
+    EXPECT_TRUE(snapshot.GetAccount(1, account).ok());
+    EXPECT_FALSE(snapshot.GetAccount(2, account).ok());
+    EXPECT_TRUE(snapshot.GetAccountByAgeEqual(7).Valid());
+  }
+  std::filesystem::remove_all(backup_path);
+}
+
+TEST(BackupTest, AMemoryOnlyDatabaseCanBeBackedUpAndOpened) {
+  const std::string path =
+      (std::filesystem::temp_directory_path() / "gendb_memory_backup").string();
+  std::filesystem::remove_all(path);
+  Db db;
+  {
+    auto writer = db.CreateWriter();
+    ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(1).Build()).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+  }
+  ASSERT_TRUE(db.engine().Backup(path).ok());
+  auto restored = Db::Open({.path = path});
+  ASSERT_TRUE(restored.ok()) << restored.status();
+  Account account;
+  EXPECT_TRUE((*restored)->CreateSnapshot().GetAccount(1, account).ok());
+  restored->reset();
+  std::filesystem::remove_all(path);
 }

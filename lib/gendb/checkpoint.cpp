@@ -115,7 +115,7 @@ absl::Status ReadCheckpoint(FrameSource& source, CheckpointHandler& handler) {
         if (!decoder.ok() || magic != kCheckpointMagic) {
           return absl::DataLossError("Not a checkpoint");
         }
-        if (version > kFormatVersion) {
+        if (version > kFormatVersion || version < kOldestFormatVersion) {
           return absl::FailedPreconditionError(
               absl::StrCat("Unsupported checkpoint version ", version));
         }

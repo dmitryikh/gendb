@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -23,6 +24,21 @@
 {% if namespace %} namespace {{ namespace }} {
 {% endif %}
 
+{% macro index_decls(idx) %}
+{% for count in range(1, idx.fields | length + 1) %}
+  // Entries with these values, ordered by what remains of the index and the primary key.
+  gendb::IndexIterator<{{ idx.type }}> Get{{ idx.name_pascal_case }}Equal({% for f in idx.fields[:count] %}{{ f.param }} {{ f.name }}, {% endfor %}gendb::ScanOptions options = {}) const;
+{% endfor %}
+{% for count in range(0, idx.fields | length) %}
+  {% set last = idx.fields[count] %}
+  // Entries {% if count > 0 %}with these values and {% endif %}{{ last.name }} in [min, max); a missing bound leaves that side open.
+  gendb::IndexIterator<{{ idx.type }}> Get{{ idx.name_pascal_case }}Range({% for f in idx.fields[:count] %}{{ f.param }} {{ f.name }}, {% endfor %}std::optional<{{ last.param }}> min_{{ last.name }}, std::optional<{{ last.param }}> max_{{ last.name }}, gendb::ScanOptions options = {}) const;
+{% endfor %}
+{% if idx.unique %}
+  // The one record with these values.
+  absl::Status Get{{ idx.name_pascal_case }}({% for f in idx.fields %}{{ f.param }} {{ f.name }}, {% endfor %}{{ idx.type }}& out) const;
+{% endif %}
+{% endmacro %}
 // Forward declarations.
 class Snapshot;
 class ScopedWrite;
@@ -110,7 +126,8 @@ using DbOptions = gendb::EngineOptions;
 
 // What a commit did to one record, valid only during the callback. Whole messages before and after
 // are available, and the *_changed() methods compare one field across them. On insert or delete
-// the missing side reads as an empty message.
+// the missing side reads as an empty message. While catching up with SubscribeFrom, there is no
+// `before`: kUpsert gives the current state, and kDelete only the key.
 {% for coll in collections if not coll.private %}
 class {{ coll.type }}Change {
  public:
@@ -140,8 +157,9 @@ struct ChangeHandlers {
 {% for coll in collections if not coll.private %}
   std::function<void(const {{ coll.type }}Change&)> on_{{ coll.type_snake_case }};
 {% endfor %}
-  // After the changes of each commit that had any, for acting on a commit as a whole.
-  std::function<void(uint64_t seq)> on_commit;
+  // After the changes of each commit that had any, for acting on a commit as a whole. Store the
+  // position to resume from later with SubscribeFrom.
+  std::function<void(const gendb::ChangePosition& position)> on_commit;
 };
 
 class Db {
@@ -157,6 +175,10 @@ class Db {
   ScopedWrite CreateWriter();
   // Delivers changes committed after this call until the returned handle is destroyed.
   gendb::Subscription Subscribe(ChangeHandlers handlers, gendb::SubscribeOptions options = {});
+  // The same, starting with what changed since `position`. See gendb::Engine::SubscribeFrom.
+  absl::StatusOr<gendb::Subscription> SubscribeFrom(const gendb::ChangePosition& position,
+                                                    ChangeHandlers handlers,
+                                                    gendb::SubscribeOptions options = {});
   // Durability controls, stats, and the handle replication attaches to.
   gendb::Engine& engine() { return *_engine; }
 
@@ -174,10 +196,7 @@ class Snapshot {
   gendb::ScanIterator<{{ coll.type }}> Scan{{ coll.type }}() const;
 {% endfor %}
 {% for idx in indices %}
-  // Index entries in [min_{{ idx.field }}, max_{{ idx.field }}), ordered by {{ idx.field }}.
-  gendb::IndexIterator<{{ idx.type }}> Get{{ idx.name_pascal_case }}Range({{ idx.key_param_type }} min_{{ idx.field }}, {{ idx.key_param_type }} max_{{ idx.field }}) const;
-  gendb::IndexIterator<{{ idx.type }}> Get{{ idx.name_pascal_case }}Equal({{ idx.key_param_type }} {{ idx.field }}) const;
-{% endfor %}
+{{ index_decls(idx) }}{% endfor %}
 
  private:
   friend class Db;
@@ -201,12 +220,12 @@ class ScopedWrite {
   // A patch cannot change the primary key: that is another record.
   absl::Status Update{{coll.type}}({% if coll.pk_fields | length > 1 %}const {{coll.type}}Key& key{% else %}{{ coll.pk_fields[0].const_ref_type }} {{coll.pk_fields[0].name}}{% endif %}, const gendb::MessagePatch& update);
   absl::Status Delete{{coll.type}}({% if coll.pk_fields | length > 1 %}const {{coll.type}}Key& key{% else %}{{ coll.pk_fields[0].const_ref_type }} {{coll.pk_fields[0].name}}{% endif %});
+  // Includes this transaction's changes. Writing or committing during the scan ends its validity.
+  gendb::ScanIterator<{{ coll.type }}> Scan{{ coll.type }}() const;
 {% endfor %}
  public:
 {% for idx in indices %}
-  gendb::IndexIterator<{{ idx.type }}> Get{{ idx.name_pascal_case }}Range({{ idx.key_param_type }} min_{{ idx.field }}, {{ idx.key_param_type }} max_{{ idx.field }}) const;
-  gendb::IndexIterator<{{ idx.type }}> Get{{ idx.name_pascal_case }}Equal({{ idx.key_param_type }} {{ idx.field }}) const;
-{% endfor %}
+{{ index_decls(idx) }}{% endfor %}
 
 {% for seq in sequences %}
   // Rolls back with the transaction, so committed IDs have no gaps.

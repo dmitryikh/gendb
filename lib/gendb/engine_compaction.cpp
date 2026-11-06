@@ -1,5 +1,7 @@
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
+#include <optional>
 #include <utility>
 
 #include "absl/strings/str_cat.h"
@@ -36,6 +38,48 @@ absl::Status Engine::ExportCheckpoint(
   return writer.Finish();
 }
 
+absl::StatusOr<uint64_t> Engine::WriteCheckpointFile(const std::string& directory,
+                                                     const EngineSnapshot& snapshot,
+                                                     const LogPosition& position) {
+  const std::string final_path =
+      NumberedPath(directory, kCheckpointPrefix, position.lsn, kCheckpointSuffix);
+  const std::string temp_path = absl::StrCat(final_path, kTempSuffix);
+  auto file = _file_system->Create(temp_path);
+  if (!file.ok()) return file.status();
+  absl::Status status = ExportCheckpoint(
+      snapshot, position, [&file](std::string_view frames) { return (*file)->Append(frames); });
+  if (status.ok()) status = (*file)->Sync();
+  if (status.ok()) status = _file_system->Rename(temp_path, final_path);
+  if (status.ok()) status = _file_system->SyncDirectory(directory);
+  if (!status.ok()) {
+    (void)_file_system->Remove(temp_path);
+    return status;
+  }
+  return (*file)->size();
+}
+
+absl::StatusOr<BackupInfo> Engine::Backup(const std::string& directory) {
+  RETURN_IF_ERROR(_file_system->CreateDirectories(directory));
+  auto existing = _file_system->List(directory);
+  if (!existing.ok()) return existing.status();
+  if (!existing->empty()) {
+    return absl::AlreadyExistsError(absl::StrCat(directory, " is not empty"));
+  }
+  std::optional<EngineSnapshot> snapshot;
+  LogPosition position;
+  {
+    auto writer = AcquireWriterFirst();
+    position = {_history, _lsn.load(std::memory_order_relaxed)};
+    snapshot.emplace(*this);
+  }
+  auto bytes = WriteCheckpointFile(directory, *snapshot, position);
+  if (!bytes.ok()) return bytes.status();
+  // The directory itself, so that a crash right after this cannot lose the backup.
+  const std::string parent = std::filesystem::path(directory).parent_path().string();
+  if (!parent.empty()) RETURN_IF_ERROR(_file_system->SyncDirectory(parent));
+  return BackupInfo{position.lsn, *bytes};
+}
+
 absl::Status Engine::Checkpoint() {
   if (_wal == nullptr) return absl::FailedPreconditionError("The engine is in memory only");
   std::lock_guard serial(_checkpoint_mutex);
@@ -64,31 +108,18 @@ absl::Status Engine::Checkpoint() {
     return status;
   };
 
-  const std::string& path = _options.path;
-  const std::string final_path =
-      NumberedPath(path, kCheckpointPrefix, position.lsn, kCheckpointSuffix);
-  const std::string temp_path = absl::StrCat(final_path, kTempSuffix);
-  auto file = _file_system->Create(temp_path);
-  absl::Status status = file.status();
-  if (status.ok()) {
-    status = ExportCheckpoint(*snapshot, position,
-                              [&file](std::string_view frames) { return (*file)->Append(frames); });
-  }
-  snapshot.reset();  // Lets go of the old versions before the slow sync.
-  if (status.ok()) status = (*file)->Sync();
-  if (status.ok()) status = _file_system->Rename(temp_path, final_path);
-  if (status.ok()) status = _file_system->SyncDirectory(path);
-  if (!status.ok()) {
-    (void)_file_system->Remove(temp_path);
+  auto written = WriteCheckpointFile(_options.path, *snapshot, position);
+  snapshot.reset();
+  if (!written.ok()) {
     _wal_bytes_since_checkpoint.fetch_add(log_bytes, std::memory_order_relaxed);
-    return report(std::move(status), 0);
+    return report(written.status(), 0);
   }
 
-  _checkpoint_bytes.store((*file)->size(), std::memory_order_relaxed);
+  _checkpoint_bytes.store(*written, std::memory_order_relaxed);
   _checkpoint_lsn.store(position.lsn, std::memory_order_relaxed);
   _rewrite_checkpoint.store(false, std::memory_order_relaxed);
   RemoveCheckpointsBelow(position.lsn);
-  return report(PurgeWal(), (*file)->size());
+  return report(PurgeWal(), *written);
 }
 
 void Engine::RemoveCheckpointsBelow(uint64_t lsn) const {

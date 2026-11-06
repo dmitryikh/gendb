@@ -125,7 +125,7 @@ absl::StatusOr<Wal::Recovered> Wal::Recover(
         header_lsn != first_lsn) {
       return absl::DataLossError(absl::StrCat("Not a log segment: ", path));
     }
-    if (version > kFormatVersion) {
+    if (version > kFormatVersion || version < kOldestFormatVersion) {
       return absl::FailedPreconditionError(
           absl::StrCat("Unsupported log version ", version, ": ", path));
     }

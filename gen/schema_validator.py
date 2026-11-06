@@ -22,9 +22,16 @@ def validate_collections(store):
 				errors.append(f"Primary key '{pk}' of collection '{col_name}' is deprecated")
 	for idx_name, idx in store.indices.items():
 		col = store.get_collection(idx.collection)
-		field = store.try_get_field(col.type, idx.field)
-		if field is not None and field.deprecated:
-			errors.append(f"Field '{idx.field}' of index '{idx_name}' is deprecated")
+		if not idx.fields:
+			errors.append(f"Index '{idx_name}' has no fields")
+		if len(set(idx.fields)) != len(idx.fields):
+			errors.append(f"Index '{idx_name}' lists a field twice")
+		for name in idx.fields:
+			field = store.try_get_field(col.type, name)
+			if field is None:
+				errors.append(f"Index '{idx_name}' has unknown field '{name}'")
+			elif field.deprecated:
+				errors.append(f"Field '{name}' of index '{idx_name}' is deprecated")
 	return errors
 
 

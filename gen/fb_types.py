@@ -37,7 +37,8 @@ class Enum:
 class Index:
     name: str
     collection: str
-    field: str
+    fields: List[str]
+    unique: bool = False
 
 @dataclass
 class Sequence:

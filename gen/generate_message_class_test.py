@@ -82,6 +82,6 @@ def test_deprecated_field_cannot_be_a_key_or_indexed(tmp_path):
     store = Store()
     flatc_to_store.load_fbs_to_store(store, fbs)
     store.add_collection(Collection(name="items", type="test.Item", primary_key=["id"]))
-    store.add_index(Index(name="by_age", collection="items", field="age"))
+    store.add_index(Index(name="by_age", collection="items", fields=["age"]))
     errors = schema_validator.validate_collections(store)
     assert len(errors) == 2

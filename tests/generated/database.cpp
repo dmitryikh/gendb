@@ -23,20 +23,40 @@ gendb::EngineSchema MakeSchema() {
   schema.collections.push_back({"positions", /*ephemeral=*/false});
   schema.collections.push_back({"configs", /*ephemeral=*/false});
   schema.collections.push_back({"sessions", /*ephemeral=*/true});
-  schema.indices.push_back(
-      {"account_by_age", AccountCollId, [](gendb::BytesConstView bytes, std::string& out) {
-         const Account message{bytes};
-         if (!message.has_age()) return false;
-         internal::key_codec::AppendField(message.age(), out);
-         return true;
-       }});
-  schema.indices.push_back(
-      {"position_by_account_id", PositionCollId, [](gendb::BytesConstView bytes, std::string& out) {
-         const Position message{bytes};
-         if (!message.has_account_id()) return false;
-         internal::key_codec::AppendField(message.account_id(), out);
-         return true;
-       }});
+  schema.indices.push_back({"account_by_age", AccountCollId,
+                            [](gendb::BytesConstView bytes, std::string& out) {
+                              const Account message{bytes};
+                              if (!message.has_age()) return false;
+                              internal::key_codec::AppendField(message.age(), out);
+                              return true;
+                            },
+                            /*unique=*/false});
+  schema.indices.push_back({"position_by_account_id", PositionCollId,
+                            [](gendb::BytesConstView bytes, std::string& out) {
+                              const Position message{bytes};
+                              if (!message.has_account_id()) return false;
+                              internal::key_codec::AppendField(message.account_id(), out);
+                              return true;
+                            },
+                            /*unique=*/false});
+  schema.indices.push_back({"position_by_account_and_instrument", PositionCollId,
+                            [](gendb::BytesConstView bytes, std::string& out) {
+                              const Position message{bytes};
+                              if (!message.has_account_id()) return false;
+                              if (!message.has_instrument()) return false;
+                              internal::key_codec::AppendField(message.account_id(), out);
+                              internal::key_codec::AppendField(message.instrument(), out);
+                              return true;
+                            },
+                            /*unique=*/false});
+  schema.indices.push_back({"account_by_address", AccountCollId,
+                            [](gendb::BytesConstView bytes, std::string& out) {
+                              const Account message{bytes};
+                              if (!message.has_address()) return false;
+                              internal::key_codec::AppendField(message.address(), out);
+                              return true;
+                            },
+                            /*unique=*/true});
   return schema;
 }
 
@@ -67,41 +87,59 @@ ScopedWrite Db::CreateWriter() {
   return ScopedWrite(*_engine);
 }
 
-gendb::Subscription Db::Subscribe(ChangeHandlers handlers, gendb::SubscribeOptions options) {
-  options.collections.clear();
-  if (handlers.on_account) options.collections.push_back(AccountCollId);
-  if (handlers.on_position) options.collections.push_back(PositionCollId);
-  if (handlers.on_config) options.collections.push_back(ConfigCollId);
-  if (handlers.on_session) options.collections.push_back(SessionCollId);
-  if (options.collections.empty()) {
-    options.collections.push_back(AccountCollId);
-    options.collections.push_back(PositionCollId);
-    options.collections.push_back(ConfigCollId);
-    options.collections.push_back(SessionCollId);
+namespace {
+
+std::vector<size_t> FollowedCollections(const ChangeHandlers& handlers) {
+  std::vector<size_t> collections;
+  if (handlers.on_account) collections.push_back(AccountCollId);
+  if (handlers.on_position) collections.push_back(PositionCollId);
+  if (handlers.on_config) collections.push_back(ConfigCollId);
+  if (handlers.on_session) collections.push_back(SessionCollId);
+  if (collections.empty()) {
+    collections.push_back(AccountCollId);
+    collections.push_back(PositionCollId);
+    collections.push_back(ConfigCollId);
+    collections.push_back(SessionCollId);
   }
-  return _engine->Subscribe(
-      [handlers = std::move(handlers)](const gendb::CommitEvent& event) {
-        for (const gendb::Change& change : event.changes) {
-          switch (change.collection) {
-            case AccountCollId:
-              if (handlers.on_account) handlers.on_account(AccountChange(change));
-              break;
-            case PositionCollId:
-              if (handlers.on_position) handlers.on_position(PositionChange(change));
-              break;
-            case ConfigCollId:
-              if (handlers.on_config) handlers.on_config(ConfigChange(change));
-              break;
-            case SessionCollId:
-              if (handlers.on_session) handlers.on_session(SessionChange(change));
-              break;
-            default:
-              break;
-          }
-        }
-        if (handlers.on_commit) handlers.on_commit(event.seq);
-      },
-      std::move(options));
+  return collections;
+}
+
+gendb::ChangeCallback ToCallback(ChangeHandlers handlers) {
+  return [handlers = std::move(handlers)](const gendb::CommitEvent& event) {
+    for (const gendb::Change& change : event.changes) {
+      switch (change.collection) {
+        case AccountCollId:
+          if (handlers.on_account) handlers.on_account(AccountChange(change));
+          break;
+        case PositionCollId:
+          if (handlers.on_position) handlers.on_position(PositionChange(change));
+          break;
+        case ConfigCollId:
+          if (handlers.on_config) handlers.on_config(ConfigChange(change));
+          break;
+        case SessionCollId:
+          if (handlers.on_session) handlers.on_session(SessionChange(change));
+          break;
+        default:
+          break;
+      }
+    }
+    if (handlers.on_commit) handlers.on_commit(event.position);
+  };
+}
+
+}  // namespace
+
+gendb::Subscription Db::Subscribe(ChangeHandlers handlers, gendb::SubscribeOptions options) {
+  options.collections = FollowedCollections(handlers);
+  return _engine->Subscribe(ToCallback(std::move(handlers)), std::move(options));
+}
+
+absl::StatusOr<gendb::Subscription> Db::SubscribeFrom(const gendb::ChangePosition& position,
+                                                      ChangeHandlers handlers,
+                                                      gendb::SubscribeOptions options) {
+  options.collections = FollowedCollections(handlers);
+  return _engine->SubscribeFrom(position, ToCallback(std::move(handlers)), std::move(options));
 }
 
 absl::Status Snapshot::GetMetadataValue(const MetadataValueKey& key,
@@ -118,14 +156,17 @@ absl::Status ScopedWrite::GetMetadataValue(const MetadataValueKey& key,
   return ToMessage(_txn.Get(MetadataValueCollId, ToMetadataValueKey(key)), metadata_value);
 }
 
+gendb::ScanIterator<MetadataValue> ScopedWrite::ScanMetadataValue() const {
+  return gendb::ScanIterator<MetadataValue>(gendb::ScanCursor(_txn, MetadataValueCollId));
+}
+
 absl::Status ScopedWrite::PutMetadataValue(gendb::BytesConstView metadata_value) {
   const MetadataValue message{metadata_value};
   if (!message.has_type())
     return absl::InvalidArgumentError("MetadataValue: the primary key field type is not set");
   if (!message.has_id())
     return absl::InvalidArgumentError("MetadataValue: the primary key field id is not set");
-  _txn.Put(MetadataValueCollId, ToMetadataValueKey(message), metadata_value);
-  return absl::OkStatus();
+  return _txn.Put(MetadataValueCollId, ToMetadataValueKey(message), metadata_value);
 }
 
 absl::Status ScopedWrite::UpdateMetadataValue(const MetadataValueKey& key,
@@ -155,12 +196,15 @@ absl::Status ScopedWrite::GetAccount(uint64_t account_id, Account& account) cons
   return ToMessage(_txn.Get(AccountCollId, ToAccountKey(account_id)), account);
 }
 
+gendb::ScanIterator<Account> ScopedWrite::ScanAccount() const {
+  return gendb::ScanIterator<Account>(gendb::ScanCursor(_txn, AccountCollId));
+}
+
 absl::Status ScopedWrite::PutAccount(gendb::BytesConstView account) {
   const Account message{account};
   if (!message.has_account_id())
     return absl::InvalidArgumentError("Account: the primary key field account_id is not set");
-  _txn.Put(AccountCollId, ToAccountKey(message), account);
-  return absl::OkStatus();
+  return _txn.Put(AccountCollId, ToAccountKey(message), account);
 }
 
 absl::Status ScopedWrite::UpdateAccount(uint64_t account_id, const gendb::MessagePatch& update) {
@@ -186,12 +230,15 @@ absl::Status ScopedWrite::GetPosition(int32_t position_id, Position& position) c
   return ToMessage(_txn.Get(PositionCollId, ToPositionKey(position_id)), position);
 }
 
+gendb::ScanIterator<Position> ScopedWrite::ScanPosition() const {
+  return gendb::ScanIterator<Position>(gendb::ScanCursor(_txn, PositionCollId));
+}
+
 absl::Status ScopedWrite::PutPosition(gendb::BytesConstView position) {
   const Position message{position};
   if (!message.has_position_id())
     return absl::InvalidArgumentError("Position: the primary key field position_id is not set");
-  _txn.Put(PositionCollId, ToPositionKey(message), position);
-  return absl::OkStatus();
+  return _txn.Put(PositionCollId, ToPositionKey(message), position);
 }
 
 absl::Status ScopedWrite::UpdatePosition(int32_t position_id, const gendb::MessagePatch& update) {
@@ -217,12 +264,15 @@ absl::Status ScopedWrite::GetConfig(std::string_view config_name, Config& config
   return ToMessage(_txn.Get(ConfigCollId, ToConfigKey(config_name)), config);
 }
 
+gendb::ScanIterator<Config> ScopedWrite::ScanConfig() const {
+  return gendb::ScanIterator<Config>(gendb::ScanCursor(_txn, ConfigCollId));
+}
+
 absl::Status ScopedWrite::PutConfig(gendb::BytesConstView config) {
   const Config message{config};
   if (!message.has_config_name())
     return absl::InvalidArgumentError("Config: the primary key field config_name is not set");
-  _txn.Put(ConfigCollId, ToConfigKey(message), config);
-  return absl::OkStatus();
+  return _txn.Put(ConfigCollId, ToConfigKey(message), config);
 }
 
 absl::Status ScopedWrite::UpdateConfig(std::string_view config_name,
@@ -249,12 +299,15 @@ absl::Status ScopedWrite::GetSession(uint64_t session_id, Session& session) cons
   return ToMessage(_txn.Get(SessionCollId, ToSessionKey(session_id)), session);
 }
 
+gendb::ScanIterator<Session> ScopedWrite::ScanSession() const {
+  return gendb::ScanIterator<Session>(gendb::ScanCursor(_txn, SessionCollId));
+}
+
 absl::Status ScopedWrite::PutSession(gendb::BytesConstView session) {
   const Session message{session};
   if (!message.has_session_id())
     return absl::InvalidArgumentError("Session: the primary key field session_id is not set");
-  _txn.Put(SessionCollId, ToSessionKey(message), session);
-  return absl::OkStatus();
+  return _txn.Put(SessionCollId, ToSessionKey(message), session);
 }
 
 absl::Status ScopedWrite::UpdateSession(uint64_t session_id, const gendb::MessagePatch& update) {
@@ -268,68 +321,262 @@ absl::Status ScopedWrite::DeleteSession(uint64_t session_id) {
   return _txn.Delete(SessionCollId, ToSessionKey(session_id));
 }
 
-gendb::IndexIterator<Account> Snapshot::GetAccountByAgeRange(int32_t min_age,
-                                                             int32_t max_age) const {
-  std::string lo, hi;
-  internal::key_codec::AppendField(min_age, lo);
-  internal::key_codec::AppendField(max_age, hi);
-  return gendb::IndexIterator<Account>(
-      gendb::IndexCursor(_snapshot, AccountByAgeIndexId, lo, std::move(hi)));
-}
-
-gendb::IndexIterator<Account> Snapshot::GetAccountByAgeEqual(int32_t age) const {
+gendb::IndexIterator<Account> Snapshot::GetAccountByAgeEqual(int32_t age,
+                                                             gendb::ScanOptions options) const {
   std::string lo;
   internal::key_codec::AppendField(age, lo);
   return gendb::IndexIterator<Account>(
-      gendb::IndexCursor(_snapshot, AccountByAgeIndexId, lo, gendb::PrefixSuccessor(lo)));
+      gendb::IndexCursor(_snapshot, AccountByAgeIndexId, lo, gendb::PrefixSuccessor(lo), options));
 }
 
-gendb::IndexIterator<Account> ScopedWrite::GetAccountByAgeRange(int32_t min_age,
-                                                                int32_t max_age) const {
-  std::string lo, hi;
-  internal::key_codec::AppendField(min_age, lo);
-  internal::key_codec::AppendField(max_age, hi);
+gendb::IndexIterator<Account> Snapshot::GetAccountByAgeRange(std::optional<int32_t> min_age,
+                                                             std::optional<int32_t> max_age,
+                                                             gendb::ScanOptions options) const {
+  std::string lo;
+  std::string hi;
+  if (max_age.has_value()) {
+    hi = lo;
+    internal::key_codec::AppendField(*max_age, hi);
+  } else {
+    hi = gendb::PrefixSuccessor(lo);
+  }
+  if (min_age.has_value()) internal::key_codec::AppendField(*min_age, lo);
   return gendb::IndexIterator<Account>(
-      gendb::IndexCursor(_txn, AccountByAgeIndexId, lo, std::move(hi)));
+      gendb::IndexCursor(_snapshot, AccountByAgeIndexId, lo, std::move(hi), options));
 }
 
-gendb::IndexIterator<Account> ScopedWrite::GetAccountByAgeEqual(int32_t age) const {
+gendb::IndexIterator<Account> ScopedWrite::GetAccountByAgeEqual(int32_t age,
+                                                                gendb::ScanOptions options) const {
   std::string lo;
   internal::key_codec::AppendField(age, lo);
   return gendb::IndexIterator<Account>(
-      gendb::IndexCursor(_txn, AccountByAgeIndexId, lo, gendb::PrefixSuccessor(lo)));
+      gendb::IndexCursor(_txn, AccountByAgeIndexId, lo, gendb::PrefixSuccessor(lo), options));
 }
 
-gendb::IndexIterator<Position> Snapshot::GetPositionByAccountIdRange(int32_t min_account_id,
-                                                                     int32_t max_account_id) const {
-  std::string lo, hi;
-  internal::key_codec::AppendField(min_account_id, lo);
-  internal::key_codec::AppendField(max_account_id, hi);
-  return gendb::IndexIterator<Position>(
-      gendb::IndexCursor(_snapshot, PositionByAccountIdIndexId, lo, std::move(hi)));
+gendb::IndexIterator<Account> ScopedWrite::GetAccountByAgeRange(std::optional<int32_t> min_age,
+                                                                std::optional<int32_t> max_age,
+                                                                gendb::ScanOptions options) const {
+  std::string lo;
+  std::string hi;
+  if (max_age.has_value()) {
+    hi = lo;
+    internal::key_codec::AppendField(*max_age, hi);
+  } else {
+    hi = gendb::PrefixSuccessor(lo);
+  }
+  if (min_age.has_value()) internal::key_codec::AppendField(*min_age, lo);
+  return gendb::IndexIterator<Account>(
+      gendb::IndexCursor(_txn, AccountByAgeIndexId, lo, std::move(hi), options));
 }
 
-gendb::IndexIterator<Position> Snapshot::GetPositionByAccountIdEqual(int32_t account_id) const {
+gendb::IndexIterator<Position> Snapshot::GetPositionByAccountIdEqual(
+    int32_t account_id, gendb::ScanOptions options) const {
   std::string lo;
   internal::key_codec::AppendField(account_id, lo);
+  return gendb::IndexIterator<Position>(gendb::IndexCursor(
+      _snapshot, PositionByAccountIdIndexId, lo, gendb::PrefixSuccessor(lo), options));
+}
+
+gendb::IndexIterator<Position> Snapshot::GetPositionByAccountIdRange(
+    std::optional<int32_t> min_account_id, std::optional<int32_t> max_account_id,
+    gendb::ScanOptions options) const {
+  std::string lo;
+  std::string hi;
+  if (max_account_id.has_value()) {
+    hi = lo;
+    internal::key_codec::AppendField(*max_account_id, hi);
+  } else {
+    hi = gendb::PrefixSuccessor(lo);
+  }
+  if (min_account_id.has_value()) internal::key_codec::AppendField(*min_account_id, lo);
   return gendb::IndexIterator<Position>(
-      gendb::IndexCursor(_snapshot, PositionByAccountIdIndexId, lo, gendb::PrefixSuccessor(lo)));
+      gendb::IndexCursor(_snapshot, PositionByAccountIdIndexId, lo, std::move(hi), options));
+}
+
+gendb::IndexIterator<Position> ScopedWrite::GetPositionByAccountIdEqual(
+    int32_t account_id, gendb::ScanOptions options) const {
+  std::string lo;
+  internal::key_codec::AppendField(account_id, lo);
+  return gendb::IndexIterator<Position>(gendb::IndexCursor(_txn, PositionByAccountIdIndexId, lo,
+                                                           gendb::PrefixSuccessor(lo), options));
 }
 
 gendb::IndexIterator<Position> ScopedWrite::GetPositionByAccountIdRange(
-    int32_t min_account_id, int32_t max_account_id) const {
-  std::string lo, hi;
-  internal::key_codec::AppendField(min_account_id, lo);
-  internal::key_codec::AppendField(max_account_id, hi);
+    std::optional<int32_t> min_account_id, std::optional<int32_t> max_account_id,
+    gendb::ScanOptions options) const {
+  std::string lo;
+  std::string hi;
+  if (max_account_id.has_value()) {
+    hi = lo;
+    internal::key_codec::AppendField(*max_account_id, hi);
+  } else {
+    hi = gendb::PrefixSuccessor(lo);
+  }
+  if (min_account_id.has_value()) internal::key_codec::AppendField(*min_account_id, lo);
   return gendb::IndexIterator<Position>(
-      gendb::IndexCursor(_txn, PositionByAccountIdIndexId, lo, std::move(hi)));
+      gendb::IndexCursor(_txn, PositionByAccountIdIndexId, lo, std::move(hi), options));
 }
 
-gendb::IndexIterator<Position> ScopedWrite::GetPositionByAccountIdEqual(int32_t account_id) const {
+gendb::IndexIterator<Position> Snapshot::GetPositionByAccountAndInstrumentEqual(
+    int32_t account_id, gendb::ScanOptions options) const {
   std::string lo;
   internal::key_codec::AppendField(account_id, lo);
+  return gendb::IndexIterator<Position>(gendb::IndexCursor(
+      _snapshot, PositionByAccountAndInstrumentIndexId, lo, gendb::PrefixSuccessor(lo), options));
+}
+
+gendb::IndexIterator<Position> Snapshot::GetPositionByAccountAndInstrumentEqual(
+    int32_t account_id, std::string_view instrument, gendb::ScanOptions options) const {
+  std::string lo;
+  internal::key_codec::AppendField(account_id, lo);
+  internal::key_codec::AppendField(instrument, lo);
+  return gendb::IndexIterator<Position>(gendb::IndexCursor(
+      _snapshot, PositionByAccountAndInstrumentIndexId, lo, gendb::PrefixSuccessor(lo), options));
+}
+
+gendb::IndexIterator<Position> Snapshot::GetPositionByAccountAndInstrumentRange(
+    std::optional<int32_t> min_account_id, std::optional<int32_t> max_account_id,
+    gendb::ScanOptions options) const {
+  std::string lo;
+  std::string hi;
+  if (max_account_id.has_value()) {
+    hi = lo;
+    internal::key_codec::AppendField(*max_account_id, hi);
+  } else {
+    hi = gendb::PrefixSuccessor(lo);
+  }
+  if (min_account_id.has_value()) internal::key_codec::AppendField(*min_account_id, lo);
+  return gendb::IndexIterator<Position>(gendb::IndexCursor(
+      _snapshot, PositionByAccountAndInstrumentIndexId, lo, std::move(hi), options));
+}
+
+gendb::IndexIterator<Position> Snapshot::GetPositionByAccountAndInstrumentRange(
+    int32_t account_id, std::optional<std::string_view> min_instrument,
+    std::optional<std::string_view> max_instrument, gendb::ScanOptions options) const {
+  std::string lo;
+  internal::key_codec::AppendField(account_id, lo);
+  std::string hi;
+  if (max_instrument.has_value()) {
+    hi = lo;
+    internal::key_codec::AppendField(*max_instrument, hi);
+  } else {
+    hi = gendb::PrefixSuccessor(lo);
+  }
+  if (min_instrument.has_value()) internal::key_codec::AppendField(*min_instrument, lo);
+  return gendb::IndexIterator<Position>(gendb::IndexCursor(
+      _snapshot, PositionByAccountAndInstrumentIndexId, lo, std::move(hi), options));
+}
+
+gendb::IndexIterator<Position> ScopedWrite::GetPositionByAccountAndInstrumentEqual(
+    int32_t account_id, gendb::ScanOptions options) const {
+  std::string lo;
+  internal::key_codec::AppendField(account_id, lo);
+  return gendb::IndexIterator<Position>(gendb::IndexCursor(
+      _txn, PositionByAccountAndInstrumentIndexId, lo, gendb::PrefixSuccessor(lo), options));
+}
+
+gendb::IndexIterator<Position> ScopedWrite::GetPositionByAccountAndInstrumentEqual(
+    int32_t account_id, std::string_view instrument, gendb::ScanOptions options) const {
+  std::string lo;
+  internal::key_codec::AppendField(account_id, lo);
+  internal::key_codec::AppendField(instrument, lo);
+  return gendb::IndexIterator<Position>(gendb::IndexCursor(
+      _txn, PositionByAccountAndInstrumentIndexId, lo, gendb::PrefixSuccessor(lo), options));
+}
+
+gendb::IndexIterator<Position> ScopedWrite::GetPositionByAccountAndInstrumentRange(
+    std::optional<int32_t> min_account_id, std::optional<int32_t> max_account_id,
+    gendb::ScanOptions options) const {
+  std::string lo;
+  std::string hi;
+  if (max_account_id.has_value()) {
+    hi = lo;
+    internal::key_codec::AppendField(*max_account_id, hi);
+  } else {
+    hi = gendb::PrefixSuccessor(lo);
+  }
+  if (min_account_id.has_value()) internal::key_codec::AppendField(*min_account_id, lo);
   return gendb::IndexIterator<Position>(
-      gendb::IndexCursor(_txn, PositionByAccountIdIndexId, lo, gendb::PrefixSuccessor(lo)));
+      gendb::IndexCursor(_txn, PositionByAccountAndInstrumentIndexId, lo, std::move(hi), options));
+}
+
+gendb::IndexIterator<Position> ScopedWrite::GetPositionByAccountAndInstrumentRange(
+    int32_t account_id, std::optional<std::string_view> min_instrument,
+    std::optional<std::string_view> max_instrument, gendb::ScanOptions options) const {
+  std::string lo;
+  internal::key_codec::AppendField(account_id, lo);
+  std::string hi;
+  if (max_instrument.has_value()) {
+    hi = lo;
+    internal::key_codec::AppendField(*max_instrument, hi);
+  } else {
+    hi = gendb::PrefixSuccessor(lo);
+  }
+  if (min_instrument.has_value()) internal::key_codec::AppendField(*min_instrument, lo);
+  return gendb::IndexIterator<Position>(
+      gendb::IndexCursor(_txn, PositionByAccountAndInstrumentIndexId, lo, std::move(hi), options));
+}
+
+gendb::IndexIterator<Account> Snapshot::GetAccountByAddressEqual(std::string_view address,
+                                                                 gendb::ScanOptions options) const {
+  std::string lo;
+  internal::key_codec::AppendField(address, lo);
+  return gendb::IndexIterator<Account>(gendb::IndexCursor(_snapshot, AccountByAddressIndexId, lo,
+                                                          gendb::PrefixSuccessor(lo), options));
+}
+
+gendb::IndexIterator<Account> Snapshot::GetAccountByAddressRange(
+    std::optional<std::string_view> min_address, std::optional<std::string_view> max_address,
+    gendb::ScanOptions options) const {
+  std::string lo;
+  std::string hi;
+  if (max_address.has_value()) {
+    hi = lo;
+    internal::key_codec::AppendField(*max_address, hi);
+  } else {
+    hi = gendb::PrefixSuccessor(lo);
+  }
+  if (min_address.has_value()) internal::key_codec::AppendField(*min_address, lo);
+  return gendb::IndexIterator<Account>(
+      gendb::IndexCursor(_snapshot, AccountByAddressIndexId, lo, std::move(hi), options));
+}
+
+absl::Status Snapshot::GetAccountByAddress(std::string_view address, Account& out) const {
+  auto it = GetAccountByAddressEqual(address, {.limit = 1});
+  if (!it.Valid()) return absl::NotFoundError("No such value in account_by_address");
+  out = it.Value();
+  return absl::OkStatus();
+}
+
+gendb::IndexIterator<Account> ScopedWrite::GetAccountByAddressEqual(
+    std::string_view address, gendb::ScanOptions options) const {
+  std::string lo;
+  internal::key_codec::AppendField(address, lo);
+  return gendb::IndexIterator<Account>(
+      gendb::IndexCursor(_txn, AccountByAddressIndexId, lo, gendb::PrefixSuccessor(lo), options));
+}
+
+gendb::IndexIterator<Account> ScopedWrite::GetAccountByAddressRange(
+    std::optional<std::string_view> min_address, std::optional<std::string_view> max_address,
+    gendb::ScanOptions options) const {
+  std::string lo;
+  std::string hi;
+  if (max_address.has_value()) {
+    hi = lo;
+    internal::key_codec::AppendField(*max_address, hi);
+  } else {
+    hi = gendb::PrefixSuccessor(lo);
+  }
+  if (min_address.has_value()) internal::key_codec::AppendField(*min_address, lo);
+  return gendb::IndexIterator<Account>(
+      gendb::IndexCursor(_txn, AccountByAddressIndexId, lo, std::move(hi), options));
+}
+
+absl::Status ScopedWrite::GetAccountByAddress(std::string_view address, Account& out) const {
+  auto it = GetAccountByAddressEqual(address, {.limit = 1});
+  if (!it.Valid()) return absl::NotFoundError("No such value in account_by_address");
+  out = it.Value();
+  return absl::OkStatus();
 }
 
 absl::Status ScopedWrite::NextAccountIdSequence(uint64_t& next_id) {

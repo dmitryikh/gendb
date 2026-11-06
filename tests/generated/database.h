@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -98,13 +99,16 @@ inline std::array<uint8_t, 8> ToSessionKey(Session session) {
 enum IndexId {
   AccountByAgeIndexId = 0,
   PositionByAccountIdIndexId = 1,
+  PositionByAccountAndInstrumentIndexId = 2,
+  AccountByAddressIndexId = 3,
 };
 
 using DbOptions = gendb::EngineOptions;
 
 // What a commit did to one record, valid only during the callback. Whole messages before and after
 // are available, and the *_changed() methods compare one field across them. On insert or delete
-// the missing side reads as an empty message.
+// the missing side reads as an empty message. While catching up with SubscribeFrom, there is no
+// `before`: kUpsert gives the current state, and kDelete only the key.
 class AccountChange {
  public:
   explicit AccountChange(const gendb::Change& change)
@@ -250,8 +254,9 @@ struct ChangeHandlers {
   std::function<void(const PositionChange&)> on_position;
   std::function<void(const ConfigChange&)> on_config;
   std::function<void(const SessionChange&)> on_session;
-  // After the changes of each commit that had any, for acting on a commit as a whole.
-  std::function<void(uint64_t seq)> on_commit;
+  // After the changes of each commit that had any, for acting on a commit as a whole. Store the
+  // position to resume from later with SubscribeFrom.
+  std::function<void(const gendb::ChangePosition& position)> on_commit;
 };
 
 class Db {
@@ -267,6 +272,10 @@ class Db {
   ScopedWrite CreateWriter();
   // Delivers changes committed after this call until the returned handle is destroyed.
   gendb::Subscription Subscribe(ChangeHandlers handlers, gendb::SubscribeOptions options = {});
+  // The same, starting with what changed since `position`. See gendb::Engine::SubscribeFrom.
+  absl::StatusOr<gendb::Subscription> SubscribeFrom(const gendb::ChangePosition& position,
+                                                    ChangeHandlers handlers,
+                                                    gendb::SubscribeOptions options = {});
   // Durability controls, stats, and the handle replication attaches to.
   gendb::Engine& engine() { return *_engine; }
 
@@ -289,13 +298,43 @@ class Snapshot {
   gendb::ScanIterator<Config> ScanConfig() const;
   absl::Status GetSession(uint64_t session_id, Session& session) const;
   gendb::ScanIterator<Session> ScanSession() const;
-  // Index entries in [min_age, max_age), ordered by age.
-  gendb::IndexIterator<Account> GetAccountByAgeRange(int32_t min_age, int32_t max_age) const;
-  gendb::IndexIterator<Account> GetAccountByAgeEqual(int32_t age) const;
-  // Index entries in [min_account_id, max_account_id), ordered by account_id.
-  gendb::IndexIterator<Position> GetPositionByAccountIdRange(int32_t min_account_id,
-                                                             int32_t max_account_id) const;
-  gendb::IndexIterator<Position> GetPositionByAccountIdEqual(int32_t account_id) const;
+  // Entries with these values, ordered by what remains of the index and the primary key.
+  gendb::IndexIterator<Account> GetAccountByAgeEqual(int32_t age,
+                                                     gendb::ScanOptions options = {}) const;
+  // Entries age in [min, max); a missing bound leaves that side open.
+  gendb::IndexIterator<Account> GetAccountByAgeRange(std::optional<int32_t> min_age,
+                                                     std::optional<int32_t> max_age,
+                                                     gendb::ScanOptions options = {}) const;
+  // Entries with these values, ordered by what remains of the index and the primary key.
+  gendb::IndexIterator<Position> GetPositionByAccountIdEqual(int32_t account_id,
+                                                             gendb::ScanOptions options = {}) const;
+  // Entries account_id in [min, max); a missing bound leaves that side open.
+  gendb::IndexIterator<Position> GetPositionByAccountIdRange(std::optional<int32_t> min_account_id,
+                                                             std::optional<int32_t> max_account_id,
+                                                             gendb::ScanOptions options = {}) const;
+  // Entries with these values, ordered by what remains of the index and the primary key.
+  gendb::IndexIterator<Position> GetPositionByAccountAndInstrumentEqual(
+      int32_t account_id, gendb::ScanOptions options = {}) const;
+  // Entries with these values, ordered by what remains of the index and the primary key.
+  gendb::IndexIterator<Position> GetPositionByAccountAndInstrumentEqual(
+      int32_t account_id, std::string_view instrument, gendb::ScanOptions options = {}) const;
+  // Entries account_id in [min, max); a missing bound leaves that side open.
+  gendb::IndexIterator<Position> GetPositionByAccountAndInstrumentRange(
+      std::optional<int32_t> min_account_id, std::optional<int32_t> max_account_id,
+      gendb::ScanOptions options = {}) const;
+  // Entries with these values and instrument in [min, max); a missing bound leaves that side open.
+  gendb::IndexIterator<Position> GetPositionByAccountAndInstrumentRange(
+      int32_t account_id, std::optional<std::string_view> min_instrument,
+      std::optional<std::string_view> max_instrument, gendb::ScanOptions options = {}) const;
+  // Entries with these values, ordered by what remains of the index and the primary key.
+  gendb::IndexIterator<Account> GetAccountByAddressEqual(std::string_view address,
+                                                         gendb::ScanOptions options = {}) const;
+  // Entries address in [min, max); a missing bound leaves that side open.
+  gendb::IndexIterator<Account> GetAccountByAddressRange(
+      std::optional<std::string_view> min_address, std::optional<std::string_view> max_address,
+      gendb::ScanOptions options = {}) const;
+  // The one record with these values.
+  absl::Status GetAccountByAddress(std::string_view address, Account& out) const;
 
  private:
   friend class Db;
@@ -315,6 +354,8 @@ class ScopedWrite {
   // A patch cannot change the primary key: that is another record.
   absl::Status UpdateMetadataValue(const MetadataValueKey& key, const gendb::MessagePatch& update);
   absl::Status DeleteMetadataValue(const MetadataValueKey& key);
+  // Includes this transaction's changes. Writing or committing during the scan ends its validity.
+  gendb::ScanIterator<MetadataValue> ScanMetadataValue() const;
 
  public:
   absl::Status GetAccount(uint64_t account_id, Account& account) const;
@@ -323,31 +364,71 @@ class ScopedWrite {
   // A patch cannot change the primary key: that is another record.
   absl::Status UpdateAccount(uint64_t account_id, const gendb::MessagePatch& update);
   absl::Status DeleteAccount(uint64_t account_id);
+  // Includes this transaction's changes. Writing or committing during the scan ends its validity.
+  gendb::ScanIterator<Account> ScanAccount() const;
   absl::Status GetPosition(int32_t position_id, Position& position) const;
   // The key comes from the message, which must have its primary key fields set.
   absl::Status PutPosition(gendb::BytesConstView position);
   // A patch cannot change the primary key: that is another record.
   absl::Status UpdatePosition(int32_t position_id, const gendb::MessagePatch& update);
   absl::Status DeletePosition(int32_t position_id);
+  // Includes this transaction's changes. Writing or committing during the scan ends its validity.
+  gendb::ScanIterator<Position> ScanPosition() const;
   absl::Status GetConfig(std::string_view config_name, Config& config) const;
   // The key comes from the message, which must have its primary key fields set.
   absl::Status PutConfig(gendb::BytesConstView config);
   // A patch cannot change the primary key: that is another record.
   absl::Status UpdateConfig(std::string_view config_name, const gendb::MessagePatch& update);
   absl::Status DeleteConfig(std::string_view config_name);
+  // Includes this transaction's changes. Writing or committing during the scan ends its validity.
+  gendb::ScanIterator<Config> ScanConfig() const;
   absl::Status GetSession(uint64_t session_id, Session& session) const;
   // The key comes from the message, which must have its primary key fields set.
   absl::Status PutSession(gendb::BytesConstView session);
   // A patch cannot change the primary key: that is another record.
   absl::Status UpdateSession(uint64_t session_id, const gendb::MessagePatch& update);
   absl::Status DeleteSession(uint64_t session_id);
+  // Includes this transaction's changes. Writing or committing during the scan ends its validity.
+  gendb::ScanIterator<Session> ScanSession() const;
 
  public:
-  gendb::IndexIterator<Account> GetAccountByAgeRange(int32_t min_age, int32_t max_age) const;
-  gendb::IndexIterator<Account> GetAccountByAgeEqual(int32_t age) const;
-  gendb::IndexIterator<Position> GetPositionByAccountIdRange(int32_t min_account_id,
-                                                             int32_t max_account_id) const;
-  gendb::IndexIterator<Position> GetPositionByAccountIdEqual(int32_t account_id) const;
+  // Entries with these values, ordered by what remains of the index and the primary key.
+  gendb::IndexIterator<Account> GetAccountByAgeEqual(int32_t age,
+                                                     gendb::ScanOptions options = {}) const;
+  // Entries age in [min, max); a missing bound leaves that side open.
+  gendb::IndexIterator<Account> GetAccountByAgeRange(std::optional<int32_t> min_age,
+                                                     std::optional<int32_t> max_age,
+                                                     gendb::ScanOptions options = {}) const;
+  // Entries with these values, ordered by what remains of the index and the primary key.
+  gendb::IndexIterator<Position> GetPositionByAccountIdEqual(int32_t account_id,
+                                                             gendb::ScanOptions options = {}) const;
+  // Entries account_id in [min, max); a missing bound leaves that side open.
+  gendb::IndexIterator<Position> GetPositionByAccountIdRange(std::optional<int32_t> min_account_id,
+                                                             std::optional<int32_t> max_account_id,
+                                                             gendb::ScanOptions options = {}) const;
+  // Entries with these values, ordered by what remains of the index and the primary key.
+  gendb::IndexIterator<Position> GetPositionByAccountAndInstrumentEqual(
+      int32_t account_id, gendb::ScanOptions options = {}) const;
+  // Entries with these values, ordered by what remains of the index and the primary key.
+  gendb::IndexIterator<Position> GetPositionByAccountAndInstrumentEqual(
+      int32_t account_id, std::string_view instrument, gendb::ScanOptions options = {}) const;
+  // Entries account_id in [min, max); a missing bound leaves that side open.
+  gendb::IndexIterator<Position> GetPositionByAccountAndInstrumentRange(
+      std::optional<int32_t> min_account_id, std::optional<int32_t> max_account_id,
+      gendb::ScanOptions options = {}) const;
+  // Entries with these values and instrument in [min, max); a missing bound leaves that side open.
+  gendb::IndexIterator<Position> GetPositionByAccountAndInstrumentRange(
+      int32_t account_id, std::optional<std::string_view> min_instrument,
+      std::optional<std::string_view> max_instrument, gendb::ScanOptions options = {}) const;
+  // Entries with these values, ordered by what remains of the index and the primary key.
+  gendb::IndexIterator<Account> GetAccountByAddressEqual(std::string_view address,
+                                                         gendb::ScanOptions options = {}) const;
+  // Entries address in [min, max); a missing bound leaves that side open.
+  gendb::IndexIterator<Account> GetAccountByAddressRange(
+      std::optional<std::string_view> min_address, std::optional<std::string_view> max_address,
+      gendb::ScanOptions options = {}) const;
+  // The one record with these values.
+  absl::Status GetAccountByAddress(std::string_view address, Account& out) const;
 
   // Rolls back with the transaction, so committed IDs have no gaps.
   absl::Status NextAccountIdSequence(uint64_t& next_id);

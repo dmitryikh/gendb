@@ -47,26 +47,44 @@ ScopedWrite Db::CreateWriter() {
   return ScopedWrite(*_engine);
 }
 
-gendb::Subscription Db::Subscribe(ChangeHandlers handlers, gendb::SubscribeOptions options) {
-  options.collections.clear();
-  if (handlers.on_message_a) options.collections.push_back(MessageACollId);
-  if (options.collections.empty()) {
-    options.collections.push_back(MessageACollId);
+namespace {
+
+std::vector<size_t> FollowedCollections(const ChangeHandlers& handlers) {
+  std::vector<size_t> collections;
+  if (handlers.on_message_a) collections.push_back(MessageACollId);
+  if (collections.empty()) {
+    collections.push_back(MessageACollId);
   }
-  return _engine->Subscribe(
-      [handlers = std::move(handlers)](const gendb::CommitEvent& event) {
-        for (const gendb::Change& change : event.changes) {
-          switch (change.collection) {
-            case MessageACollId:
-              if (handlers.on_message_a) handlers.on_message_a(MessageAChange(change));
-              break;
-            default:
-              break;
-          }
-        }
-        if (handlers.on_commit) handlers.on_commit(event.seq);
-      },
-      std::move(options));
+  return collections;
+}
+
+gendb::ChangeCallback ToCallback(ChangeHandlers handlers) {
+  return [handlers = std::move(handlers)](const gendb::CommitEvent& event) {
+    for (const gendb::Change& change : event.changes) {
+      switch (change.collection) {
+        case MessageACollId:
+          if (handlers.on_message_a) handlers.on_message_a(MessageAChange(change));
+          break;
+        default:
+          break;
+      }
+    }
+    if (handlers.on_commit) handlers.on_commit(event.position);
+  };
+}
+
+}  // namespace
+
+gendb::Subscription Db::Subscribe(ChangeHandlers handlers, gendb::SubscribeOptions options) {
+  options.collections = FollowedCollections(handlers);
+  return _engine->Subscribe(ToCallback(std::move(handlers)), std::move(options));
+}
+
+absl::StatusOr<gendb::Subscription> Db::SubscribeFrom(const gendb::ChangePosition& position,
+                                                      ChangeHandlers handlers,
+                                                      gendb::SubscribeOptions options) {
+  options.collections = FollowedCollections(handlers);
+  return _engine->SubscribeFrom(position, ToCallback(std::move(handlers)), std::move(options));
 }
 
 absl::Status Snapshot::GetMetadataValue(const MetadataValueKey& key,
@@ -83,14 +101,17 @@ absl::Status ScopedWrite::GetMetadataValue(const MetadataValueKey& key,
   return ToMessage(_txn.Get(MetadataValueCollId, ToMetadataValueKey(key)), metadata_value);
 }
 
+gendb::ScanIterator<MetadataValue> ScopedWrite::ScanMetadataValue() const {
+  return gendb::ScanIterator<MetadataValue>(gendb::ScanCursor(_txn, MetadataValueCollId));
+}
+
 absl::Status ScopedWrite::PutMetadataValue(gendb::BytesConstView metadata_value) {
   const MetadataValue message{metadata_value};
   if (!message.has_type())
     return absl::InvalidArgumentError("MetadataValue: the primary key field type is not set");
   if (!message.has_id())
     return absl::InvalidArgumentError("MetadataValue: the primary key field id is not set");
-  _txn.Put(MetadataValueCollId, ToMetadataValueKey(message), metadata_value);
-  return absl::OkStatus();
+  return _txn.Put(MetadataValueCollId, ToMetadataValueKey(message), metadata_value);
 }
 
 absl::Status ScopedWrite::UpdateMetadataValue(const MetadataValueKey& key,
@@ -122,12 +143,15 @@ absl::Status ScopedWrite::GetMessageA(gendb::tests::primitive::KeyEnum key,
   return ToMessage(_txn.Get(MessageACollId, ToMessageAKey(key)), message_a);
 }
 
+gendb::ScanIterator<MessageA> ScopedWrite::ScanMessageA() const {
+  return gendb::ScanIterator<MessageA>(gendb::ScanCursor(_txn, MessageACollId));
+}
+
 absl::Status ScopedWrite::PutMessageA(gendb::BytesConstView message_a) {
   const MessageA message{message_a};
   if (!message.has_key())
     return absl::InvalidArgumentError("MessageA: the primary key field key is not set");
-  _txn.Put(MessageACollId, ToMessageAKey(message), message_a);
-  return absl::OkStatus();
+  return _txn.Put(MessageACollId, ToMessageAKey(message), message_a);
 }
 
 absl::Status ScopedWrite::UpdateMessageA(gendb::tests::primitive::KeyEnum key,

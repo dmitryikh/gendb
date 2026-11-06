@@ -58,6 +58,8 @@ struct IndexDef {
   // Appends the order-preserving encoding of the indexed field to `out`.
   // Returns false if the message has no such field, which leaves it out of the index.
   bool (*extract)(BytesConstView message, std::string& out);
+  // At most one record per value: a write that would make a second fails with AlreadyExists.
+  bool unique = false;
 };
 
 struct EngineSchema {
@@ -107,7 +109,14 @@ struct CommitOptions {
   std::optional<bool> sync;
 };
 
-enum class ChangeKind { kInsert, kUpdate, kDelete };
+enum class ChangeKind {
+  kInsert,
+  kUpdate,
+  kDelete,
+  // Catching up with SubscribeFrom: the record's current state, which may or may not be new to the
+  // subscriber.
+  kUpsert,
+};
 
 // One record changed by a commit: its whole state before and after. Comparing them tells what
 // changed, for a Put as much as for an Update; generated code offers it per field.
@@ -116,17 +125,31 @@ struct Change {
   BytesConstView key;
   std::optional<BytesConstView> before;  // Absent on insert.
   std::optional<BytesConstView> after;   // Absent on delete.
+  // From catching up: `before` is not known, even for a delete.
+  bool state_only = false;
 
   ChangeKind kind() const noexcept {
-    if (!before.has_value()) return ChangeKind::kInsert;
-    return after.has_value() ? ChangeKind::kUpdate : ChangeKind::kDelete;
+    if (!after.has_value()) return ChangeKind::kDelete;
+    if (before.has_value()) return ChangeKind::kUpdate;
+    return state_only ? ChangeKind::kUpsert : ChangeKind::kInsert;
   }
+};
+
+// A point in the commit log, to resume following it with Engine::SubscribeFrom. Plain numbers, for
+// the application to store.
+struct ChangePosition {
+  uint64_t history_high = 0;
+  uint64_t history_low = 0;
+  uint64_t lsn = 0;
+  bool operator==(const ChangePosition&) const = default;
 };
 
 // The views are valid only during the callback.
 struct CommitEvent {
   uint64_t seq;  // An ever-growing commit number within this process.
   std::span<const Change> changes;
+  // Where to resume from to get what comes after this event.
+  ChangePosition position;
 };
 
 using ChangeCallback = std::function<void(const CommitEvent&)>;
@@ -160,6 +183,11 @@ struct EngineStats {
   std::vector<std::string> foreign_collections;  // Held, but not in this schema.
 };
 
+struct BackupInfo {
+  uint64_t lsn;
+  uint64_t bytes;
+};
+
 class Engine {
  public:
   // In memory only: there is nothing to recover, and all data is ephemeral.
@@ -174,6 +202,21 @@ class Engine {
   // others. Changes committed before this call are not delivered. The subscription ends with the
   // returned handle.
   Subscription Subscribe(ChangeCallback callback, SubscribeOptions options = {});
+  // The same, starting with what changed since `position`, for a subscriber that was away.
+  //
+  // The log holds no history of each record that a subscriber could be given in full, so catching
+  // up is compacted: one change per record that changed, kUpsert with its current state or kDelete
+  // with only its key. Live changes follow, with nothing missed. Scans the log before returning,
+  // and takes only Delivery::kQueued.
+  //
+  // OutOfRange if the log no longer reaches back that far, or the database is on another history,
+  // as after a replica received a whole checkpoint: start over from a snapshot and Subscribe.
+  // Ephemeral collections are not in the log, so nothing is reported from them.
+  absl::StatusOr<Subscription> SubscribeFrom(const ChangePosition& position,
+                                             ChangeCallback callback,
+                                             SubscribeOptions options = {});
+  // Where the log is now.
+  ChangePosition CurrentChangePosition();
 
   // Makes every finished commit durable.
   absl::Status SyncWal();
@@ -181,6 +224,10 @@ class Engine {
   // readers keep running, though versions replaced meanwhile stay in memory until it ends. Blocks
   // until any open Transaction ends, so do not call it while holding one.
   absl::Status Checkpoint();
+  // Writes the current state to a new checkpoint in `directory`, which must be empty or not exist,
+  // without stopping writers or readers. Opening that directory restores the database as of then.
+  // Works on a memory-only engine too.
+  absl::StatusOr<BackupInfo> Backup(const std::string& directory);
 
   // Ends follower mode, for failover: stop the Replica first. Starts a new history, so anyone
   // still following the old one gets a full checkpoint from here.
@@ -256,6 +303,7 @@ class Engine {
   // as a busy writer retaking the mutex could otherwise keep it away for good.
   std::unique_lock<std::mutex> AcquireWriterFirst();
   void Notify(uint64_t seq, std::span<const Change> changes);
+  ChangePosition ChangePositionAt(uint64_t lsn) const noexcept;
   void AfterCommit(uint64_t wal_bytes);
   void UpdateIndexNow(size_t collection, std::string_view key, std::optional<BytesConstView> before,
                       std::optional<BytesConstView> after, uint64_t seq);
@@ -265,6 +313,10 @@ class Engine {
   // Compaction.
   absl::Status ExportCheckpoint(const EngineSnapshot& snapshot, const LogPosition& position,
                                 const std::function<absl::Status(std::string_view)>& sink) const;
+  // Writes a checkpoint file in `directory`, returning its size.
+  absl::StatusOr<uint64_t> WriteCheckpointFile(const std::string& directory,
+                                               const EngineSnapshot& snapshot,
+                                               const LogPosition& position);
   absl::Status PurgeWal();
   void RemoveCheckpointsBelow(uint64_t lsn) const;
   void BackgroundLoop();
@@ -272,6 +324,8 @@ class Engine {
   void RecordBackgroundError(absl::Status status);
 
   // Subscriptions.
+  std::shared_ptr<internal::Subscriber> NewSubscriber(ChangeCallback callback,
+                                                      const SubscribeOptions& options);
   void Unsubscribe(const std::shared_ptr<internal::Subscriber>& subscriber);
   void WaitForSubscriberRoom();
   void StopSubscribers();
@@ -326,11 +380,11 @@ class Engine {
   std::atomic<bool> _replica;
   // A checkpoint failed to load halfway: memory holds records no commit may publish.
   std::atomic<bool> _broken{false};
+  const std::shared_ptr<FileSystem> _file_system;
   std::unique_ptr<CommitRing> _ring;
 
   // Persistence; null in memory.
   std::unique_ptr<internal::Wal> _wal;
-  std::shared_ptr<FileSystem> _file_system;
   std::unique_ptr<FileLock> _file_lock;
   std::mutex _checkpoint_mutex;  // Serializes checkpoints. Taken before the writer lock.
   std::atomic<uint64_t> _checkpoint_lsn{0};
@@ -411,14 +465,22 @@ class EngineSnapshot {
   uint64_t _seq;
 };
 
+struct ScanOptions {
+  bool reverse = false;  // Each step of a reverse scan costs a search rather than a pointer.
+  size_t limit = 0;      // At most this many results; zero means no limit.
+};
+
 // Ordered scan of an index over [lo, hi); an empty `hi` means no upper bound. Over a transaction
 // it includes the transaction's uncommitted changes.
 class IndexCursor {
  public:
-  IndexCursor(const EngineSnapshot& snapshot, size_t index, std::string_view lo, std::string hi);
-  IndexCursor(const Transaction& txn, size_t index, std::string_view lo, std::string hi);
+  IndexCursor(const EngineSnapshot& snapshot, size_t index, std::string_view lo, std::string hi,
+              ScanOptions options = {});
+  IndexCursor(const Transaction& txn, size_t index, std::string_view lo, std::string hi,
+              ScanOptions options = {});
   bool Valid() const noexcept { return _value.has_value(); }
   BytesConstView value() const noexcept { return *_value; }
+  std::string_view primary_key() const noexcept { return _primary_key; }
   void Next();
 
  private:
@@ -429,25 +491,34 @@ class IndexCursor {
   };
 
   IndexCursor(const Engine& engine, size_t index, uint64_t seq, const Transaction* txn,
-              std::string_view lo, std::string hi);
+              std::string_view lo, std::string hi, ScanOptions options);
   const internal::IndexEntry* NextVisible(const internal::IndexEntry* e) const noexcept;
+  // The last visible entry with key below `bound`, or the last of all if `bound` is empty.
+  const internal::IndexEntry* PreviousVisible(std::string_view bound) const noexcept;
   std::optional<BytesConstView> Lookup(std::string_view primary_key) const noexcept;
 
   const Engine* _engine;
   size_t _collection;
   uint64_t _seq;
   const Transaction* _txn;
+  const internal::OrderedIndex* _index;
+  std::string _lo;
   std::string _hi;
+  ScanOptions _options;
+  size_t _returned = 0;
+  std::string_view _primary_key;
   const internal::IndexEntry* _entry;
   std::vector<Delta> _deltas;  // Uncommitted changes in range, in key order.
   size_t _next_delta = 0;
   std::optional<BytesConstView> _value;
 };
 
-// All records of a collection in a snapshot, in no particular order.
+// All records of a collection, in no particular order. Over a transaction it includes the
+// transaction's uncommitted changes, and writing or committing during the scan ends its validity.
 class ScanCursor {
  public:
   ScanCursor(const EngineSnapshot& snapshot, size_t collection);
+  ScanCursor(const Transaction& txn, size_t collection);
   bool Valid() const noexcept { return _value.has_value(); }
   std::string_view key() const noexcept { return _key; }
   BytesConstView value() const noexcept { return *_value; }
@@ -457,6 +528,9 @@ class ScanCursor {
   uint64_t _seq;
   const internal::RecordTable::Slots* _slots;
   size_t _next = 0;
+  const Transaction* _txn = nullptr;  // Set for a scan with uncommitted changes.
+  size_t _collection = 0;
+  size_t _next_write = 0;
   std::string_view _key;
   std::optional<BytesConstView> _value;
 };
@@ -475,7 +549,7 @@ class Transaction {
   Transaction& operator=(Transaction&&) = delete;
 
   std::optional<BytesConstView> Get(size_t collection, BytesConstView key) const noexcept;
-  void Put(size_t collection, BytesConstView key, BytesConstView value);
+  absl::Status Put(size_t collection, BytesConstView key, BytesConstView value);
   absl::Status Update(size_t collection, BytesConstView key, const MessagePatch& patch);
   absl::Status Delete(size_t collection, BytesConstView key);
 
@@ -487,6 +561,7 @@ class Transaction {
  private:
   friend class Engine;
   friend class IndexCursor;
+  friend class ScanCursor;
 
   struct PendingWrite {
     size_t collection;
@@ -506,6 +581,9 @@ class Transaction {
   PendingWrite* FindPending(size_t collection, std::string_view key) const noexcept;
   void SetPending(size_t collection, uint64_t hash, std::string_view key, internal::Version* value,
                   std::string patch = {});
+  // Replaying a log does not check unique indices: the primary did, and its schema decides.
+  void PutUnchecked(size_t collection, BytesConstView key, BytesConstView value);
+  absl::Status CheckUnique(size_t collection, std::string_view key, BytesConstView value) const;
   // Whether the log would hold this collection's changes.
   bool IsLogged(size_t collection) const noexcept;
   // Replays a logged patch, and checks that it gives the record the primary had.

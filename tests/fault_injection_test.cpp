@@ -477,6 +477,47 @@ TEST(FaultInjectionTest, PowerLossWhileInstallingACheckpoint) {
   }
 }
 
+// Wherever the power goes out during a backup, what is there afterwards is either nothing or whole.
+TEST(FaultInjectionTest, PowerLossDuringABackupNeverLeavesAPartialOne) {
+  const auto with_data = [] {
+    auto file_system = std::make_shared<MemoryFileSystem>();
+    auto db = Db::Open(Options(file_system));
+    EXPECT_TRUE(db.ok());
+    Workload workload;
+    workload.checkpoint_every = 0;
+    workload.Run(**db, 10);
+    return file_system;
+  };
+  uint64_t total_operations;
+  {
+    auto file_system = with_data();
+    auto db = Db::Open(Options(file_system));
+    ASSERT_TRUE(db.ok());
+    const uint64_t before = file_system->operations();
+    ASSERT_TRUE((*db)->engine().Backup("/backup").ok());
+    total_operations = file_system->operations() - before;
+  }
+  for (uint64_t at = 0; at <= total_operations; ++at) {
+    for (Loss loss : {Loss::kAllUnsynced, Loss::kPartOfUnsynced}) {
+      auto file_system = with_data();
+      auto db = Db::Open(Options(file_system));
+      ASSERT_TRUE(db.ok());
+      file_system->CrashAfter(at);
+      const auto info = (*db)->engine().Backup("/backup");
+      db->reset();
+      file_system->PowerLoss(loss, static_cast<uint32_t>(at));
+      SCOPED_TRACE(absl::StrCat("Crash at operation ", at, ", loss ", static_cast<int>(loss)));
+      DbOptions options = Options(file_system);
+      options.path = "/backup";
+      auto restored = Db::Open(options);
+      ASSERT_TRUE(restored.ok()) << restored.status();
+      if (info.ok()) {
+        EXPECT_EQ((*restored)->engine().Stats().lsn, info->lsn);
+      }
+    }
+  }
+}
+
 class RecordingObserver final : public gendb::EngineObserver {
  public:
   void OnLog(gendb::LogLevel level, std::string_view message) override {
