@@ -3,6 +3,7 @@
 #pragma once
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -105,13 +106,42 @@ enum IndexId {
 };
 
 {% endif %}
-struct DbOptions {
-  // RocksDB directory, created if missing.
-  std::string path;
-  // Whether Commit returns only after an fsync.
-  bool sync_commits = true;
-  // Keep every change in a durable log, for engine().ReadChanges.
-  bool change_log = false;
+using DbOptions = gendb::EngineOptions;
+
+// What a commit did to one record, valid only during the callback. Whole messages before and after
+// are available, and the *_changed() methods compare one field across them. On insert or delete
+// the missing side reads as an empty message.
+{% for coll in collections if not coll.private %}
+class {{ coll.type }}Change {
+ public:
+  explicit {{ coll.type }}Change(const gendb::Change& change)
+      : _change(&change),
+        _before(change.before.value_or(gendb::BytesConstView{})),
+        _after(change.after.value_or(gendb::BytesConstView{})) {}
+
+  gendb::ChangeKind kind() const { return _change->kind(); }
+  gendb::BytesConstView key() const { return _change->key; }
+  const {{ coll.type }}& before() const { return _before; }
+  const {{ coll.type }}& after() const { return _after; }
+{% for field in coll.fields %}
+  bool {{ field }}_changed() const { return _before.has_{{ field }}() != _after.has_{{ field }}() || _before.{{ field }}() != _after.{{ field }}(); }
+{% endfor %}
+
+ private:
+  const gendb::Change* _change;
+  {{ coll.type }} _before;
+  {{ coll.type }} _after;
+};
+
+{% endfor %}
+// Set the handlers of the collections to follow. All run on one thread, in commit order, so changes
+// to different collections keep their order.
+struct ChangeHandlers {
+{% for coll in collections if not coll.private %}
+  std::function<void(const {{ coll.type }}Change&)> on_{{ coll.type_snake_case }};
+{% endfor %}
+  // After the changes of each commit that had any, for acting on a commit as a whole.
+  std::function<void(uint64_t seq)> on_commit;
 };
 
 class Db {
@@ -125,7 +155,9 @@ class Db {
   Snapshot CreateSnapshot() const;
   // The single writer: blocks until any other writer is done.
   ScopedWrite CreateWriter();
-  // Change listeners, the durable change log, and stats.
+  // Delivers changes committed after this call until the returned handle is destroyed.
+  gendb::Subscription Subscribe(ChangeHandlers handlers, gendb::SubscribeOptions options = {});
+  // Durability controls, stats, and the handle replication attaches to.
   gendb::Engine& engine() { return *_engine; }
 
  private:

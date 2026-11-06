@@ -1,6 +1,8 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -10,13 +12,16 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "absl/container/btree_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "gendb/bytes.h"
+#include "gendb/log_format.h"
 #include "gendb/message.h"
 #include "gendb/ordered_index.h"
 #include "gendb/record_table.h"
@@ -24,12 +29,24 @@
 // Transactional storage under the generated Db classes. docs/storage_engine.md is the design.
 namespace gendb {
 
-class RocksDbBackend;
+class EngineSnapshot;
 class Transaction;
+class Subscription;
+class ReplicationServer;
+class Replica;
+
+namespace internal {
+class CheckpointStage;
+class FrameSource;
+class Wal;
+class WalCursor;
+struct Subscriber;
+}  // namespace internal
 
 struct CollectionDef {
   std::string name;
-  // Ephemeral collections behave like any other, but are never written to disk.
+  // Ephemeral collections behave like any other, but stay out of the WAL, checkpoints and
+  // replication.
   bool ephemeral = false;
 };
 
@@ -47,13 +64,34 @@ struct EngineSchema {
 };
 
 struct EngineOptions {
-  // RocksDB directory, created if missing.
+  // Database directory, created if missing. Open it from one process at a time.
   std::string path;
-  // Whether Commit returns only after an fsync. Without it, a crash can lose the latest commits
-  // but keeps a consistent prefix of them; see Engine::SyncWal.
+
+  // True: durable. Commit returns after an fsync, and a commit survives power loss.
+  // False: non-durable. Commit returns after handing the data to the OS: a commit survives the
+  // process dying, but power loss can lose the latest ones, always leaving a consistent prefix.
+  // CommitOptions::sync overrides this per commit.
   bool sync_commits = true;
-  // Keep every change in a durable log, for Engine::ReadChanges. Doubles the bytes written.
-  bool change_log = false;
+  // With non-durable commits, how often a background thread fsyncs the log, which bounds what
+  // power loss can take. Zero leaves it to Engine::SyncWal.
+  std::chrono::milliseconds background_sync_interval{0};
+
+  uint64_t wal_segment_bytes = uint64_t{64} << 20;
+  // Automatic compaction: a background checkpoint starts once the log grows by this many bytes, or
+  // by the size of the last checkpoint if larger, which keeps total disk writes below about twice
+  // the log's size. Zero leaves it to Engine::Checkpoint.
+  uint64_t checkpoint_wal_bytes = uint64_t{256} << 20;
+  // Log kept past the latest checkpoint, so that a replica reconnecting after a short absence does
+  // not need a whole checkpoint.
+  uint64_t wal_retain_bytes = uint64_t{64} << 20;
+  // Log kept for connected replicas that fall behind. Past it, they are sent a new checkpoint.
+  uint64_t wal_replica_limit_bytes = uint64_t{4} << 30;
+
+  // Follows a primary through a Replica: only ephemeral collections accept local commits.
+  bool replica = false;
+  // Open fails if the database holds a collection the schema does not have, unless this is set, in
+  // which case that collection is dropped for good by the next checkpoint.
+  bool discard_unknown_collections = false;
 };
 
 struct CommitOptions {
@@ -61,50 +99,83 @@ struct CommitOptions {
   std::optional<bool> sync;
 };
 
-// One record changed by a commit. The views are valid only during the callback.
+enum class ChangeKind { kInsert, kUpdate, kDelete };
+
+// One record changed by a commit: its whole state before and after. Comparing them tells what
+// changed, for a Put as much as for an Update; generated code offers it per field.
 struct Change {
   size_t collection;
-  bool deleted;
   BytesConstView key;
-  BytesConstView value;  // Empty if deleted.
+  std::optional<BytesConstView> before;  // Absent on insert.
+  std::optional<BytesConstView> after;   // Absent on delete.
+
+  ChangeKind kind() const noexcept {
+    if (!before.has_value()) return ChangeKind::kInsert;
+    return after.has_value() ? ChangeKind::kUpdate : ChangeKind::kDelete;
+  }
 };
 
+// The views are valid only during the callback.
 struct CommitEvent {
-  uint64_t seq;
+  uint64_t seq;  // An ever-growing commit number within this process.
   std::span<const Change> changes;
 };
 
-using ChangeListener = std::function<void(const CommitEvent&)>;
+using ChangeCallback = std::function<void(const CommitEvent&)>;
+
+enum class Delivery {
+  // A dedicated thread, in commit order, after Commit returned or soon before. The callback can do
+  // anything, including commit. Each change is copied. Once the queue is full, new transactions
+  // wait for it to drain, so a slow subscriber slows writers but never loses a change.
+  kQueued,
+  // During Commit, on the writer's thread, with the writer lock held: no copies and no lag, but a
+  // slow callback delays every writer, and a callback must not start a transaction.
+  kInline,
+};
+
+struct SubscribeOptions {
+  std::vector<size_t> collections;  // Empty means all of them.
+  Delivery delivery = Delivery::kQueued;
+  size_t max_queue_bytes = size_t{64} << 20;
+};
 
 struct EngineStats {
   uint64_t committed_seq;
+  uint64_t lsn;             // Commits that reached the log; ephemeral ones do not count.
+  uint64_t synced_lsn;      // Commits known to be on stable storage.
+  uint64_t checkpoint_lsn;  // The latest checkpoint's position.
+  uint64_t checkpoint_bytes;
+  uint64_t wal_bytes;
   size_t active_snapshots;
-  size_t pending_garbage;  // Old versions and removed entries kept for active snapshots.
+  size_t pending_garbage;         // Old versions and removed entries kept for active snapshots.
+  absl::Status background_error;  // The latest background checkpoint or sync failure.
 };
 
 class Engine {
  public:
   // In memory only: there is nothing to recover, and all data is ephemeral.
   explicit Engine(EngineSchema schema);
-  // Recovers committed state from `options.path`, rebuilding indices.
+  // Loads the latest checkpoint from `options.path`, then replays the log after it.
   static absl::StatusOr<std::unique_ptr<Engine>> Open(EngineSchema schema, EngineOptions options);
   ~Engine();
   Engine(const Engine&) = delete;
   Engine& operator=(const Engine&) = delete;
 
-  // Called during Commit, in commit order, while the writer lock is held. It can read through a
-  // snapshot but cannot start a transaction, and a slow listener delays every writer.
-  void AddChangeListener(ChangeListener listener);
-
-  // With EngineOptions::change_log, calls `fn` for each durable change with seq > `after_seq`, in
-  // commit order. Stops early if `fn` returns false. Ephemeral collections are not logged.
-  absl::Status ReadChanges(uint64_t after_seq,
-                           const std::function<bool(uint64_t seq, const Change&)>& fn) const;
-  // Drops durable changes with seq <= `up_to_seq`, once every consumer has them.
-  absl::Status TruncateChanges(uint64_t up_to_seq);
+  // Calls `callback` with each commit that changes one of the chosen collections, leaving out the
+  // others. Changes committed before this call are not delivered. The subscription ends with the
+  // returned handle.
+  Subscription Subscribe(ChangeCallback callback, SubscribeOptions options = {});
 
   // Makes every finished commit durable.
   absl::Status SyncWal();
+  // Writes the current state to a new checkpoint and removes the log it supersedes. Writers and
+  // readers keep running, though versions replaced meanwhile stay in memory until it ends. Blocks
+  // until any open Transaction ends, so do not call it while holding one.
+  absl::Status Checkpoint();
+
+  // Ends follower mode, for failover: stop the Replica first. Starts a new history, so anyone
+  // still following the old one gets a full checkpoint from here.
+  absl::Status PromoteToPrimary();
 
   EngineStats Stats() const;
 
@@ -113,10 +184,18 @@ class Engine {
   friend class Transaction;
   friend class IndexCursor;
   friend class ScanCursor;
+  friend class Subscription;
+  friend class ReplicationServer;
+  friend class Replica;
+  friend struct internal::Subscriber;
+
+  class CheckpointLoader;
+  class CommitRing;
 
   struct Collection {
     internal::RecordTable table;
     std::vector<size_t> indices;
+    uint32_t id;  // In frames.
   };
   struct Garbage {
     enum Kind {
@@ -132,8 +211,12 @@ class Engine {
     void* ptr;
     size_t owner;
   };
+  struct LogPosition {
+    internal::HistoryId history;
+    uint64_t lsn;
+  };
 
-  Engine(EngineSchema schema, std::unique_ptr<RocksDbBackend> backend, bool sync, bool change_log);
+  Engine(EngineSchema schema, EngineOptions options);
   absl::Status Recover();
   uint64_t PinSnapshot() const;
   void UnpinSnapshot(uint64_t seq) const noexcept;
@@ -142,22 +225,131 @@ class Engine {
   internal::RecordNode* NodeForWrite(size_t collection, uint64_t hash, std::string_view key,
                                      uint64_t seq);
   void Reclaim(uint64_t up_to_seq) noexcept;
+  void ReclaimUnpinned(uint64_t seq) noexcept;
+  std::optional<size_t> FindCollection(uint32_t id) const noexcept;
+
+  // Writer thread.
+  std::unique_lock<std::mutex> AcquireWriter();
+  // For brief maintenance, such as a checkpoint's start: goes ahead of the transactions waiting,
+  // as a busy writer retaking the mutex could otherwise keep it away for good.
+  std::unique_lock<std::mutex> AcquireWriterFirst();
+  void Notify(uint64_t seq, std::span<const Change> changes);
+  void AfterCommit(uint64_t wal_bytes);
+  void UpdateIndexNow(size_t collection, std::string_view key, std::optional<BytesConstView> before,
+                      std::optional<BytesConstView> after, uint64_t seq);
+  // Replays one commit frame through `txn`.
+  absl::Status ApplyCommitFrame(Transaction& txn, const internal::Frame& frame);
+
+  // Compaction.
+  absl::Status ExportCheckpoint(const EngineSnapshot& snapshot, const LogPosition& position,
+                                const std::function<absl::Status(std::string_view)>& sink) const;
+  absl::Status PurgeWal();
+  void RemoveCheckpointsBelow(uint64_t lsn) const;
+  void BackgroundLoop();
+  void RecordBackgroundError(absl::Status status);
+
+  // Subscriptions.
+  void Unsubscribe(const std::shared_ptr<internal::Subscriber>& subscriber);
+  void WaitForSubscriberRoom();
+
+  // Replication, for ReplicationServer and Replica.
+  void EnableCommitRing(size_t capacity_bytes);
+  LogPosition Position();
+  uint64_t history_generation() const noexcept {
+    return _history_generation.load(std::memory_order_acquire);
+  }
+  bool CanReadLogAfter(uint64_t lsn) const;
+  uint64_t PinWal(uint64_t lsn);
+  void UpdateWalPin(uint64_t pin, uint64_t lsn);
+  void UnpinWal(uint64_t pin);
+  // Copies commits after `*position`, if any and synced, and advances it. OutOfRange if the next
+  // commit is no longer available.
+  absl::StatusOr<bool> ReadLog(uint64_t* position, size_t max_bytes, std::string* out,
+                               std::unique_ptr<internal::WalCursor>* cursor);
+  void WaitForLog(uint64_t after, std::chrono::milliseconds timeout) const;
+  void WakeLogWaiters() const;
+  void BecomeReplica() noexcept { _replica.store(true, std::memory_order_release); }
+  absl::StatusOr<std::unique_ptr<internal::CheckpointStage>> NewCheckpointStage() const;
+  // Atomically replaces all durable collections with the checkpoint in `stage`. Readers see the
+  // old state until the new one is whole.
+  absl::Status InstallCheckpoint(internal::CheckpointStage& stage, const LogPosition& position);
+  // Logs and applies whole commit frames from a primary, which must continue this engine's log.
+  absl::Status ApplyReplicated(std::string_view frames);
 
   const EngineSchema _schema;
-  std::unique_ptr<RocksDbBackend> _backend;
-  const bool _sync_commits;
-  const bool _change_log;
+  const EngineOptions _options;
   std::vector<std::unique_ptr<Collection>> _collections;
+  std::vector<std::pair<uint32_t, size_t>> _collection_ids;  // Sorted.
   std::vector<std::unique_ptr<internal::OrderedIndex>> _indices;
 
   std::mutex _writer_mutex;  // Held by a Transaction for its whole life.
+  std::atomic<int> _writers_going_first{0};
   std::atomic<uint64_t> _committed_seq{0};
   std::deque<Garbage> _garbage;  // Writer only, ordered by seq.
   std::atomic<size_t> _garbage_size{0};
-  std::vector<ChangeListener> _listeners;
+  std::string _commit_buffer;                  // Writer only.
+  std::string _old_index_key, _new_index_key;  // Writer only: scratch for UpdateIndexNow.
+  uint32_t _install_epoch = 0;                 // Writer only.
+
+  std::atomic<uint64_t> _lsn{0};  // Written under the writer lock.
+  internal::HistoryId _history;   // Under the writer lock.
+  std::atomic<uint64_t> _history_generation{0};
+  std::atomic<bool> _replica;
+  std::unique_ptr<CommitRing> _ring;
+
+  // Persistence; null in memory.
+  std::unique_ptr<internal::Wal> _wal;
+  int _lock_fd = -1;
+  std::mutex _checkpoint_mutex;  // Serializes checkpoints. Taken before the writer lock.
+  std::atomic<uint64_t> _checkpoint_lsn{0};
+  std::atomic<uint64_t> _checkpoint_bytes{0};
+  std::atomic<uint64_t> _wal_bytes_since_checkpoint{0};
+  mutable std::mutex _wal_pins_mutex;
+  std::vector<std::pair<uint64_t, uint64_t>> _wal_pins;  // Pin ID to the LSN it keeps.
+  uint64_t _next_wal_pin = 1;
+
+  // The background thread.
+  std::thread _background;
+  mutable std::mutex _background_mutex;
+  std::condition_variable _background_cv;
+  bool _background_stop = false;
+  std::atomic<bool> _checkpoint_requested{false};
+  absl::Status _background_error;
+
+  // Under the writer lock.
+  std::vector<std::shared_ptr<internal::Subscriber>> _subscribers;
+  // How many queued subscribers are over their limit; new writers wait while it is above zero.
+  std::atomic<int> _subscribers_over_limit{0};
+  std::mutex _room_mutex;
+  std::condition_variable _room_cv;
 
   mutable std::mutex _snapshots_mutex;
   mutable absl::btree_map<uint64_t, uint32_t> _snapshots;  // Pinned seq to reader count.
+};
+
+// A live subscription: destroying it cancels it. Do that outside its own callback.
+class Subscription {
+ public:
+  Subscription() = default;
+  ~Subscription() { Cancel(); }
+  Subscription(Subscription&&) noexcept = default;
+  Subscription& operator=(Subscription&& other) noexcept {
+    Cancel();
+    _subscriber = std::move(other._subscriber);
+    return *this;
+  }
+
+  // Waits for a callback in progress. Undelivered queued changes are dropped.
+  void Cancel();
+  // Blocks until the callback has seen every commit made before this call.
+  void WaitUntilDelivered() const;
+
+ private:
+  friend class Engine;
+  explicit Subscription(std::shared_ptr<internal::Subscriber> subscriber)
+      : _subscriber(std::move(subscriber)) {}
+
+  std::shared_ptr<internal::Subscriber> _subscriber;
 };
 
 // A consistent, repeatable view of committed state. Opening one takes a short mutex; reads take no
@@ -224,6 +416,7 @@ class ScanCursor {
  public:
   ScanCursor(const EngineSnapshot& snapshot, size_t collection);
   bool Valid() const noexcept { return _value.has_value(); }
+  std::string_view key() const noexcept { return _key; }
   BytesConstView value() const noexcept { return *_value; }
   void Next() noexcept;
 
@@ -231,6 +424,7 @@ class ScanCursor {
   uint64_t _seq;
   const internal::RecordTable::Slots* _slots;
   size_t _next = 0;
+  std::string_view _key;
   std::optional<BytesConstView> _value;
 };
 
@@ -258,13 +452,15 @@ class Transaction {
   void Rollback() noexcept;
 
  private:
+  friend class Engine;
   friend class IndexCursor;
 
   struct PendingWrite {
     size_t collection;
     uint64_t hash;
     std::string key;
-    internal::Version* version;  // Owned until the commit publishes it.
+    internal::Version* version;  // Owned until the commit publishes it; null if it changes nothing.
+    internal::RecordNode* node;  // Set when the commit starts; null for a record not yet in memory.
   };
   struct IndexDelta {
     bool added;
@@ -276,6 +472,13 @@ class Transaction {
   void SetPending(size_t collection, uint64_t hash, std::string_view key, internal::Version* value);
   void UpdateIndices(size_t collection, std::string_view key, std::optional<BytesConstView> before,
                      std::optional<BytesConstView> after);
+  // Drops deletions of keys that do not exist. Returns whether anything is left to commit, and
+  // whether it reaches the log.
+  std::pair<bool, bool> ResolveWrites() noexcept;
+  // Links the writes into memory and publishes them. `frame` is the encoded commit, if logged.
+  void Publish(bool logged, uint64_t lsn, std::string_view frame);
+  // Commits writes that came from a log, already durable or about to be.
+  void CommitReplayed(uint64_t lsn, std::string_view frame);
 
   Engine* _engine;
   std::unique_lock<std::mutex> _lock;

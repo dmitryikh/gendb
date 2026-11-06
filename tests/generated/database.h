@@ -3,6 +3,7 @@
 #pragma once
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -99,13 +100,158 @@ enum IndexId {
   PositionByAccountIdIndexId = 1,
 };
 
-struct DbOptions {
-  // RocksDB directory, created if missing.
-  std::string path;
-  // Whether Commit returns only after an fsync.
-  bool sync_commits = true;
-  // Keep every change in a durable log, for engine().ReadChanges.
-  bool change_log = false;
+using DbOptions = gendb::EngineOptions;
+
+// What a commit did to one record, valid only during the callback. Whole messages before and after
+// are available, and the *_changed() methods compare one field across them. On insert or delete
+// the missing side reads as an empty message.
+class AccountChange {
+ public:
+  explicit AccountChange(const gendb::Change& change)
+      : _change(&change),
+        _before(change.before.value_or(gendb::BytesConstView{})),
+        _after(change.after.value_or(gendb::BytesConstView{})) {}
+
+  gendb::ChangeKind kind() const { return _change->kind(); }
+  gendb::BytesConstView key() const { return _change->key; }
+  const Account& before() const { return _before; }
+  const Account& after() const { return _after; }
+  bool account_id_changed() const {
+    return _before.has_account_id() != _after.has_account_id() ||
+           _before.account_id() != _after.account_id();
+  }
+  bool trader_id_changed() const {
+    return _before.has_trader_id() != _after.has_trader_id() ||
+           _before.trader_id() != _after.trader_id();
+  }
+  bool name_changed() const {
+    return _before.has_name() != _after.has_name() || _before.name() != _after.name();
+  }
+  bool address_changed() const {
+    return _before.has_address() != _after.has_address() || _before.address() != _after.address();
+  }
+  bool age_changed() const {
+    return _before.has_age() != _after.has_age() || _before.age() != _after.age();
+  }
+  bool is_active_changed() const {
+    return _before.has_is_active() != _after.has_is_active() ||
+           _before.is_active() != _after.is_active();
+  }
+  bool balance_changed() const {
+    return _before.has_balance() != _after.has_balance() || _before.balance() != _after.balance();
+  }
+  bool config_name_changed() const {
+    return _before.has_config_name() != _after.has_config_name() ||
+           _before.config_name() != _after.config_name();
+  }
+
+ private:
+  const gendb::Change* _change;
+  Account _before;
+  Account _after;
+};
+
+class PositionChange {
+ public:
+  explicit PositionChange(const gendb::Change& change)
+      : _change(&change),
+        _before(change.before.value_or(gendb::BytesConstView{})),
+        _after(change.after.value_or(gendb::BytesConstView{})) {}
+
+  gendb::ChangeKind kind() const { return _change->kind(); }
+  gendb::BytesConstView key() const { return _change->key; }
+  const Position& before() const { return _before; }
+  const Position& after() const { return _after; }
+  bool position_id_changed() const {
+    return _before.has_position_id() != _after.has_position_id() ||
+           _before.position_id() != _after.position_id();
+  }
+  bool account_id_changed() const {
+    return _before.has_account_id() != _after.has_account_id() ||
+           _before.account_id() != _after.account_id();
+  }
+  bool volume_changed() const {
+    return _before.has_volume() != _after.has_volume() || _before.volume() != _after.volume();
+  }
+  bool instrument_changed() const {
+    return _before.has_instrument() != _after.has_instrument() ||
+           _before.instrument() != _after.instrument();
+  }
+  bool open_price_changed() const {
+    return _before.has_open_price() != _after.has_open_price() ||
+           _before.open_price() != _after.open_price();
+  }
+  bool direction_changed() const {
+    return _before.has_direction() != _after.has_direction() ||
+           _before.direction() != _after.direction();
+  }
+
+ private:
+  const gendb::Change* _change;
+  Position _before;
+  Position _after;
+};
+
+class ConfigChange {
+ public:
+  explicit ConfigChange(const gendb::Change& change)
+      : _change(&change),
+        _before(change.before.value_or(gendb::BytesConstView{})),
+        _after(change.after.value_or(gendb::BytesConstView{})) {}
+
+  gendb::ChangeKind kind() const { return _change->kind(); }
+  gendb::BytesConstView key() const { return _change->key; }
+  const Config& before() const { return _before; }
+  const Config& after() const { return _after; }
+  bool config_name_changed() const {
+    return _before.has_config_name() != _after.has_config_name() ||
+           _before.config_name() != _after.config_name();
+  }
+  bool max_trade_volume_changed() const {
+    return _before.has_max_trade_volume() != _after.has_max_trade_volume() ||
+           _before.max_trade_volume() != _after.max_trade_volume();
+  }
+
+ private:
+  const gendb::Change* _change;
+  Config _before;
+  Config _after;
+};
+
+class SessionChange {
+ public:
+  explicit SessionChange(const gendb::Change& change)
+      : _change(&change),
+        _before(change.before.value_or(gendb::BytesConstView{})),
+        _after(change.after.value_or(gendb::BytesConstView{})) {}
+
+  gendb::ChangeKind kind() const { return _change->kind(); }
+  gendb::BytesConstView key() const { return _change->key; }
+  const Session& before() const { return _before; }
+  const Session& after() const { return _after; }
+  bool session_id_changed() const {
+    return _before.has_session_id() != _after.has_session_id() ||
+           _before.session_id() != _after.session_id();
+  }
+  bool token_changed() const {
+    return _before.has_token() != _after.has_token() || _before.token() != _after.token();
+  }
+
+ private:
+  const gendb::Change* _change;
+  Session _before;
+  Session _after;
+};
+
+// Set the handlers of the collections to follow. All run on one thread, in commit order, so changes
+// to different collections keep their order.
+struct ChangeHandlers {
+  std::function<void(const AccountChange&)> on_account;
+  std::function<void(const PositionChange&)> on_position;
+  std::function<void(const ConfigChange&)> on_config;
+  std::function<void(const SessionChange&)> on_session;
+  // After the changes of each commit that had any, for acting on a commit as a whole.
+  std::function<void(uint64_t seq)> on_commit;
 };
 
 class Db {
@@ -119,7 +265,9 @@ class Db {
   Snapshot CreateSnapshot() const;
   // The single writer: blocks until any other writer is done.
   ScopedWrite CreateWriter();
-  // Change listeners, the durable change log, and stats.
+  // Delivers changes committed after this call until the returned handle is destroyed.
+  gendb::Subscription Subscribe(ChangeHandlers handlers, gendb::SubscribeOptions options = {});
+  // Durability controls, stats, and the handle replication attaches to.
   gendb::Engine& engine() { return *_engine; }
 
  private:

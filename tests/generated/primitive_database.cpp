@@ -33,8 +33,7 @@ absl::Status ToMessage(std::optional<gendb::BytesConstView> value, T& message) {
 Db::Db() : _engine(std::make_unique<gendb::Engine>(MakeSchema())) {}
 
 absl::StatusOr<std::unique_ptr<Db>> Db::Open(const DbOptions& options) {
-  auto engine =
-      gendb::Engine::Open(MakeSchema(), {options.path, options.sync_commits, options.change_log});
+  auto engine = gendb::Engine::Open(MakeSchema(), options);
   if (!engine.ok()) return engine.status();
   return std::unique_ptr<Db>(new Db(std::move(*engine)));
 }
@@ -45,6 +44,28 @@ Snapshot Db::CreateSnapshot() const {
 
 ScopedWrite Db::CreateWriter() {
   return ScopedWrite(*_engine);
+}
+
+gendb::Subscription Db::Subscribe(ChangeHandlers handlers, gendb::SubscribeOptions options) {
+  options.collections.clear();
+  if (handlers.on_message_a) options.collections.push_back(MessageACollId);
+  if (options.collections.empty()) {
+    options.collections.push_back(MessageACollId);
+  }
+  return _engine->Subscribe(
+      [handlers = std::move(handlers)](const gendb::CommitEvent& event) {
+        for (const gendb::Change& change : event.changes) {
+          switch (change.collection) {
+            case MessageACollId:
+              if (handlers.on_message_a) handlers.on_message_a(MessageAChange(change));
+              break;
+            default:
+              break;
+          }
+        }
+        if (handlers.on_commit) handlers.on_commit(event.seq);
+      },
+      std::move(options));
 }
 
 absl::Status Snapshot::GetMetadataValue(const MetadataValueKey& key,

@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package gendb.replication;
+
+// One replica's session. The messages are opaque here: see gendb/replication.h.
+service Replication {
+  rpc Session(stream Message) returns (stream Message);
+}
+
+message Message {
+  bytes payload = 1;
+}

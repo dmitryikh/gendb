@@ -38,6 +38,28 @@ target_link_libraries(database_test PRIVATE gendb_lib GTest::gtest_main GTest::g
 add_dependencies(database_test codegen db_codegen primitive_db_codegen)
 add_test(NAME database_test COMMAND database_test)
 
+# Replication, over an in-process transport and raw TCP, and over gRPC when available.
+add_executable(replication_test
+    replication_test.cpp
+    generated/database.h
+    generated/database.cpp
+)
+target_include_directories(replication_test PRIVATE ${CMAKE_SOURCE_DIR}/examples)
+target_link_libraries(replication_test PRIVATE gendb_lib GTest::gtest_main GTest::gmock)
+add_dependencies(replication_test codegen db_codegen)
+add_test(NAME replication_test COMMAND replication_test)
+
+if(TARGET gendb_replication_grpc)
+    add_executable(replication_grpc_test
+        replication_grpc_test.cpp
+        generated/database.h
+        generated/database.cpp
+    )
+    target_link_libraries(replication_grpc_test PRIVATE gendb_replication_grpc GTest::gtest_main)
+    add_dependencies(replication_grpc_test codegen db_codegen)
+    add_test(NAME replication_grpc_test COMMAND replication_grpc_test)
+endif()
+
 # Primitive database test
 add_executable(primitive_database_test
     primitive_database_test.cpp

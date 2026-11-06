@@ -1,12 +1,19 @@
-// Database benchmarks through the generated API. Results: benchmarks/reference/db.md.
+// Database benchmarks through the generated API. Results: benchmarks/reference/db.txt.
 #include <benchmark/benchmark.h>
 
+#include <chrono>
+#include <condition_variable>
+#include <deque>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
+#include <vector>
 
 #include "account.fbs.h"
 #include "database.h"
+#include "gendb/replication.h"
 
 namespace {
 
@@ -127,6 +134,28 @@ void CommitUnderSnapshot(benchmark::State& state) {
 }
 BENCHMARK(CommitUnderSnapshot);
 
+// Delivery to a subscriber that does nothing; state.range(0) picks the delivery.
+void CommitWithSubscriber(benchmark::State& state) {
+  Db db;
+  Fill(db);
+  gendb::SubscribeOptions options;
+  options.delivery = state.range(0) != 0 ? gendb::Delivery::kQueued : gendb::Delivery::kInline;
+  auto subscription = db.Subscribe({.on_account =
+                                        [](const gendb::tests::AccountChange& change) {
+                                          benchmark::DoNotOptimize(change.balance_changed());
+                                        }},
+                                   options);
+  uint64_t i = 0;
+  for (auto _ : state) {
+    auto writer = db.CreateWriter();
+    (void)writer.UpdateAccount(Scatter(i), AccountPatchBuilder().set_balance(float(i)).Build());
+    (void)writer.Commit();
+    ++i;
+  }
+  subscription.WaitUntilDelivered();
+}
+BENCHMARK(CommitWithSubscriber)->ArgName("queued")->Arg(0)->Arg(1);
+
 // A persistent database; state.range(0) says whether each commit is fsynced.
 void PersistentCommit(benchmark::State& state) {
   const std::string path = (std::filesystem::temp_directory_path() / "gendb_benchmark").string();
@@ -149,6 +178,30 @@ void PersistentCommit(benchmark::State& state) {
 }
 BENCHMARK(PersistentCommit)->Arg(0)->Arg(1);
 
+void CheckpointWrite(benchmark::State& state) {
+  const std::string path =
+      (std::filesystem::temp_directory_path() / "gendb_benchmark_checkpoint").string();
+  std::filesystem::remove_all(path);
+  {
+    auto db = Db::Open({.path = path, .sync_commits = false, .checkpoint_wal_bytes = 0});
+    Fill(**db);
+    uint64_t i = 0;
+    for (auto _ : state) {
+      {
+        auto writer = (*db)->CreateWriter();
+        (void)writer.UpdateAccount(0, AccountPatchBuilder().set_balance(float(i++)).Build());
+        (void)writer.Commit();
+      }
+      (void)(*db)->engine().Checkpoint();
+    }
+    state.counters["bytes"] = static_cast<double>((*db)->engine().Stats().checkpoint_bytes);
+  }
+  state.SetItemsProcessed(state.iterations() * kRecords);
+  std::filesystem::remove_all(path);
+}
+BENCHMARK(CheckpointWrite)->Unit(benchmark::kMillisecond);
+
+// state.range(0) says whether the state is in a checkpoint rather than only in the log.
 void Recover(benchmark::State& state) {
   const std::string path =
       (std::filesystem::temp_directory_path() / "gendb_benchmark_recover").string();
@@ -156,6 +209,7 @@ void Recover(benchmark::State& state) {
   {
     auto db = Db::Open({.path = path, .sync_commits = false});
     Fill(**db);
+    if (state.range(0) != 0) (void)(*db)->engine().Checkpoint();
   }
   for (auto _ : state) {
     auto db = Db::Open({.path = path});
@@ -164,6 +218,123 @@ void Recover(benchmark::State& state) {
   state.SetItemsProcessed(state.iterations() * kRecords);
   std::filesystem::remove_all(path);
 }
-BENCHMARK(Recover)->Unit(benchmark::kMillisecond);
+BENCHMARK(Recover)->ArgName("from_checkpoint")->Arg(0)->Arg(1)->Unit(benchmark::kMillisecond);
+
+// An in-process transport, so that these measure replication and not a network.
+class Pipe {
+ public:
+  void Push(std::string message) {
+    {
+      std::lock_guard lock(_mutex);
+      _messages.push_back(std::move(message));
+    }
+    _cv.notify_one();
+  }
+  absl::Status Pop(std::string* message) {
+    std::unique_lock lock(_mutex);
+    _cv.wait(lock, [this] { return _closed || !_messages.empty(); });
+    if (_closed) return absl::UnavailableError("closed");
+    *message = std::move(_messages.front());
+    _messages.pop_front();
+    return absl::OkStatus();
+  }
+  void Close() {
+    {
+      std::lock_guard lock(_mutex);
+      _closed = true;
+    }
+    _cv.notify_all();
+  }
+
+ private:
+  std::mutex _mutex;
+  std::condition_variable _cv;
+  std::deque<std::string> _messages;
+  bool _closed = false;
+};
+
+class PipeConnection final : public gendb::Connection {
+ public:
+  PipeConnection(std::shared_ptr<Pipe> in, std::shared_ptr<Pipe> out)
+      : _in(std::move(in)), _out(std::move(out)) {}
+  absl::Status Send(std::string_view message) override {
+    _out->Push(std::string(message));
+    return absl::OkStatus();
+  }
+  absl::Status Receive(std::string* message) override { return _in->Pop(message); }
+  void Close() override {
+    _in->Close();
+    _out->Close();
+  }
+
+ private:
+  std::shared_ptr<Pipe> _in, _out;
+};
+
+// Serves one replica at a time, as a test double for a real server.
+class PipeServer {
+ public:
+  explicit PipeServer(gendb::Engine& engine) : _server(engine) {}
+  ~PipeServer() {
+    _server.Shutdown();
+    for (auto& thread : _threads) thread.join();
+  }
+  gendb::Connector connector() {
+    return [this]() -> absl::StatusOr<std::unique_ptr<gendb::Connection>> {
+      auto to_server = std::make_shared<Pipe>();
+      auto to_client = std::make_shared<Pipe>();
+      _threads.emplace_back([this, to_server, to_client] {
+        PipeConnection connection(to_server, to_client);
+        (void)_server.Serve(connection);
+      });
+      return std::unique_ptr<gendb::Connection>(new PipeConnection(to_client, to_server));
+    };
+  }
+
+ private:
+  gendb::ReplicationServer _server;
+  std::vector<std::thread> _threads;
+};
+
+// A new memory-only replica, from connecting to holding all 100,000 records with indices.
+void ReplicaSeed(benchmark::State& state) {
+  Db& primary = SharedDb();
+  PipeServer server(primary.engine());
+  // Fill does one commit, so the primary's LSN does not say how much data it has.
+  const uint64_t lsn = primary.engine().Stats().lsn;
+  for (auto _ : state) {
+    Db replica_db;
+    gendb::Replica replica(replica_db.engine(), server.connector());
+    if (!replica.WaitForLsn(lsn, std::chrono::seconds(60))) {
+      state.SkipWithError("Timed out");
+      return;
+    }
+  }
+  state.SetItemsProcessed(state.iterations() * kRecords);
+}
+BENCHMARK(ReplicaSeed)->Unit(benchmark::kMillisecond)->UseRealTime();
+
+// Commits on the primary until each is applied by a following replica, with no network.
+void ReplicaFollow(benchmark::State& state) {
+  Db primary;
+  Fill(primary);
+  PipeServer server(primary.engine());
+  Db replica_db;
+  gendb::Replica replica(replica_db.engine(), server.connector());
+  const auto patience = std::chrono::seconds(60);
+  (void)replica.WaitForLsn(primary.engine().Stats().lsn, patience);
+  uint64_t i = 0;
+  for (auto _ : state) {
+    {
+      auto writer = primary.CreateWriter();
+      (void)writer.UpdateAccount(Scatter(i), AccountPatchBuilder().set_balance(float(i)).Build());
+      (void)writer.Commit();
+    }
+    ++i;
+    if (i % 64 == 0) (void)replica.WaitForLsn(primary.engine().Stats().lsn, patience);
+  }
+  (void)replica.WaitForLsn(primary.engine().Stats().lsn, patience);
+}
+BENCHMARK(ReplicaFollow)->UseRealTime();
 
 }  // namespace

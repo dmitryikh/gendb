@@ -53,8 +53,7 @@ absl::Status ToMessage(std::optional<gendb::BytesConstView> value, T& message) {
 Db::Db() : _engine(std::make_unique<gendb::Engine>(MakeSchema())) {}
 
 absl::StatusOr<std::unique_ptr<Db>> Db::Open(const DbOptions& options) {
-  auto engine =
-      gendb::Engine::Open(MakeSchema(), {options.path, options.sync_commits, options.change_log});
+  auto engine = gendb::Engine::Open(MakeSchema(), options);
   if (!engine.ok()) return engine.status();
   return std::unique_ptr<Db>(new Db(std::move(*engine)));
 }
@@ -65,6 +64,43 @@ Snapshot Db::CreateSnapshot() const {
 
 ScopedWrite Db::CreateWriter() {
   return ScopedWrite(*_engine);
+}
+
+gendb::Subscription Db::Subscribe(ChangeHandlers handlers, gendb::SubscribeOptions options) {
+  options.collections.clear();
+  if (handlers.on_account) options.collections.push_back(AccountCollId);
+  if (handlers.on_position) options.collections.push_back(PositionCollId);
+  if (handlers.on_config) options.collections.push_back(ConfigCollId);
+  if (handlers.on_session) options.collections.push_back(SessionCollId);
+  if (options.collections.empty()) {
+    options.collections.push_back(AccountCollId);
+    options.collections.push_back(PositionCollId);
+    options.collections.push_back(ConfigCollId);
+    options.collections.push_back(SessionCollId);
+  }
+  return _engine->Subscribe(
+      [handlers = std::move(handlers)](const gendb::CommitEvent& event) {
+        for (const gendb::Change& change : event.changes) {
+          switch (change.collection) {
+            case AccountCollId:
+              if (handlers.on_account) handlers.on_account(AccountChange(change));
+              break;
+            case PositionCollId:
+              if (handlers.on_position) handlers.on_position(PositionChange(change));
+              break;
+            case ConfigCollId:
+              if (handlers.on_config) handlers.on_config(ConfigChange(change));
+              break;
+            case SessionCollId:
+              if (handlers.on_session) handlers.on_session(SessionChange(change));
+              break;
+            default:
+              break;
+          }
+        }
+        if (handlers.on_commit) handlers.on_commit(event.seq);
+      },
+      std::move(options));
 }
 
 absl::Status Snapshot::GetMetadataValue(const MetadataValueKey& key,

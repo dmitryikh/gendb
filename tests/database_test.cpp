@@ -2,14 +2,21 @@
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <algorithm>
+#include <array>
 #include <atomic>
+#include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <thread>
+#include <vector>
 
 #include "account.fbs.h"
+#include "config.fbs.h"
 #include "metadata.fbs.h"
 #include "position.fbs.h"
 #include "session.fbs.h"
@@ -792,8 +799,8 @@ class PersistentDbTest : public ::testing::Test {
   }
   void TearDown() override { std::filesystem::remove_all(_path); }
 
-  std::unique_ptr<Db> OpenDb(bool change_log = false) {
-    auto db = Db::Open({.path = _path, .sync_commits = true, .change_log = change_log});
+  std::unique_ptr<Db> OpenDb() {
+    auto db = Db::Open({.path = _path, .sync_commits = true});
     EXPECT_TRUE(db.ok()) << db.status();
     return db.ok() ? std::move(*db) : nullptr;
   }
@@ -895,63 +902,397 @@ TEST_F(PersistentDbTest, CrashKeepsCommittedAndDropsUncommitted) {
   EXPECT_FALSE(snapshot.GetAccount(3, account).ok());
 }
 
-TEST(ChangeCaptureTest, ListenerSeesEachCommitInOrder) {
-  Db db;
-  struct Seen {
-    uint64_t seq;
-    size_t collection;
-    bool deleted;
-    uint64_t account_id;
-  };
-  std::vector<Seen> seen;
-  db.engine().AddChangeListener([&seen](const gendb::CommitEvent& event) {
-    for (const gendb::Change& change : event.changes) {
-      seen.push_back(
-          {event.seq, change.collection, change.deleted, Account{change.value}.account_id()});
+TEST_F(PersistentDbTest, CheckpointRemovesTheLogItSupersedes) {
+  gendb::EngineOptions options{.path = _path, .wal_segment_bytes = 256, .wal_retain_bytes = 0};
+  {
+    auto db = Db::Open(options);
+    ASSERT_TRUE(db.ok()) << db.status();
+    {
+      auto writer = (*db)->CreateWriter();
+      for (uint64_t id = 0; id < 100; ++id) {
+        ASSERT_TRUE(
+            writer.PutAccount(id, AccountBuilder().set_account_id(id).set_age(7).Build()).ok());
+        ASSERT_TRUE(writer.Commit().ok());
+      }
+      ASSERT_TRUE(writer.DeleteAccount(5).ok());
+      ASSERT_TRUE(writer.Commit().ok());
     }
-  });
-  auto writer = db.CreateWriter();
-  ASSERT_TRUE(writer.PutAccount(7, AccountBuilder().set_account_id(7).Build()).ok());
-  ASSERT_TRUE(writer.Commit().ok());
-  ASSERT_TRUE(writer.DeleteAccount(7).ok());
-  ASSERT_TRUE(writer.Commit().ok());
+    const uint64_t before = (*db)->engine().Stats().wal_bytes;
+    ASSERT_TRUE((*db)->engine().Checkpoint().ok());
+    const gendb::EngineStats stats = (*db)->engine().Stats();
+    EXPECT_EQ(stats.checkpoint_lsn, 101u);
+    EXPECT_GT(stats.checkpoint_bytes, 0u);
+    EXPECT_LT(stats.wal_bytes, before / 4);
 
-  ASSERT_EQ(seen.size(), 2u);
-  EXPECT_EQ(seen[0].seq, 1u);
-  EXPECT_EQ(seen[0].collection, size_t{AccountCollId});
-  EXPECT_FALSE(seen[0].deleted);
-  EXPECT_EQ(seen[0].account_id, 7u);
-  EXPECT_EQ(seen[1].seq, 2u);
-  EXPECT_TRUE(seen[1].deleted);
+    // Commits after the checkpoint come from the log on the next open.
+    auto next = (*db)->CreateWriter();
+    ASSERT_TRUE(
+        next.PutAccount(1000, AccountBuilder().set_account_id(1000).set_age(7).Build()).ok());
+    ASSERT_TRUE(next.Commit().ok());
+  }
+  size_t checkpoints = 0;
+  for (const auto& entry : std::filesystem::directory_iterator(_path)) {
+    if (entry.path().filename().string().starts_with("checkpoint-")) ++checkpoints;
+  }
+  EXPECT_EQ(checkpoints, 1u);
+
+  auto db = Db::Open(options);
+  ASSERT_TRUE(db.ok()) << db.status();
+  EXPECT_EQ((*db)->engine().Stats().lsn, 102u);
+  auto snapshot = (*db)->CreateSnapshot();
+  Account account;
+  EXPECT_TRUE(snapshot.GetAccount(1000, account).ok());
+  EXPECT_TRUE(snapshot.GetAccount(99, account).ok());
+  EXPECT_FALSE(snapshot.GetAccount(5, account).ok());
+  size_t rows = 0;
+  for (auto it = snapshot.GetAccountByAgeEqual(7); it.Valid(); it.Next()) ++rows;
+  EXPECT_EQ(rows, 100u);
 }
 
-TEST_F(PersistentDbTest, ChangeLogReplaysAfterReopenAndTruncates) {
-  {
-    auto db = OpenDb(/*change_log=*/true);
-    auto writer = db->CreateWriter();
-    ASSERT_TRUE(writer.PutAccount(1, AccountBuilder().set_account_id(1).Build()).ok());
-    ASSERT_TRUE(writer.PutSession(1, SessionBuilder().set_session_id(1).Build()).ok());
-    ASSERT_TRUE(writer.Commit().ok());
-    ASSERT_TRUE(writer.DeleteAccount(1).ok());
+TEST_F(PersistentDbTest, BackgroundCheckpointRunsWhileWriting) {
+  auto db = Db::Open({.path = _path,
+                      .sync_commits = false,
+                      .wal_segment_bytes = 4096,
+                      .checkpoint_wal_bytes = 16384,
+                      .wal_retain_bytes = 0});
+  ASSERT_TRUE(db.ok()) << db.status();
+  for (uint64_t id = 0; id < 5000; ++id) {
+    auto writer = (*db)->CreateWriter();
+    ASSERT_TRUE(writer.PutAccount(id % 100, AccountBuilder().set_account_id(id).Build()).ok());
     ASSERT_TRUE(writer.Commit().ok());
   }
-  auto db = OpenDb(/*change_log=*/true);
-  std::vector<std::pair<uint64_t, bool>> changes;
-  const auto read = [&](uint64_t after) {
-    changes.clear();
-    return db->engine().ReadChanges(after, [&](uint64_t seq, const gendb::Change& change) {
-      changes.emplace_back(seq, change.deleted);
-      return true;
-    });
-  };
-  ASSERT_TRUE(read(0).ok());
-  // The ephemeral session is not in the log.
-  EXPECT_THAT(changes,
-              ::testing::ElementsAre(std::pair(uint64_t{1}, false), std::pair(uint64_t{2}, true)));
-  ASSERT_TRUE(read(1).ok());
-  EXPECT_EQ(changes.size(), 1u);
+  for (int i = 0; i < 1000 && (*db)->engine().Stats().checkpoint_lsn == 0; ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  const gendb::EngineStats stats = (*db)->engine().Stats();
+  EXPECT_GT(stats.checkpoint_lsn, 0u);
+  EXPECT_TRUE(stats.background_error.ok()) << stats.background_error;
+  ASSERT_TRUE((*db)->engine().Checkpoint().ok());
+  EXPECT_LT((*db)->engine().Stats().wal_bytes, 16384u);
+}
 
-  ASSERT_TRUE(db->engine().TruncateChanges(1).ok());
-  ASSERT_TRUE(read(0).ok());
-  EXPECT_THAT(changes, ::testing::ElementsAre(std::pair(uint64_t{2}, true)));
+// Every prefix of the log is a valid state: a torn tail loses only the commit it cuts.
+TEST_F(PersistentDbTest, TornTailIsCutOffAtTheLastIntactCommit) {
+  {
+    auto db = OpenDb();
+    for (uint64_t id = 1; id <= 3; ++id) {
+      auto writer = db->CreateWriter();
+      ASSERT_TRUE(writer.PutAccount(id, AccountBuilder().set_account_id(id).Build()).ok());
+      ASSERT_TRUE(writer.Commit().ok());
+    }
+  }
+  std::filesystem::path newest;
+  for (const auto& entry : std::filesystem::directory_iterator(_path)) {
+    const std::string name = entry.path().filename().string();
+    if (name.starts_with("wal-") && entry.file_size() > 200 &&
+        (newest.empty() || entry.path() > newest)) {
+      newest = entry.path();
+    }
+  }
+  ASSERT_FALSE(newest.empty());
+  std::filesystem::resize_file(newest, std::filesystem::file_size(newest) - 3);
+  {
+    auto db = OpenDb();
+    ASSERT_NE(db, nullptr);
+    EXPECT_EQ(db->engine().Stats().lsn, 2u);
+    auto snapshot = db->CreateSnapshot();
+    Account account;
+    EXPECT_TRUE(snapshot.GetAccount(2, account).ok());
+    EXPECT_FALSE(snapshot.GetAccount(3, account).ok());
+    // The log continues cleanly from the cut.
+    auto writer = db->CreateWriter();
+    ASSERT_TRUE(writer.PutAccount(4, AccountBuilder().set_account_id(4).Build()).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+  }
+  auto db = OpenDb();
+  ASSERT_NE(db, nullptr);
+  EXPECT_EQ(db->engine().Stats().lsn, 3u);
+}
+
+// Cuts the log at every byte: recovery must give exactly the commits that are whole.
+TEST_F(PersistentDbTest, LogCutAtAnyByteRecoversTheCommitsBeforeIt) {
+  std::vector<uint64_t> commit_ends;
+  {
+    auto db = OpenDb();
+    commit_ends.push_back(db->engine().Stats().wal_bytes);
+    for (uint64_t id = 1; id <= 5; ++id) {
+      auto writer = db->CreateWriter();
+      ASSERT_TRUE(writer.PutAccount(id, AccountBuilder().set_account_id(id).Build()).ok());
+      ASSERT_TRUE(writer.Commit().ok());
+      commit_ends.push_back(db->engine().Stats().wal_bytes);
+    }
+  }
+  const std::string segment = _path + "/wal-00000000000000000001.log";
+  const std::string backup = _path + ".backup";
+  std::filesystem::copy_file(segment, backup, std::filesystem::copy_options::overwrite_existing);
+  const std::vector<uint64_t> ends = commit_ends;
+  for (uint64_t cut = 0; cut <= ends.back(); ++cut) {
+    std::filesystem::remove_all(_path);
+    std::filesystem::create_directories(_path);
+    std::filesystem::copy_file(backup, segment);
+    std::filesystem::resize_file(segment, cut);
+
+    uint64_t expected = 0;
+    for (size_t i = 1; i < ends.size(); ++i) {
+      if (ends[i] <= cut) expected = i;
+    }
+    auto db = OpenDb();
+    ASSERT_NE(db, nullptr) << "cut at " << cut;
+    ASSERT_EQ(db->engine().Stats().lsn, expected) << "cut at " << cut;
+    size_t rows = 0;
+    auto snapshot = db->CreateSnapshot();
+    for (auto it = snapshot.ScanAccount(); it.Valid(); it.Next()) ++rows;
+    ASSERT_EQ(rows, expected) << "cut at " << cut;
+  }
+  std::filesystem::remove(backup);
+}
+
+TEST_F(PersistentDbTest, DamagedCheckpointIsReportedNotHidden) {
+  {
+    auto db = OpenDb();
+    {
+      auto writer = db->CreateWriter();
+      ASSERT_TRUE(writer.PutAccount(1, AccountBuilder().set_account_id(1).Build()).ok());
+      ASSERT_TRUE(writer.Commit().ok());
+    }
+    ASSERT_TRUE(db->engine().Checkpoint().ok());
+  }
+  const std::string file = _path + "/checkpoint-00000000000000000001.gdb";
+  std::fstream stream(file, std::ios::in | std::ios::out | std::ios::binary);
+  stream.seekp(static_cast<std::streamoff>(std::filesystem::file_size(file) / 2));
+  stream.put('\x5a');
+  stream.close();
+  EXPECT_EQ(Db::Open({.path = _path}).status().code(), absl::StatusCode::kDataLoss);
+}
+
+// Kills a real process over and over, in the middle of commits, log rotation and background
+// checkpoints. A kill loses nothing the OS has, so every acknowledged commit must survive, whole.
+TEST_F(PersistentDbTest, KillAtAnyMomentKeepsEveryAcknowledgedCommit) {
+#if defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+  GTEST_SKIP() << "ThreadSanitizer does not support starting threads in a forked child.";
+#endif
+#endif
+  const gendb::EngineOptions options{.path = _path,
+                                     .sync_commits = false,
+                                     .wal_segment_bytes = 2048,
+                                     .checkpoint_wal_bytes = 8192,
+                                     .wal_retain_bytes = 0};
+  const std::string padding(200, 'p');
+  int32_t acknowledged = 0;
+  for (int round = 0; round < 8; ++round) {
+    int fds[2];
+    ASSERT_EQ(pipe(fds), 0);
+    const pid_t child = fork();
+    ASSERT_GE(child, 0);
+    if (child == 0) {
+      close(fds[0]);
+      auto db = Db::Open(options);
+      if (!db.ok()) _exit(1);
+      int32_t next = 0;
+      {
+        Account account;
+        if ((*db)->CreateSnapshot().GetAccount(1, account).ok()) next = account.age();
+      }
+      for (;;) {
+        ++next;
+        auto writer = (*db)->CreateWriter();
+        for (uint64_t id : {uint64_t{1}, uint64_t{2}}) {
+          (void)writer.PutAccount(
+              id, AccountBuilder().set_account_id(id).set_age(next).set_name(padding).Build());
+        }
+        if (!writer.Commit().ok()) _exit(2);
+        if (write(fds[1], &next, sizeof(next)) != sizeof(next)) _exit(3);
+      }
+    }
+    close(fds[1]);
+    std::this_thread::sleep_for(std::chrono::milliseconds(5 + round * 7));
+    ASSERT_EQ(kill(child, SIGKILL), 0);
+    int32_t value;
+    while (read(fds[0], &value, sizeof(value)) == sizeof(value)) acknowledged = value;
+    close(fds[0]);
+    int status = 0;
+    ASSERT_EQ(waitpid(child, &status, 0), child);
+    ASSERT_TRUE(WIFSIGNALED(status)) << "the child exited with " << WEXITSTATUS(status);
+
+    auto db = Db::Open(options);
+    ASSERT_TRUE(db.ok()) << "round " << round << ": " << db.status();
+    auto snapshot = (*db)->CreateSnapshot();
+    Account first, second;
+    if (acknowledged > 0) {
+      ASSERT_TRUE(snapshot.GetAccount(1, first).ok());
+      ASSERT_TRUE(snapshot.GetAccount(2, second).ok());
+      EXPECT_GE(first.age(), acknowledged);
+      EXPECT_EQ(first.age(), second.age());  // Commits are whole.
+      acknowledged = first.age();
+    }
+  }
+  EXPECT_GT(acknowledged, 0);
+}
+
+TEST_F(PersistentDbTest, DamageBeforeTheTailIsReportedNotHidden) {
+  {
+    auto db = Db::Open({.path = _path, .wal_segment_bytes = 200});
+    ASSERT_TRUE(db.ok());
+    for (uint64_t id = 1; id <= 10; ++id) {
+      auto writer = (*db)->CreateWriter();
+      ASSERT_TRUE(writer.PutAccount(id, AccountBuilder().set_account_id(id).Build()).ok());
+      ASSERT_TRUE(writer.Commit().ok());
+    }
+  }
+  std::vector<std::filesystem::path> segments;
+  for (const auto& entry : std::filesystem::directory_iterator(_path)) {
+    if (entry.path().filename().string().starts_with("wal-")) segments.push_back(entry.path());
+  }
+  std::sort(segments.begin(), segments.end());
+  ASSERT_GE(segments.size(), 2u);
+  std::filesystem::resize_file(segments[0], std::filesystem::file_size(segments[0]) - 1);
+  auto db = Db::Open({.path = _path});
+  EXPECT_EQ(db.status().code(), absl::StatusCode::kDataLoss) << db.status();
+}
+
+TEST_F(PersistentDbTest, OneProcessAtATime) {
+  auto db = OpenDb();
+  auto second = Db::Open({.path = _path});
+  EXPECT_EQ(second.status().code(), absl::StatusCode::kFailedPrecondition);
+}
+
+// A database that holds a collection the schema lost does not silently drop it.
+TEST_F(PersistentDbTest, UnknownCollectionNeedsExplicitDiscard) {
+  gendb::EngineSchema schema;
+  schema.collections.push_back({"kept"});
+  schema.collections.push_back({"removed_later"});
+  const std::array<uint8_t, 1> key{1};
+  const std::array<uint8_t, 1> value{2};
+  {
+    auto engine = gendb::Engine::Open(schema, {.path = _path});
+    ASSERT_TRUE(engine.ok());
+    gendb::Transaction txn(**engine);
+    txn.Put(0, key, value);
+    txn.Put(1, key, value);
+    ASSERT_TRUE(txn.Commit().ok());
+  }
+  schema.collections.pop_back();
+  auto refused = gendb::Engine::Open(schema, {.path = _path});
+  EXPECT_EQ(refused.status().code(), absl::StatusCode::kFailedPrecondition);
+  EXPECT_THAT(refused.status().message(), ::testing::HasSubstr("removed_later"));
+
+  auto engine = gendb::Engine::Open(schema, {.path = _path, .discard_unknown_collections = true});
+  ASSERT_TRUE(engine.ok()) << engine.status();
+  ASSERT_TRUE((*engine)->Checkpoint().ok());
+  engine->reset();
+  EXPECT_TRUE(gendb::Engine::Open(schema, {.path = _path}).ok());
+}
+
+class ChangeSubscriptionTest : public ::testing::Test {
+ protected:
+  Db db;
+};
+
+TEST_F(ChangeSubscriptionTest, DeliversBeforeAfterAndWhatChanged) {
+  struct Seen {
+    gendb::ChangeKind kind;
+    uint64_t id;
+    bool age_changed;
+    bool name_changed;
+    int32_t age_before;
+    int32_t age_after;
+  };
+  std::vector<Seen> seen;
+  std::vector<uint64_t> commits;
+  auto subscription = db.Subscribe({
+      .on_account =
+          [&seen](const gendb::tests::AccountChange& change) {
+            seen.push_back({change.kind(),
+                            change.kind() == gendb::ChangeKind::kDelete
+                                ? change.before().account_id()
+                                : change.after().account_id(),
+                            change.age_changed(), change.name_changed(), change.before().age(),
+                            change.after().age()});
+          },
+      .on_commit = [&commits](uint64_t seq) { commits.push_back(seq); },
+  });
+
+  auto writer = db.CreateWriter();
+  ASSERT_TRUE(writer.PutAccount(1, AccountBuilder().set_account_id(1).set_age(30).Build()).ok());
+  ASSERT_TRUE(writer.Commit().ok());
+  ASSERT_TRUE(writer.UpdateAccount(1, AccountPatchBuilder().set_age(31).Build()).ok());
+  ASSERT_TRUE(writer.Commit().ok());
+  // A Put reports just the same, field by field.
+  ASSERT_TRUE(
+      writer.PutAccount(1, AccountBuilder().set_account_id(1).set_age(31).set_name("A").Build())
+          .ok());
+  ASSERT_TRUE(writer.Commit().ok());
+  ASSERT_TRUE(writer.DeleteAccount(1).ok());
+  ASSERT_TRUE(writer.Commit().ok());
+  // Not a collection this subscriber follows.
+  ASSERT_TRUE(writer.PutConfig("c", ConfigBuilder().set_config_name("c").Build()).ok());
+  ASSERT_TRUE(writer.Commit().ok());
+  // Rolled back: never seen.
+  ASSERT_TRUE(writer.PutAccount(2, AccountBuilder().set_account_id(2).Build()).ok());
+  writer.Rollback();
+  subscription.WaitUntilDelivered();
+
+  ASSERT_EQ(seen.size(), 4u);
+  EXPECT_EQ(seen[0].kind, gendb::ChangeKind::kInsert);
+  EXPECT_TRUE(seen[0].age_changed);
+  EXPECT_EQ(seen[1].kind, gendb::ChangeKind::kUpdate);
+  EXPECT_TRUE(seen[1].age_changed);
+  EXPECT_FALSE(seen[1].name_changed);
+  EXPECT_EQ(seen[1].age_before, 30);
+  EXPECT_EQ(seen[1].age_after, 31);
+  EXPECT_EQ(seen[2].kind, gendb::ChangeKind::kUpdate);
+  EXPECT_FALSE(seen[2].age_changed);
+  EXPECT_TRUE(seen[2].name_changed);
+  EXPECT_EQ(seen[3].kind, gendb::ChangeKind::kDelete);
+  EXPECT_EQ(seen[3].id, 1u);
+  EXPECT_EQ(commits.size(), 4u);
+}
+
+TEST_F(ChangeSubscriptionTest, QueuedCallbackCanCommitAndBackPressureDoesNotDeadlock) {
+  // The queue is always over its tiny limit, and the callback itself writes.
+  std::atomic<int> delivered{0};
+  auto subscription = db.Subscribe(
+      {.on_account =
+           [this, &delivered](const gendb::tests::AccountChange& change) {
+             auto writer = db.CreateWriter();
+             const uint64_t id = change.after().account_id();
+             ASSERT_TRUE(
+                 writer.PutConfig(std::to_string(id), ConfigBuilder().set_config_name("x").Build())
+                     .ok());
+             ASSERT_TRUE(writer.Commit().ok());
+             ++delivered;
+           }},
+      {.max_queue_bytes = 1});
+  for (uint64_t id = 0; id < 200; ++id) {
+    auto writer = db.CreateWriter();
+    ASSERT_TRUE(writer.PutAccount(id, AccountBuilder().set_account_id(id).Build()).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+  }
+  subscription.WaitUntilDelivered();
+  EXPECT_EQ(delivered.load(), 200);
+}
+
+TEST_F(ChangeSubscriptionTest, InlineRunsDuringCommitAndCancelStopsDelivery) {
+  int calls = 0;
+  bool visible_to_snapshot = false;
+  {
+    auto subscription = db.Subscribe({.on_account =
+                                          [&](const gendb::tests::AccountChange&) {
+                                            ++calls;
+                                            Account account;
+                                            visible_to_snapshot =
+                                                db.CreateSnapshot().GetAccount(1, account).ok();
+                                          }},
+                                     {.delivery = gendb::Delivery::kInline});
+    auto writer = db.CreateWriter();
+    ASSERT_TRUE(writer.PutAccount(1, AccountBuilder().set_account_id(1).Build()).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+    EXPECT_EQ(calls, 1);  // Already delivered.
+    EXPECT_TRUE(visible_to_snapshot);
+  }
+  auto writer = db.CreateWriter();
+  ASSERT_TRUE(writer.PutAccount(2, AccountBuilder().set_account_id(2).Build()).ok());
+  ASSERT_TRUE(writer.Commit().ok());
+  EXPECT_EQ(calls, 1);
 }

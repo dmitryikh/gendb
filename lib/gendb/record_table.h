@@ -44,6 +44,7 @@ struct RecordNode {
   std::atomic<Version*> head;
   uint64_t hash;
   uint32_t key_size;
+  uint32_t install_epoch;  // Writer only: the last checkpoint install that saw this record.
 
   std::string_view key() const noexcept {
     return {reinterpret_cast<const char*>(this + 1), key_size};
@@ -104,12 +105,14 @@ class RecordTable {
   // Writer only. Returns the slot array this call replaced, if any, for later reclamation.
   RecordNode* Insert(uint64_t hash, std::string_view key, const Slots** replaced) {
     if ((_used + 1) * 10 > (_slots.load(std::memory_order_relaxed)->mask + 1) * 7) {
-      *replaced = Rehash();
+      const size_t capacity = _slots.load(std::memory_order_relaxed)->mask + 1;
+      *replaced = Rehash(live() * 2 >= capacity ? capacity * 2 : capacity);
     }
     auto* node = static_cast<RecordNode*>(::operator new(sizeof(RecordNode) + key.size()));
     new (&node->head) std::atomic<Version*>(nullptr);
     node->hash = hash;
     node->key_size = static_cast<uint32_t>(key.size());
+    node->install_epoch = 0;
     if (!key.empty()) std::memcpy(node + 1, key.data(), key.size());
 
     const Slots* slots = _slots.load(std::memory_order_relaxed);
@@ -117,7 +120,7 @@ class RecordTable {
       RecordNode* current = slots->slots[i].load(std::memory_order_relaxed);
       if (current == nullptr || current == Erased()) {
         if (current == nullptr) ++_used;
-        ++_live;
+        _live.fetch_add(1, std::memory_order_relaxed);
         slots->slots[i].store(node, std::memory_order_release);
         return node;
       }
@@ -130,23 +133,34 @@ class RecordTable {
     for (size_t i = node->hash & slots->mask;; i = (i + 1) & slots->mask) {
       if (slots->slots[i].load(std::memory_order_relaxed) == node) {
         slots->slots[i].store(Erased(), std::memory_order_release);
-        --_live;
+        _live.fetch_sub(1, std::memory_order_relaxed);
         return;
       }
     }
   }
 
-  size_t live() const noexcept { return _live; }
+  // Writer only. Makes room for `records` in total, in one step instead of repeated doubling.
+  // Returns the slot array this call replaced, if any.
+  const Slots* Reserve(size_t records) {
+    size_t capacity = _slots.load(std::memory_order_relaxed)->mask + 1;
+    const size_t needed = records + records / 2 + 1;
+    if (needed <= capacity) return nullptr;
+    while (capacity < needed) capacity *= 2;
+    return Rehash(capacity);
+  }
+
+  // Any thread.
+  size_t live() const noexcept { return _live.load(std::memory_order_relaxed); }
 
  private:
   static Slots* NewSlots(size_t capacity) {
     return new Slots{capacity - 1, std::make_unique<std::atomic<RecordNode*>[]>(capacity)};
   }
 
-  const Slots* Rehash() {
+  const Slots* Rehash(size_t capacity) {
     const Slots* old = _slots.load(std::memory_order_relaxed);
     const size_t old_capacity = old->mask + 1;
-    Slots* next = NewSlots(_live * 2 >= old_capacity ? old_capacity * 2 : old_capacity);
+    Slots* next = NewSlots(capacity);
     for (size_t i = 0; i < old_capacity; ++i) {
       RecordNode* node = old->slots[i].load(std::memory_order_relaxed);
       if (node == nullptr || node == Erased()) continue;
@@ -154,14 +168,14 @@ class RecordTable {
       while (next->slots[at].load(std::memory_order_relaxed) != nullptr) at = (at + 1) & next->mask;
       next->slots[at].store(node, std::memory_order_relaxed);
     }
-    _used = _live;
+    _used = live();
     _slots.store(next, std::memory_order_release);
     return old;
   }
 
   std::atomic<const Slots*> _slots;  // Replaced only by the writer.
   size_t _used = 0;                  // Occupied and erased slots.
-  size_t _live = 0;
+  std::atomic<size_t> _live{0};
 };
 
 }  // namespace gendb::internal

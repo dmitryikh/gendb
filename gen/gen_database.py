@@ -143,6 +143,7 @@ def main():
             "pk_fixed_size": pk_fixed_size, # -1 in case the size is not fixed
             "private": col.private,
             "ephemeral": col.ephemeral,
+            "fields": store.list_fields(col.type),
         })
 
     # Compose indices info
