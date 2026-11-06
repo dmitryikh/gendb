@@ -1,0 +1,19 @@
+types:
+  fbs_files:
+    - schemas/note.fbs
+  include_prefix: ""
+
+options:
+  cpp_namespace: "notes"
+
+collections:
+  - name: notes
+    type: notes.Note
+    primary_key:
+      - id
+
+indices:
+  - name: note_by_stars
+    collection: notes
+    fields:
+      - stars

@@ -14,14 +14,14 @@ def load_yaml_db(yaml_path):
         return yaml.safe_load(f)
 
 
-def build_store_from_yaml(db_cfg):
+def build_store_from_yaml(db_cfg, metadata_fbs="lib/schemas/metadata.fbs"):
     store = Store()
     # Get include prefix
     include_prefix = db_cfg.get("types", {}).get("include_prefix", "")
     # Load all messages from fbs files
     fbs_files = db_cfg.get("types", {}).get("fbs_files", [])
     # Add metadata.fbs as the first file
-    all_fbs_files = ["lib/schemas/metadata.fbs"] + [f for f in fbs_files if f != "lib/schemas/metadata.fbs"]
+    all_fbs_files = [metadata_fbs] + [f for f in fbs_files if Path(f).name != Path(metadata_fbs).name]
     for fbs_file in all_fbs_files:
         flatc_to_store.load_fbs_to_store(store, Path(fbs_file))
 
@@ -71,9 +71,11 @@ def main():
     parser = argparse.ArgumentParser(description="Load DB schema from YAML and FBS files, and generate C++ database files.")
     parser.add_argument("--yaml", required=True, help="Path to db.yaml config")
     parser.add_argument("--output_dir", required=False, help="Directory to write generated files")
+    parser.add_argument("--metadata_fbs", default="lib/schemas/metadata.fbs",
+                        help="Path to gendb's own metadata.fbs")
     args = parser.parse_args()
     db_cfg = load_yaml_db(args.yaml)
-    store = build_store_from_yaml(db_cfg)
+    store = build_store_from_yaml(db_cfg, args.metadata_fbs)
     print(f"Loaded {len(store.messages)} messages and {len(store.collections)} collections.")
     # Optionally, print summary
     for enum_name in store.list_enums():
@@ -170,8 +172,15 @@ def main():
         seq = store.get_sequence(seq_name)
         sequences.append(seq)
 
+    # Collections' message types are named without their namespace, as they usually share this one.
+    foreign_types = sorted({
+        col.type.replace(".", "::") for col in store.collections.values()
+        if naming.split_namespace_class(col.type)[0].replace(".", "::") != namespace
+    })
+
     template_ctx = {
         "namespace": namespace,
+        "foreign_types": foreign_types,
         "includes": includes,
         "collections": collections,
         "indices": indices,

@@ -39,6 +39,16 @@
   absl::Status Get{{ idx.name_pascal_case }}({% for f in idx.fields %}{{ f.param }} {{ f.name }}, {% endfor %}{{ idx.type }}& out) const;
 {% endif %}
 {% endmacro %}
+// Message types in other namespaces than this code's.
+{% for using in foreign_types %}
+using ::{{ using }};
+using ::{{ using }}Builder;
+using ::{{ using }}PatchBuilder;
+{% endfor %}
+{% if 'gendb' not in namespace.split('::') %}
+using ::gendb::MetadataType;
+{% endif %}
+
 // Forward declarations.
 class Snapshot;
 class ScopedWrite;
@@ -71,30 +81,30 @@ struct {{coll.type}}Key {
   {% set tuple_type = "std::tuple<" + coll.pk_fields | map(attribute='cpp_type') | join(', ') + ">" %}
 inline std::array<uint8_t, {{coll.pk_fixed_size}}> To{{coll.type}}Key(const {{coll.type}}Key& key) {
   std::array<uint8_t, {{ coll.pk_fixed_size }}> key_raw;
-  internal::key_codec::EncodeTupleToView<{{ tuple_type }}>({{'{'}}{% for pk in coll.pk_fields %}key.{{ pk.name }}{% if not loop.last %}, {% endif %}{% endfor %}{{'}'}}, key_raw);
+  gendb::internal::key_codec::EncodeTupleToView<{{ tuple_type }}>({{'{'}}{% for pk in coll.pk_fields %}key.{{ pk.name }}{% if not loop.last %}, {% endif %}{% endfor %}{{'}'}}, key_raw);
   return key_raw;
 }
 
 inline std::array<uint8_t, {{coll.pk_fixed_size}}> To{{coll.type}}Key({{ coll.type }} {{ coll.type_snake_case }}) {
   std::array<uint8_t, {{ coll.pk_fixed_size }}> key_raw;
-  internal::key_codec::EncodeTupleToView<{{ tuple_type }}>({{'{'}}{% for pk in coll.pk_fields %}{{ coll.type_snake_case }}.{{ pk.name }}(){% if not loop.last %}, {% endif %}{% endfor %}{{'}'}}, key_raw);
+  gendb::internal::key_codec::EncodeTupleToView<{{ tuple_type }}>({{'{'}}{% for pk in coll.pk_fields %}{{ coll.type_snake_case }}.{{ pk.name }}(){% if not loop.last %}, {% endif %}{% endfor %}{{'}'}}, key_raw);
   return key_raw;
 }
 {% else %}
 {# multifield primary key with runtime length #}
 inline Bytes To{{coll.type}}Key(const {{coll.type}}Key& key) {
-  return internal::key_codec::EncodeTuple<{{ tuple_type }}>({{'{'}}{% for pk in coll.pk_fields %}key.{{ pk.name }}{% if not loop.last %}, {% endif %}{% endfor %}{{'}'}});
+  return gendb::internal::key_codec::EncodeTuple<{{ tuple_type }}>({{'{'}}{% for pk in coll.pk_fields %}key.{{ pk.name }}{% if not loop.last %}, {% endif %}{% endfor %}{{'}'}});
 }
 
 inline Bytes To{{coll.type}}Key({{ coll.type }} {{ coll.type_snake_case }}) {
-  return internal::key_codec::EncodeTuple<{{ tuple_type }}>({{'{'}}{% for pk in coll.pk_fields %}{{ coll.type_snake_case }}.{{ pk.name }}(){% if not loop.last %}, {% endif %}{% endfor %}{{'}'}});
+  return gendb::internal::key_codec::EncodeTuple<{{ tuple_type }}>({{'{'}}{% for pk in coll.pk_fields %}{{ coll.type_snake_case }}.{{ pk.name }}(){% if not loop.last %}, {% endif %}{% endfor %}{{'}'}});
 }
 {% endif %}  {# if coll.pk_fixed_size > 0 #}
 {% else %}   {# if coll.pk_fields | length > 1 #}
 {% if coll.pk_fixed_size > 0 %}
 inline std::array<uint8_t, {{ coll.pk_fixed_size }}> To{{coll.type}}Key({{ coll.pk_fields[0].const_ref_type }} {{coll.pk_fields[0].name}}) {
   std::array<uint8_t, {{ coll.pk_fixed_size }}> key_raw;
-  internal::key_codec::EncodeTupleToView<std::tuple<{{ coll.pk_fields[0].cpp_type }}>>({{'{'}}{{ coll.pk_fields[0].name }}{{'}'}}, key_raw);
+  gendb::internal::key_codec::EncodeTupleToView<std::tuple<{{ coll.pk_fields[0].cpp_type }}>>({{'{'}}{{ coll.pk_fields[0].name }}{{'}'}}, key_raw);
   return key_raw;
 }
 
@@ -103,11 +113,11 @@ inline std::array<uint8_t, {{ coll.pk_fixed_size }}> To{{coll.type}}Key({{ coll.
 }
 {% else %} {# if coll.pk_fixed_size > 0 #}
 inline Bytes To{{coll.type}}Key({{ coll.pk_fields[0].const_ref_type }} {{coll.pk_fields[0].name}}) {
-  return internal::key_codec::EncodeTuple(std::make_tuple({{ coll.pk_fields[0].name }}));
+  return gendb::internal::key_codec::EncodeTuple(std::make_tuple({{ coll.pk_fields[0].name }}));
 }
 
 inline Bytes To{{coll.type}}Key({{ coll.type }} {{ coll.type_snake_case }}) {
-  return internal::key_codec::EncodeTuple(std::make_tuple({{ coll.type_snake_case }}.{{ coll.pk_fields[0].name }}()));
+  return gendb::internal::key_codec::EncodeTuple(std::make_tuple({{ coll.type_snake_case }}.{{ coll.pk_fields[0].name }}()));
 }
 
 {% endif %}  {# if coll.pk_fixed_size > 0 #}

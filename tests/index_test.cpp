@@ -275,6 +275,8 @@ TEST(PutTest, ThePrimaryKeyComesFromTheMessage) {
   auto writer = db.CreateWriter();
   EXPECT_EQ(writer.PutAccount(AccountBuilder().set_name("no key").Build()).code(),
             absl::StatusCode::kInvalidArgument);
+  const std::vector<uint8_t> garbage = {0xde, 0xad, 0xbe, 0xef};
+  EXPECT_EQ(writer.PutAccount(garbage).code(), absl::StatusCode::kInvalidArgument);
   ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(7).Build()).ok());
   EXPECT_EQ(writer.UpdateAccount(7, AccountPatchBuilder().set_account_id(8).Build()).code(),
             absl::StatusCode::kInvalidArgument);

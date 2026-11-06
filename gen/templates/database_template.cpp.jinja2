@@ -29,7 +29,7 @@ gendb::EngineSchema MakeSchema() {
          if (!message.has_{{ f.name }}()) return false;
 {% endfor %}
 {% for f in idx.fields %}
-         internal::key_codec::AppendField(message.{{ f.name }}(), out);
+         gendb::internal::key_codec::AppendField(message.{{ f.name }}(), out);
 {% endfor %}
          return true;
        },
@@ -129,6 +129,8 @@ gendb::ScanIterator<{{ coll.type }}> ScopedWrite::Scan{{ coll.type }}() const {
 }
 
 absl::Status ScopedWrite::Put{{coll.type}}(gendb::BytesConstView {{ coll.type_snake_case }}) {
+  // Malformed bytes would read as an empty message here, but they would also be stored and sent on.
+  if (!gendb::MessageView::Verify({{ coll.type_snake_case }})) return absl::InvalidArgumentError("{{ coll.type }}: not a valid message");
   const {{ coll.type }} message{ {{- coll.type_snake_case -}} };
 {% for pk in coll.pk_fields %}
   if (!message.has_{{ pk.name }}()) return absl::InvalidArgumentError("{{ coll.type }}: the primary key field {{ pk.name }} is not set");
@@ -153,7 +155,7 @@ absl::Status ScopedWrite::Delete{{coll.type}}({{ key_param(coll) }}) {
 gendb::IndexIterator<{{ idx.type }}> {{ class }}::Get{{ idx.name_pascal_case }}Equal({% for f in idx.fields[:count] %}{{ f.param }} {{ f.name }}, {% endfor %}gendb::ScanOptions options) const {
   std::string lo;
 {% for f in idx.fields[:count] %}
-  internal::key_codec::AppendField({{ f.name }}, lo);
+  gendb::internal::key_codec::AppendField({{ f.name }}, lo);
 {% endfor %}
   return gendb::IndexIterator<{{ idx.type }}>(gendb::IndexCursor({{ source }}, {{ idx.name_pascal_case }}IndexId, lo, gendb::PrefixSuccessor(lo), options));
 }
@@ -164,16 +166,16 @@ gendb::IndexIterator<{{ idx.type }}> {{ class }}::Get{{ idx.name_pascal_case }}E
 gendb::IndexIterator<{{ idx.type }}> {{ class }}::Get{{ idx.name_pascal_case }}Range({% for f in idx.fields[:count] %}{{ f.param }} {{ f.name }}, {% endfor %}std::optional<{{ last.param }}> min_{{ last.name }}, std::optional<{{ last.param }}> max_{{ last.name }}, gendb::ScanOptions options) const {
   std::string lo;
 {% for f in idx.fields[:count] %}
-  internal::key_codec::AppendField({{ f.name }}, lo);
+  gendb::internal::key_codec::AppendField({{ f.name }}, lo);
 {% endfor %}
   std::string hi;
   if (max_{{ last.name }}.has_value()) {
     hi = lo;
-    internal::key_codec::AppendField(*max_{{ last.name }}, hi);
+    gendb::internal::key_codec::AppendField(*max_{{ last.name }}, hi);
   } else {
     hi = gendb::PrefixSuccessor(lo);
   }
-  if (min_{{ last.name }}.has_value()) internal::key_codec::AppendField(*min_{{ last.name }}, lo);
+  if (min_{{ last.name }}.has_value()) gendb::internal::key_codec::AppendField(*min_{{ last.name }}, lo);
   return gendb::IndexIterator<{{ idx.type }}>(gendb::IndexCursor({{ source }}, {{ idx.name_pascal_case }}IndexId, lo, std::move(hi), options));
 }
 

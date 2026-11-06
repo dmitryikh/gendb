@@ -106,6 +106,9 @@ gendb::ScanIterator<MetadataValue> ScopedWrite::ScanMetadataValue() const {
 }
 
 absl::Status ScopedWrite::PutMetadataValue(gendb::BytesConstView metadata_value) {
+  // Malformed bytes would read as an empty message here, but they would also be stored and sent on.
+  if (!gendb::MessageView::Verify(metadata_value))
+    return absl::InvalidArgumentError("MetadataValue: not a valid message");
   const MetadataValue message{metadata_value};
   if (!message.has_type())
     return absl::InvalidArgumentError("MetadataValue: the primary key field type is not set");
@@ -148,6 +151,9 @@ gendb::ScanIterator<MessageA> ScopedWrite::ScanMessageA() const {
 }
 
 absl::Status ScopedWrite::PutMessageA(gendb::BytesConstView message_a) {
+  // Malformed bytes would read as an empty message here, but they would also be stored and sent on.
+  if (!gendb::MessageView::Verify(message_a))
+    return absl::InvalidArgumentError("MessageA: not a valid message");
   const MessageA message{message_a};
   if (!message.has_key())
     return absl::InvalidArgumentError("MessageA: the primary key field key is not set");

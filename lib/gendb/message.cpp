@@ -393,6 +393,8 @@ Bytes Rebuild(const MessageView& source, const MessagePatch& patch) {
     const uint32_t bit = detail::BitOf(e.id);
     if (source.TestRuntime(MessageView::kVar, bit)) {
       const uint32_t index = source.RankRuntime(MessageView::kVar, bit);
+      // Open checks counts, not that they match the bitmaps.
+      if (index >= source._nvar) throw std::invalid_argument("invalid source message");
       const uint32_t start = index ? source.EndAt(index - 1) : 0;
       const uint32_t end = source.EndAt(index);
       if (start > end || end > source._payload_size)

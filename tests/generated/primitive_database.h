@@ -21,6 +21,11 @@
 
 namespace gendb::tests::primitive {
 
+// Message types in other namespaces than this code's.
+using ::gendb::MetadataValue;
+using ::gendb::MetadataValueBuilder;
+using ::gendb::MetadataValuePatchBuilder;
+
 // Forward declarations.
 class Snapshot;
 class ScopedWrite;
@@ -38,21 +43,21 @@ struct MetadataValueKey {
 
 inline std::array<uint8_t, 8> ToMetadataValueKey(const MetadataValueKey& key) {
   std::array<uint8_t, 8> key_raw;
-  internal::key_codec::EncodeTupleToView<std::tuple<gendb::MetadataType, uint32_t>>(
+  gendb::internal::key_codec::EncodeTupleToView<std::tuple<gendb::MetadataType, uint32_t>>(
       {key.type, key.id}, key_raw);
   return key_raw;
 }
 
 inline std::array<uint8_t, 8> ToMetadataValueKey(MetadataValue metadata_value) {
   std::array<uint8_t, 8> key_raw;
-  internal::key_codec::EncodeTupleToView<std::tuple<gendb::MetadataType, uint32_t>>(
+  gendb::internal::key_codec::EncodeTupleToView<std::tuple<gendb::MetadataType, uint32_t>>(
       {metadata_value.type(), metadata_value.id()}, key_raw);
   return key_raw;
 }
 inline std::array<uint8_t, 4> ToMessageAKey(gendb::tests::primitive::KeyEnum key) {
   std::array<uint8_t, 4> key_raw;
-  internal::key_codec::EncodeTupleToView<std::tuple<gendb::tests::primitive::KeyEnum>>({key},
-                                                                                       key_raw);
+  gendb::internal::key_codec::EncodeTupleToView<std::tuple<gendb::tests::primitive::KeyEnum>>(
+      {key}, key_raw);
   return key_raw;
 }
 

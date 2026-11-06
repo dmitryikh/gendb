@@ -1,3 +1,6 @@
+# The generated headers, for everything in here.
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/generated)
+
 # Message codegen
 gen_db_messages(
     codegen

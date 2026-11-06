@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(gendb LANGUAGES CXX)
+project(gendb VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -9,12 +9,13 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 enable_testing()
 
+option(GENDB_BUILD_TESTS "Build tests, benchmarks and examples" ON)
+
+set(GENDB_GEN_DIR ${CMAKE_SOURCE_DIR}/gen)
+set(GENDB_SCHEMA_DIR ${CMAKE_SOURCE_DIR}/lib/schemas)
 include(cmake/CodegenTargets.cmake)
-
-
-include_directories(
-    ${CMAKE_SOURCE_DIR}/lib
-)
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
 
 gen_db_messages(
     gendb_lib_codegen
@@ -23,9 +24,11 @@ gen_db_messages(
 )
 
 find_package(absl REQUIRED)
-find_package(benchmark REQUIRED)
-find_package(flatbuffers REQUIRED)
-find_package(GTest REQUIRED)
+if(GENDB_BUILD_TESTS)
+    find_package(benchmark REQUIRED)
+    find_package(flatbuffers REQUIRED)
+    find_package(GTest REQUIRED)
+endif()
 
 # Main library
 add_library(gendb_lib
@@ -58,7 +61,14 @@ add_library(gendb_lib
     lib/gendb/wal.h
     lib/gendb/wal.cpp
 )
-target_include_directories(gendb_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/lib)
+target_include_directories(gendb_lib PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/lib>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/lib/gendb/generated>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/gendb/generated>
+)
+set_target_properties(gendb_lib PROPERTIES EXPORT_NAME gendb)
+add_library(gendb::gendb ALIAS gendb_lib)
 target_link_libraries(gendb_lib PUBLIC absl::btree absl::crc32c absl::inlined_vector absl::hash absl::span absl::status absl::statusor absl::strings)
 find_package(Threads REQUIRED)
 target_link_libraries(gendb_lib PUBLIC Threads::Threads)
@@ -99,24 +109,74 @@ if(gRPC_FOUND AND Protobuf_FOUND)
     )
     target_include_directories(gendb_replication_grpc PRIVATE ${GENDB_PROTO_OUT})
     target_link_libraries(gendb_replication_grpc PUBLIC gendb_lib gRPC::grpc++ protobuf::libprotobuf)
+    set_target_properties(gendb_replication_grpc PROPERTIES EXPORT_NAME replication_grpc)
+    add_library(gendb::replication_grpc ALIAS gendb_replication_grpc)
 endif()
 
-add_executable(gendb_tests
-    lib/gendb/bits_test.cpp
-    lib/gendb/key_codec_test.cpp
-    lib/gendb/message_test.cpp
-)
-target_include_directories(gendb_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/lib)
-target_link_libraries(gendb_tests PRIVATE gendb_lib GTest::gtest_main)
-add_test(NAME gendb_tests COMMAND gendb_tests)
+if(GENDB_BUILD_TESTS)
+    add_executable(gendb_tests
+        lib/gendb/bits_test.cpp
+        lib/gendb/key_codec_test.cpp
+        lib/gendb/message_test.cpp
+    )
+    target_include_directories(gendb_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/lib)
+    target_link_libraries(gendb_tests PRIVATE gendb_lib GTest::gtest_main)
+    add_test(NAME gendb_tests COMMAND gendb_tests)
 
-add_subdirectory(tests)
-add_subdirectory(benchmarks)
-add_subdirectory(examples)
+    add_subdirectory(tests)
+    add_subdirectory(benchmarks)
+    add_subdirectory(examples)
+endif()
+
 option(GENDB_BUILD_FUZZERS "Build the libFuzzer targets; needs clang" OFF)
 if(GENDB_BUILD_FUZZERS)
     add_subdirectory(fuzz)
 endif()
+
+# The package: find_package(gendb) gives gendb::gendb, gendb::replication_grpc if built, and the
+# generators.
+set(GENDB_INSTALL_CMAKE_DIR ${CMAKE_INSTALL_LIBDIR}/cmake/gendb)
+set(GENDB_INSTALL_GEN_DIR ${CMAKE_INSTALL_DATADIR}/gendb/gen)
+set(GENDB_INSTALL_SCHEMA_DIR ${CMAKE_INSTALL_DATADIR}/gendb/schemas)
+
+install(TARGETS gendb_lib EXPORT gendbTargets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+)
+install(DIRECTORY lib/gendb DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    FILES_MATCHING PATTERN "*.h" PATTERN "*_test.h" EXCLUDE
+)
+install(DIRECTORY gen/ DESTINATION ${GENDB_INSTALL_GEN_DIR}
+    PATTERN "__pycache__" EXCLUDE
+    PATTERN "*_test.py" EXCLUDE
+)
+install(DIRECTORY lib/schemas/ DESTINATION ${GENDB_INSTALL_SCHEMA_DIR})
+install(EXPORT gendbTargets NAMESPACE gendb:: DESTINATION ${GENDB_INSTALL_CMAKE_DIR})
+
+set(GENDB_INSTALL_GRPC 0)
+if(TARGET gendb_replication_grpc)
+    set(GENDB_INSTALL_GRPC 1)
+    install(TARGETS gendb_replication_grpc EXPORT gendbGrpcTargets
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    )
+    install(EXPORT gendbGrpcTargets NAMESPACE gendb:: DESTINATION ${GENDB_INSTALL_CMAKE_DIR})
+endif()
+
+configure_package_config_file(cmake/gendbConfig.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/package/gendbConfig.cmake
+    INSTALL_DESTINATION ${GENDB_INSTALL_CMAKE_DIR}
+    PATH_VARS GENDB_INSTALL_GEN_DIR GENDB_INSTALL_SCHEMA_DIR
+)
+write_basic_package_version_file(${CMAKE_CURRENT_BINARY_DIR}/package/gendbConfigVersion.cmake
+    COMPATIBILITY SameMinorVersion
+)
+install(FILES
+    ${CMAKE_CURRENT_BINARY_DIR}/package/gendbConfig.cmake
+    ${CMAKE_CURRENT_BINARY_DIR}/package/gendbConfigVersion.cmake
+    cmake/CodegenTargets.cmake
+    DESTINATION ${GENDB_INSTALL_CMAKE_DIR}
+)
 
 find_program(CLANG_FORMAT_EXE NAMES clang-format)
 

@@ -24,6 +24,11 @@
 
 namespace gendb::tests {
 
+// Message types in other namespaces than this code's.
+using ::gendb::MetadataValue;
+using ::gendb::MetadataValueBuilder;
+using ::gendb::MetadataValuePatchBuilder;
+
 // Forward declarations.
 class Snapshot;
 class ScopedWrite;
@@ -49,20 +54,20 @@ struct MetadataValueKey {
 
 inline std::array<uint8_t, 8> ToMetadataValueKey(const MetadataValueKey& key) {
   std::array<uint8_t, 8> key_raw;
-  internal::key_codec::EncodeTupleToView<std::tuple<gendb::MetadataType, uint32_t>>(
+  gendb::internal::key_codec::EncodeTupleToView<std::tuple<gendb::MetadataType, uint32_t>>(
       {key.type, key.id}, key_raw);
   return key_raw;
 }
 
 inline std::array<uint8_t, 8> ToMetadataValueKey(MetadataValue metadata_value) {
   std::array<uint8_t, 8> key_raw;
-  internal::key_codec::EncodeTupleToView<std::tuple<gendb::MetadataType, uint32_t>>(
+  gendb::internal::key_codec::EncodeTupleToView<std::tuple<gendb::MetadataType, uint32_t>>(
       {metadata_value.type(), metadata_value.id()}, key_raw);
   return key_raw;
 }
 inline std::array<uint8_t, 8> ToAccountKey(uint64_t account_id) {
   std::array<uint8_t, 8> key_raw;
-  internal::key_codec::EncodeTupleToView<std::tuple<uint64_t>>({account_id}, key_raw);
+  gendb::internal::key_codec::EncodeTupleToView<std::tuple<uint64_t>>({account_id}, key_raw);
   return key_raw;
 }
 
@@ -71,7 +76,7 @@ inline std::array<uint8_t, 8> ToAccountKey(Account account) {
 }
 inline std::array<uint8_t, 4> ToPositionKey(int32_t position_id) {
   std::array<uint8_t, 4> key_raw;
-  internal::key_codec::EncodeTupleToView<std::tuple<int32_t>>({position_id}, key_raw);
+  gendb::internal::key_codec::EncodeTupleToView<std::tuple<int32_t>>({position_id}, key_raw);
   return key_raw;
 }
 
@@ -79,16 +84,16 @@ inline std::array<uint8_t, 4> ToPositionKey(Position position) {
   return ToPositionKey(position.position_id());
 }
 inline Bytes ToConfigKey(std::string_view config_name) {
-  return internal::key_codec::EncodeTuple(std::make_tuple(config_name));
+  return gendb::internal::key_codec::EncodeTuple(std::make_tuple(config_name));
 }
 
 inline Bytes ToConfigKey(Config config) {
-  return internal::key_codec::EncodeTuple(std::make_tuple(config.config_name()));
+  return gendb::internal::key_codec::EncodeTuple(std::make_tuple(config.config_name()));
 }
 
 inline std::array<uint8_t, 8> ToSessionKey(uint64_t session_id) {
   std::array<uint8_t, 8> key_raw;
-  internal::key_codec::EncodeTupleToView<std::tuple<uint64_t>>({session_id}, key_raw);
+  gendb::internal::key_codec::EncodeTupleToView<std::tuple<uint64_t>>({session_id}, key_raw);
   return key_raw;
 }
 
