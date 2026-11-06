@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        job: [format, schema, test, asan, tsan, release, package, fuzz]
+        job: [format, schema, test, asan, tsan, release, package, example, fuzz]
     steps:
       - uses: actions/checkout@v4
         with:

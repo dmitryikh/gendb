@@ -34,12 +34,20 @@ Non goals:
   * Multi-language bindings (C++ is the first-class and only target)
   * Ad-hoc SQL query engine (no query parser or optimizer, API-only access)
 
+Install it into your local Conan cache, and then require `gendb/0.1.0`. `find_package(gendb)` gives
+`gendb::gendb` and the generators `gen_db_messages` and `gen_db_schema`:
+
+```bash
+conan create . --build=missing -s build_type=Release -o "&:with_grpc=False"
+```
+
 Documentation:
   * Using it: [docs/api.md](docs/api.md)
   * Schema language: [docs/schema.md](docs/schema.md)
   * Message format: [specification](docs/message_format.md) and [interactive explorer](docs/message_format.html) (open it in a browser)
   * Storage engine: [docs/storage_engine.md](docs/storage_engine.md)
   * Replication and writing a transport: [docs/replication.md](docs/replication.md)
+  * An application using all this, from a Conan package: [examples/tictactoe](examples/tictactoe/README.md)
   * Build and test in Docker: [docs/docker_build.md](docs/docker_build.md)
   * Benchmarks: [benchmarks/README.md](benchmarks/README.md)
 

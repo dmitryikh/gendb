@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One CI job, in the Docker image from the Dockerfile:
-#   scripts/ci/run.sh format|schema|test|asan|tsan|release|package|fuzz
+#   scripts/ci/run.sh format|schema|test|asan|tsan|release|package|example|fuzz
 # The same runs locally:
 #   docker run --rm -v "$PWD":/workspace -w /workspace -v gendb-conan:/home/dev/.conan2 gendb-dev \
 #     scripts/ci/run.sh test
@@ -90,11 +90,26 @@ case "${1:-}" in
     cmake --build build/ci-package/consumer
     ./build/ci-package/consumer/package_test
     ;;
+  example)
+    # An application that takes GenDB from a Conan package, and two processes that use it.
+    conan profile detect --force >/dev/null
+    use_clang=(-c 'tools.build:compiler_executables={"c": "clang", "cpp": "clang++"}')
+    conan create . --build=missing -s build_type=Release "${without_grpc[@]}" "${use_clang[@]}" \
+      -c tools.build:skip_test=True
+    conan install examples/tictactoe --output-folder=build/ci-example --build=missing \
+      -s build_type=Release "${use_clang[@]}"
+    cmake -S examples/tictactoe -B build/ci-example -G Ninja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_TOOLCHAIN_FILE="$PWD/build/ci-example/conan_toolchain.cmake" \
+      -DCMAKE_CXX_COMPILER=clang++
+    cmake --build build/ci-example
+    examples/tictactoe/run_match.sh build/ci-example/tictactoe --n=5000
+    ;;
   fuzz)
     FUZZ_SECONDS="${FUZZ_SECONDS:-60}" scripts/ci/fuzz.sh
     ;;
   *)
-    echo "usage: $0 format|schema|test|asan|tsan|release|package|fuzz" >&2
+    echo "usage: $0 format|schema|test|asan|tsan|release|package|example|fuzz" >&2
     exit 2
     ;;
 esac
