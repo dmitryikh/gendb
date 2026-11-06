@@ -36,6 +36,10 @@ class FrameFileReader final : public FrameSource {
   uint64_t offset() const noexcept { return _offset; }
   // After Peek returned kIncomplete: whether the file ended cleanly at a frame boundary.
   bool at_end() const noexcept { return _status.ok() && _begin == _buffer.size(); }
+  // After Peek returned kCorrupt: whether that is the start of the zeros that a reservation leaves.
+  bool AtZeros() const noexcept;
+  // Forgets what it read ahead, for a file that has since changed there.
+  void Reread() noexcept;
 
  private:
   explicit FrameFileReader(std::unique_ptr<ReadableFile> file) : _file(std::move(file)) {}

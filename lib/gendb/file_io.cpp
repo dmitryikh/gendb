@@ -38,6 +38,19 @@ ParseStatus FrameFileReader::Peek(Frame* frame) {
   }
 }
 
+bool FrameFileReader::AtZeros() const noexcept {
+  const std::string_view rest = std::string_view(_buffer).substr(_begin);
+  return rest.size() >= kFrameHeaderSize &&
+         rest.substr(0, kFrameHeaderSize).find_first_not_of('\0') == std::string_view::npos;
+}
+
+void FrameFileReader::Reread() noexcept {
+  _buffer.clear();
+  _begin = 0;
+  _current_size = 0;
+  _read_at = _offset;
+}
+
 void FrameFileReader::Advance() {
   _begin += _current_size;
   _offset += _current_size;

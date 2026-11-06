@@ -86,6 +86,12 @@ struct EngineOptions {
   std::chrono::milliseconds background_sync_interval{0};
 
   uint64_t wal_segment_bytes = uint64_t{64} << 20;
+  // How much of the log's file a durable commit that finds none left writes as zeros, ahead of
+  // time. A sync that has no new file size to record is several times faster, and it is what a
+  // durable commit spends most of its time on, so this pays for itself quickly. This much disk at
+  // most stays in use by the zeros, until the segment ends. Zero leaves the log growing with each
+  // commit.
+  uint64_t wal_reserve_bytes = uint64_t{4} << 20;
   // Automatic compaction: a background checkpoint starts once the log grows by this many bytes, or
   // by the size of the last checkpoint if larger, which keeps total disk writes below about twice
   // the log's size. Zero leaves it to Engine::Checkpoint.

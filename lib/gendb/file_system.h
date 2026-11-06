@@ -22,6 +22,19 @@ class WritableFile {
   virtual absl::Status Sync() = 0;
   // Bytes appended so far, from any thread.
   virtual uint64_t size() const = 0;
+
+  // Makes sure that the next `bytes` bytes appended fall inside the file as it already is, by
+  // filling them with zeros on disk, and syncs. A sync then has only those bytes to write and not a
+  // new file size, which on most file systems is several times faster. Reading the file shows the
+  // zeros after what was appended. Only an error from the sync is returned, as it means appended
+  // data may be gone, whereas without room for the zeros the file just goes on growing as it would
+  // have. Runs alongside Sync, but not Append. Optional for a file system, as it is only about
+  // speed.
+  virtual absl::Status Reserve(uint64_t /*bytes*/) { return absl::OkStatus(); }
+  // How many bytes can still be appended inside what Reserve made.
+  virtual uint64_t reserved() const { return 0; }
+  // Gives back what is left of a reservation, durably. Runs alone.
+  virtual absl::Status ReleaseReserved() { return absl::OkStatus(); }
 };
 
 class ReadableFile {

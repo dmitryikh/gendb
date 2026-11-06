@@ -33,6 +33,10 @@ using CollectionNames = std::vector<std::pair<uint32_t, std::string>>;
 // unsynced data out of order, so intact commits after the damage do not prove anything by
 // themselves.
 //
+// A segment can end in zeros, which durable commits reserve ahead of them, and which recovery and
+// WalCursor read as its end: see WritableFile::Reserve. They are nothing that was ever written to
+// the log, so a crash that leaves them has torn nothing.
+//
 // One writer calls Append and Rotate, under the engine's writer lock. Sync can run on any thread
 // and never holds up Append: a slow fsync delays only commits that wait for it.
 class Wal {
@@ -43,6 +47,7 @@ class Wal {
     std::shared_ptr<FileSystem> file_system;
     std::string dir;
     uint64_t segment_bytes;
+    uint64_t reserve_bytes;
     CollectionNames collections;
   };
   struct Recovered {
@@ -100,6 +105,9 @@ class Wal {
   absl::Status OpenSegmentLocked(uint64_t first_lsn);
   absl::Status RollLocked();
   absl::Status WriteSyncMark(WritableFile& file, uint64_t synced);
+  // Whether all there is in a file from `offset` on is zeros. How many other bytes there are, if
+  // not.
+  absl::StatusOr<uint64_t> BytesAfterZeros(const std::string& path, uint64_t offset);
   // Whether the rest of a damaged last segment says that commit `lsn` had been durable.
   absl::StatusOr<bool> MarkedDurableAfter(const std::string& path, uint64_t offset, uint64_t lsn);
 

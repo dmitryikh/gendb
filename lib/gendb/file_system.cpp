@@ -5,6 +5,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <cstdio>
@@ -35,15 +37,18 @@ class PosixWritableFile final : public WritableFile {
   ~PosixWritableFile() override { close(_fd); }
 
   absl::Status Append(std::string_view data) override {
+    uint64_t at = _size.load(std::memory_order_relaxed);
     while (!data.empty()) {
-      const ssize_t written = write(_fd, data.data(), data.size());
+      const ssize_t written = pwrite(_fd, data.data(), data.size(), static_cast<off_t>(at));
       if (written < 0) {
         if (errno == EINTR) continue;
         return ErrnoStatus("write", _path);
       }
       data.remove_prefix(static_cast<size_t>(written));
-      _size.fetch_add(static_cast<uint64_t>(written), std::memory_order_relaxed);
+      at += static_cast<uint64_t>(written);
+      _size.store(at, std::memory_order_relaxed);
     }
+    _extent = std::max(_extent, at);
     return absl::OkStatus();
   }
   absl::Status Sync() override {
@@ -54,10 +59,36 @@ class PosixWritableFile final : public WritableFile {
   }
   uint64_t size() const override { return _size.load(std::memory_order_relaxed); }
 
+  absl::Status Reserve(uint64_t bytes) override {
+    // Zeros rather than fallocate, as a block that was never written can still need its metadata
+    // changed at a sync, and on some file systems does.
+    static const std::array<char, 1 << 16> kZeros{};
+    const uint64_t end = _size.load(std::memory_order_relaxed) + bytes;
+    while (_extent < end) {
+      const size_t count = static_cast<size_t>(std::min<uint64_t>(end - _extent, kZeros.size()));
+      const ssize_t written = pwrite(_fd, kZeros.data(), count, static_cast<off_t>(_extent));
+      if (written < 0 && errno == EINTR) continue;
+      if (written <= 0) break;  // Appends will find out, if there is no room for them either.
+      _extent += static_cast<uint64_t>(written);
+    }
+    return Sync();
+  }
+  uint64_t reserved() const override { return _extent - _size.load(std::memory_order_relaxed); }
+  absl::Status ReleaseReserved() override {
+    const uint64_t size = _size.load(std::memory_order_relaxed);
+    if (_extent == size) return absl::OkStatus();
+    if (ftruncate(_fd, static_cast<off_t>(size)) != 0 || fsync(_fd) != 0) {
+      return ErrnoStatus("truncate", _path);
+    }
+    _extent = size;
+    return absl::OkStatus();
+  }
+
  private:
   std::string _path;
   int _fd;
   std::atomic<uint64_t> _size{0};
+  uint64_t _extent = 0;  // The size of the file, with reserved bytes. Writer only.
 };
 
 class PosixReadableFile final : public ReadableFile {
@@ -96,7 +127,7 @@ class PosixFileLock final : public FileLock {
 class PosixFileSystem final : public FileSystem {
  public:
   absl::StatusOr<std::unique_ptr<WritableFile>> Create(const std::string& path) override {
-    const int fd = open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_APPEND | O_CLOEXEC, 0644);
+    const int fd = open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
     if (fd < 0) return ErrnoStatus("create", path);
     return std::unique_ptr<WritableFile>(new PosixWritableFile(path, fd));
   }

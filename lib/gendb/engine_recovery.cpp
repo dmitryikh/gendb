@@ -276,8 +276,8 @@ absl::Status Engine::Recover() {
   for (size_t c = 0; c < collection_count(); ++c) {
     if (!_collections[c]->ephemeral) names.emplace_back(_collections[c]->id, _collections[c]->name);
   }
-  _wal = std::make_unique<Wal>(
-      Wal::Options{_file_system, path, _options.wal_segment_bytes, std::move(names)});
+  _wal = std::make_unique<Wal>(Wal::Options{_file_system, path, _options.wal_segment_bytes,
+                                            _options.wal_reserve_bytes, std::move(names)});
 
   _indices_deferred = true;
   auto checkpoints =

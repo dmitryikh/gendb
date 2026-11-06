@@ -77,6 +77,20 @@ absl::StatusOr<bool> Wal::MarkedDurableAfter(const std::string& path, uint64_t o
   return false;
 }
 
+absl::StatusOr<uint64_t> Wal::BytesAfterZeros(const std::string& path, uint64_t offset) {
+  FileSystem& file_system = *_options.file_system;
+  auto size = file_system.FileSize(path);
+  if (!size.ok()) return size.status();
+  if (*size <= offset) return uint64_t{0};
+  auto file = file_system.OpenForRead(path);
+  if (!file.ok()) return file.status();
+  std::string rest(*size - offset, '\0');
+  auto got = (*file)->Read(offset, rest.data(), rest.size());
+  if (!got.ok()) return got.status();
+  const size_t last = std::string_view(rest.data(), *got).find_last_not_of('\0');
+  return last == std::string_view::npos ? uint64_t{0} : uint64_t{last + 1};
+}
+
 absl::StatusOr<Wal::Recovered> Wal::Recover(
     uint64_t after_lsn, const std::function<absl::Status(const Frame&)>& apply) {
   FileSystem& file_system = *_options.file_system;
@@ -144,6 +158,11 @@ absl::StatusOr<Wal::Recovered> Wal::Recover(
         if (status != ParseStatus::kOk) {
           if (status == ParseStatus::kIncomplete && (*reader)->at_end()) break;
           const uint64_t damaged_at = (*reader)->offset();
+          // Zeros to the end are what is left of a reservation, if a crash took away the cut that
+          // follows the end of a segment. Were any commits gone, the next segment would show a gap.
+          auto bytes = BytesAfterZeros(path, damaged_at);
+          if (!bytes.ok()) return bytes.status();
+          if (*bytes == 0) break;
           auto marked = MarkedDurableAfter(path, damaged_at, result.last_lsn + 1);
           if (!marked.ok()) return marked.status();
           if (!last_segment || *marked) {
@@ -179,7 +198,9 @@ absl::StatusOr<Wal::Recovered> Wal::Recover(
         auto on_disk = file_system.FileSize(path);
         if (!on_disk.ok()) return on_disk.status();
         if (*on_disk > size) {
-          result.torn_bytes_cut = *on_disk - size;
+          auto torn = BytesAfterZeros(path, size);
+          if (!torn.ok()) return torn.status();
+          result.torn_bytes_cut = *torn;
           RETURN_IF_ERROR(file_system.TruncateAndSync(path, size));
         }
       }
@@ -230,6 +251,7 @@ absl::Status Wal::StartSegment(const HistoryId& history, uint64_t next_lsn) {
   std::lock_guard lock(_mutex);
   if (_current != nullptr) {
     RETURN_IF_ERROR(_current->Sync());
+    RETURN_IF_ERROR(_current->ReleaseReserved());
     _segments.back().bytes = _current->size();
   }
   _history = history;
@@ -252,6 +274,17 @@ absl::Status Wal::Append(std::string_view frames, uint64_t last_lsn, bool sync) 
   }
   // Only this thread replaces _current, so reading it here needs no lock.
   WritableFile& file = *_current;
+  if (sync && _options.reserve_bytes > 0) {
+    // Room for a sync mark as well. Commits that are not durable do not come here: it would slow
+    // them down, for a sync they do not wait for.
+    const uint64_t needed = frames.size() + kFrameHeaderSize + 16;
+    if (file.reserved() < needed) {
+      const uint64_t to_end =
+          _options.segment_bytes > file.size() ? _options.segment_bytes - file.size() : 0;
+      const uint64_t bytes = std::max(needed, std::min(_options.reserve_bytes, to_end));
+      if (absl::Status status = file.Reserve(bytes); !status.ok()) return Fail(std::move(status));
+    }
+  }
   const uint64_t synced = _synced_lsn.load(std::memory_order_acquire);
   if (_bytes_since_mark >= kSyncMarkIntervalBytes && synced > _marked_lsn) {
     if (absl::Status status = WriteSyncMark(file, synced); !status.ok()) {
@@ -286,7 +319,8 @@ absl::Status Wal::Close() {
   RETURN_IF_ERROR(Sync());
   if (_current == nullptr) return absl::OkStatus();
   RETURN_IF_ERROR(WriteSyncMark(*_current, _synced_lsn.load(std::memory_order_acquire)));
-  return _current->Sync();
+  RETURN_IF_ERROR(_current->Sync());
+  return _current->ReleaseReserved();
 }
 
 absl::Status Wal::Rotate() {
@@ -304,6 +338,9 @@ absl::Status Wal::RollLocked() {
   uint64_t synced = _synced_lsn.load(std::memory_order_relaxed);
   while (synced < written && !_synced_lsn.compare_exchange_weak(synced, written)) {
   }
+  // Before the next segment exists, as only the last one is expected to end in anything but
+  // commits.
+  RETURN_IF_ERROR(_current->ReleaseReserved());
   _segments.back().bytes = _current->size();
   return OpenSegmentLocked(written + 1);
 }
@@ -425,12 +462,21 @@ absl::StatusOr<bool> WalCursor::Read(uint64_t* position, uint64_t limit, size_t 
   const size_t start_size = out->size();
   while (_next_lsn <= limit && out->size() - start_size < max_bytes) {
     Frame frame;
-    const ParseStatus status = _reader->Peek(&frame);
+    ParseStatus status = _reader->Peek(&frame);
     RETURN_IF_ERROR(_reader->status());
+    bool at_zeros = false;
     if (status == ParseStatus::kCorrupt) {
-      return absl::DataLossError(absl::StrCat("Damaged segment: ", _reader_path));
+      // What it read ahead may have been zeros of a reservation, or part of a commit still being
+      // written, which by now are what the commit it is after: only reading again can tell.
+      _reader->Reread();
+      status = _reader->Peek(&frame);
+      RETURN_IF_ERROR(_reader->status());
+      at_zeros = status == ParseStatus::kCorrupt && _reader->AtZeros();
+      if (status == ParseStatus::kCorrupt && !at_zeros) {
+        return absl::DataLossError(absl::StrCat("Damaged segment: ", _reader_path));
+      }
     }
-    if (status == ParseStatus::kIncomplete) {
+    if (status == ParseStatus::kIncomplete || at_zeros) {
       // The end of this segment: the commit it was to hold is in the next one.
       const std::string previous = _reader_path;
       auto found = locate(_next_lsn);

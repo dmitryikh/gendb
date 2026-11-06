@@ -72,15 +72,19 @@ class MemoryFileSystem final : public FileSystem {
       }
       _entries = _durable;
       for (auto& [path, node] : _entries) {
-        const bool growing = node->data.size() > node->synced;
-        size_t keep = node->synced;
+        // Written and not synced, which may lie over reserved zeros.
+        const bool growing = node->written > node->synced_written;
+        size_t keep = node->synced_written;
         if (loss == Loss::kPartOfUnsynced && growing) {
-          keep += rng() % (node->data.size() - node->synced + 1);
+          keep += rng() % (node->written - node->synced_written + 1);
         }
-        node->data.resize(keep);
+        // Reserved zeros that were synced are there, as far as nothing survived over them.
+        const size_t extent = std::max(keep, node->synced);
+        node->data.resize(extent);
+        node->data.replace(keep, extent - keep, extent - keep, '\0');
         // The OS writes pages in any order, so unsynced data can have holes in what survives.
-        if (keep > node->synced && rng() % 2 == 0) {
-          const size_t begin = node->synced + rng() % (keep - node->synced);
+        if (keep > node->synced_written && rng() % 2 == 0) {
+          const size_t begin = node->synced_written + rng() % (keep - node->synced_written);
           const size_t count = std::min<size_t>(1 + rng() % 64, keep - begin);
           node->data.replace(begin, count, count, '\0');
         }
@@ -92,7 +96,10 @@ class MemoryFileSystem final : public FileSystem {
         }
       }
     }
-    for (auto& [path, node] : _entries) node->synced = node->data.size();
+    for (auto& [path, node] : _entries) {
+      node->synced = node->data.size();
+      node->written = node->synced_written = node->data.size();
+    }
     _durable = _entries;
     _pending.clear();
     _crashed = false;
@@ -115,7 +122,7 @@ class MemoryFileSystem final : public FileSystem {
     std::lock_guard lock(_mutex);
     auto& node = _entries.at(path);
     node->data.append(bytes);
-    node->synced = node->data.size();
+    node->synced = node->written = node->synced_written = node->data.size();
   }
   size_t largest_read() const {
     std::lock_guard lock(_mutex);
@@ -135,7 +142,7 @@ class MemoryFileSystem final : public FileSystem {
       _pending.push_back({path, path, node});
     } else {
       node->data.clear();
-      node->synced = 0;
+      node->synced = node->written = node->synced_written = 0;
     }
     return std::unique_ptr<WritableFile>(new File(*this, node));
   }
@@ -191,7 +198,7 @@ class MemoryFileSystem final : public FileSystem {
     if (absl::Status status = Step(); !status.ok()) return status;
     const auto& node = _entries.at(path);
     node->data.resize(size);
-    node->synced = size;
+    node->synced = node->written = node->synced_written = size;
     return absl::OkStatus();
   }
 
@@ -216,8 +223,10 @@ class MemoryFileSystem final : public FileSystem {
 
  private:
   struct Node {
-    std::string data;
-    size_t synced = 0;
+    std::string data;           // With reserved zeros at its end.
+    size_t synced = 0;          // The size that is durable.
+    size_t written = 0;         // Appended so far.
+    size_t synced_written = 0;  // Appended so far when last synced.
   };
   // A rename from `from` to `to`, which is a creation if they are equal, and a removal if `to` is
   // empty.
@@ -239,24 +248,57 @@ class MemoryFileSystem final : public FileSystem {
     absl::Status Append(std::string_view data) override {
       std::lock_guard lock(_owner._mutex);
       if (absl::Status status = _owner.Step(); !status.ok()) {
-        if (!_owner._crashed) _node->data.append(data.substr(0, data.size() / 2));
+        if (!_owner._crashed) Write(data.substr(0, data.size() / 2));
         return status;
       }
-      _node->data.append(data);
+      Write(data);
       return absl::OkStatus();
     }
     absl::Status Sync() override {
       std::lock_guard lock(_owner._mutex);
       if (absl::Status status = _owner.Step(); !status.ok()) return status;
       _node->synced = _node->data.size();
+      _node->synced_written = _node->written;
       return absl::OkStatus();
     }
     uint64_t size() const override {
       std::lock_guard lock(_owner._mutex);
-      return _node->data.size();
+      return _node->written;
+    }
+    // Two operations, for a crash to fall between: the zeros, and the sync.
+    absl::Status Reserve(uint64_t bytes) override {
+      std::lock_guard lock(_owner._mutex);
+      if (absl::Status status = _owner.Step(); status.ok()) {
+        _node->data.resize(std::max(_node->data.size(), _node->written + bytes), '\0');
+      } else if (_owner._crashed) {
+        return status;
+      }
+      if (absl::Status status = _owner.Step(); !status.ok()) return status;
+      _node->synced = _node->data.size();
+      _node->synced_written = _node->written;
+      return absl::OkStatus();
+    }
+    uint64_t reserved() const override {
+      std::lock_guard lock(_owner._mutex);
+      return _node->data.size() - _node->written;
+    }
+    absl::Status ReleaseReserved() override {
+      std::lock_guard lock(_owner._mutex);
+      if (_node->data.size() == _node->written) return absl::OkStatus();
+      if (absl::Status status = _owner.Step(); !status.ok()) return status;
+      _node->data.resize(_node->written);
+      _node->synced = _node->synced_written = _node->written;
+      return absl::OkStatus();
     }
 
    private:
+    void Write(std::string_view data) {
+      const size_t over = std::min(data.size(), _node->data.size() - _node->written);
+      _node->data.replace(_node->written, over, data.substr(0, over));
+      _node->data.append(data.substr(over));
+      _node->written += data.size();
+    }
+
     MemoryFileSystem& _owner;
     std::shared_ptr<Node> _node;
   };
