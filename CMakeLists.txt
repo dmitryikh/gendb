@@ -150,6 +150,7 @@ install(DIRECTORY lib/gendb DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
 install(DIRECTORY gen/ DESTINATION ${GENDB_INSTALL_GEN_DIR}
     PATTERN "__pycache__" EXCLUDE
+    PATTERN ".pytest_cache" EXCLUDE
     PATTERN "*_test.py" EXCLUDE
     PATTERN "fuzz_*" EXCLUDE
 )

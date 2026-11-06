@@ -1,0 +1,31 @@
+namespace tictactoe;
+
+enum Mark : uint8 {
+  kEmpty = 0;
+  kX = 1;
+  kO = 2;
+}
+
+enum Result : uint8 {
+  kInProgress = 0;
+  kXWins = 1;
+  kOWins = 2;
+  kDraw = 3;
+}
+
+// The field of one game, as the player who owns this database last left it.
+message Game {
+  1 game_id: uint64;
+  2 board: repeated Mark;
+  3 ply: uint32;  // Moves made so far.
+  4 turn: Mark;   // Who moves next: kEmpty once the game has ended.
+  5 result: Result;
+}
+
+// One move by the player who owns this database.
+message Move {
+  1 game_id: uint64;
+  2 ply: uint32;
+  3 player: Mark;
+  4 cell: uint8;
+}

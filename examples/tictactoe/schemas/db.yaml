@@ -1,0 +1,25 @@
+types:
+  schema_files:
+    - schemas/tictactoe.gendb
+  include_prefix: ""
+
+options:
+  cpp_namespace: "tictactoe"
+
+collections:
+  - name: games
+    type: tictactoe.Game
+    primary_key:
+      - game_id
+
+  - name: moves
+    type: tictactoe.Move
+    primary_key:
+      - game_id
+      - ply
+
+indices:
+  - name: move_by_game
+    collection: moves
+    fields:
+      - game_id

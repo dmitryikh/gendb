@@ -36,6 +36,8 @@ replica.Status();                                        // state, LSNs, last er
 ```
 
 `examples/replication_demo.cpp` is a complete pair of programs, for gRPC and for raw TCP.
+[`examples/tictactoe`](../examples/tictactoe/README.md) is an application with its own build, in which
+two processes write to each other: each has a database of its own and a replica of the other's.
 
 ## Transports
 

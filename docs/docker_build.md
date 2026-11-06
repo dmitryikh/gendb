@@ -27,6 +27,7 @@ docker run --rm -v "$PWD":/workspace -w /workspace -v gendb-conan:/home/dev/.con
 | `tsan` | All tests under ThreadSanitizer |
 | `release` | Release build with gRPC, all tests, and the replication demo as two processes over gRPC and TCP. gRPC takes a long time to build the first time |
 | `package` | Installs the library and builds [tests/package](../tests/package) against it |
+| `example` | Makes the Conan package, builds [examples/tictactoe](../examples/tictactoe/README.md) against it, and plays a match between two processes |
 | `fuzz` | Runs each fuzzer, and the schema parser's, for `FUZZ_SECONDS` (`-e FUZZ_SECONDS=300`), 60 by default. A crash leaves its input in `build/docker-fuzz/artifacts` |
 
 Only `release` builds the gRPC transport: other jobs pass `-o "&:with_grpc=False"` to Conan. Conan's prebuilt Abseil is not sanitized, while with AddressSanitizer its headers add iterator generations to `absl::flat_hash_map`, so `asan` and `fuzz` pass `-DNDEBUG_SANITIZER` to keep one layout. Your own sanitized build of GenDB needs the same flag, or an Abseil built with the same sanitizer. Fuzzing and sanitizing leave gRPC out as its uninstrumented libraries give false reports.
