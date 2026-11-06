@@ -111,6 +111,16 @@ class MemoryFileSystem final : public FileSystem {
     std::lock_guard lock(_mutex);
     return _entries.at(path)->data;
   }
+  void AppendBytes(const std::string& path, std::string_view bytes) {
+    std::lock_guard lock(_mutex);
+    auto& node = _entries.at(path);
+    node->data.append(bytes);
+    node->synced = node->data.size();
+  }
+  size_t largest_read() const {
+    std::lock_guard lock(_mutex);
+    return _largest_read;
+  }
   void FlipByte(const std::string& path, size_t offset) {
     std::lock_guard lock(_mutex);
     _entries.at(path)->data[offset] ^= 0x5a;
@@ -258,6 +268,7 @@ class MemoryFileSystem final : public FileSystem {
     absl::StatusOr<size_t> Read(uint64_t offset, char* out, size_t size) override {
       std::lock_guard lock(_owner._mutex);
       if (_owner._crashed) return Stopped();
+      _owner._largest_read = std::max(_owner._largest_read, size);
       if (!_owner._failing_reads.empty() && offset >= _owner._failing_reads_from &&
           _path.find(_owner._failing_reads) != std::string::npos) {
         return absl::InternalError(absl::StrCat("Cannot read ", _path));
@@ -310,6 +321,7 @@ class MemoryFileSystem final : public FileSystem {
   std::vector<DirectoryOp> _pending;                      // What may survive it.
   std::map<std::string, bool> _locks;
   uint64_t _operations = 0;
+  size_t _largest_read = 0;
   std::optional<uint64_t> _crash_in;
   std::optional<uint64_t> _fail_in;
   absl::Status _failure;

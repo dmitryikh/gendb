@@ -39,7 +39,9 @@ class FrameFileReader final : public FrameSource {
 
  private:
   explicit FrameFileReader(std::unique_ptr<ReadableFile> file) : _file(std::move(file)) {}
-  size_t Fill(size_t at_least);
+  // Reads one more block. A frame's size field is not trusted for this: in a torn tail it is
+  // garbage, and could ask for 4 GB.
+  size_t Fill();
 
   std::unique_ptr<ReadableFile> _file;
   absl::Status _status;

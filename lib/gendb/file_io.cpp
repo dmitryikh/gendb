@@ -1,8 +1,5 @@
 #include "gendb/file_io.h"
 
-#include <algorithm>
-#include <cstring>
-
 namespace gendb::internal {
 namespace {
 
@@ -17,13 +14,12 @@ absl::StatusOr<std::unique_ptr<FrameFileReader>> FrameFileReader::Open(FileSyste
   return std::unique_ptr<FrameFileReader>(new FrameFileReader(std::move(*file)));
 }
 
-size_t FrameFileReader::Fill(size_t at_least) {
+size_t FrameFileReader::Fill() {
   _buffer.erase(0, _begin);
   _begin = 0;
   const size_t have = _buffer.size();
-  const size_t want = std::max(at_least, kReadBlock);
-  _buffer.resize(have + want);
-  auto got = _file->Read(_read_at, _buffer.data() + have, want);
+  _buffer.resize(have + kReadBlock);
+  auto got = _file->Read(_read_at, _buffer.data() + have, kReadBlock);
   if (!got.ok()) {
     _status = got.status();
     _buffer.resize(have);
@@ -36,14 +32,9 @@ size_t FrameFileReader::Fill(size_t at_least) {
 
 ParseStatus FrameFileReader::Peek(Frame* frame) {
   for (;;) {
-    const std::string_view available = std::string_view(_buffer).substr(_begin);
-    const ParseStatus status = ParseFrame(available, frame);
+    const ParseStatus status = ParseFrame(std::string_view(_buffer).substr(_begin), frame);
     if (status == ParseStatus::kOk) _current_size = frame->raw.size();
-    if (status != ParseStatus::kIncomplete) return status;
-    uint32_t size = 0;
-    if (available.size() >= kFrameHeaderSize) std::memcpy(&size, available.data() + 4, 4);
-    const size_t needed = kFrameHeaderSize + size;
-    if (Fill(needed > available.size() ? needed - available.size() : 0) == 0) return status;
+    if (status != ParseStatus::kIncomplete || Fill() == 0) return status;
   }
 }
 

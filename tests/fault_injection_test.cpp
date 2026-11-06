@@ -34,14 +34,11 @@ constexpr auto kPatience = std::chrono::seconds(30);
 #define GENDB_TSAN 1
 #endif
 #endif
-// ThreadSanitizer makes threads slow and memory expensive: its shadow memory for these thousands of
-// short-lived databases outgrows a small machine.
+// Each attempt starts threads, which ThreadSanitizer makes slow.
 #ifdef GENDB_TSAN
 constexpr uint32_t kInstallCrashAttempts = 1;
-constexpr uint64_t kLongSegmentCrashStep = 60;
 #else
 constexpr uint32_t kInstallCrashAttempts = 6;
-constexpr uint64_t kLongSegmentCrashStep = 3;
 #endif
 using State = std::map<uint64_t, int32_t>;  // Account ID to age.
 
@@ -179,7 +176,7 @@ TEST(FaultInjectionTest, PowerLossInALongSegmentCutsOnlyWhatWasNeverPromised) {
     workload.Run(**db, kCommits);
     total_operations = file_system->operations();
   }
-  for (uint64_t at = 0; at <= total_operations; at += kLongSegmentCrashStep) {
+  for (uint64_t at = 0; at <= total_operations; at += 3) {
     for (uint32_t seed = 0; seed < 3; ++seed) {
       auto file_system = std::make_shared<MemoryFileSystem>();
       file_system->CrashAfter(at);
@@ -281,6 +278,26 @@ TEST(FaultInjectionTest, ReadErrorDuringRecoveryFailsAndCutsNothing) {
   auto db = Db::Open(Options(file_system));
   ASSERT_TRUE(db.ok()) << db.status();
   EXPECT_EQ((*db)->engine().Stats().lsn, 3u);
+}
+
+// The size field of a frame in a torn tail is garbage, and must not decide how much memory to use.
+TEST(FaultInjectionTest, GarbageSizeInATornTailDoesNotAllocateIt) {
+  auto file_system = std::make_shared<MemoryFileSystem>();
+  {
+    auto db = Db::Open(Options(file_system));
+    ASSERT_TRUE(db.ok());
+    Workload workload;
+    workload.Run(**db, 3);
+  }
+  std::string last;
+  for (const std::string& path : file_system->Paths()) {
+    if (path.find("wal-") != std::string::npos) last = path;
+  }
+  file_system->AppendBytes(last, std::string("\x12\x34\x56\x78\xff\xff\xff\xff", 8));
+  auto db = Db::Open(Options(file_system));
+  ASSERT_TRUE(db.ok()) << db.status();
+  EXPECT_EQ((*db)->engine().Stats().lsn, 3u);
+  EXPECT_LE(file_system->largest_read(), size_t{1} << 20);
 }
 
 TEST(FaultInjectionTest, ReadErrorPartWayThroughALogFailsAndCutsNothing) {
