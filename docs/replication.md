@@ -105,6 +105,9 @@ replication, not to the commits.
 
 **Applying.** Each commit is applied like a local one, indices included, under one sequence number:
 readers on the replica see whole commits only. A batch of commits arriving together pays one fsync.
+An `Update` travels as its [patch](storage_engine.md#files), so a small change to a large record costs
+47 bytes rather than the record. Applying it gives the primary's record byte for byte, which the
+checksum in the entry verifies.
 
 **Installing a checkpoint** on a replica that already has data does not disturb its readers. The
 incoming data is held aside and verified, on disk or in memory, then linked in under one sequence
@@ -136,8 +139,9 @@ from the new primary and lose whatever only they had. There is no election or fe
 primary and keeping the old one from taking writes are the application's job.
 
 A replica ahead of its primary, with a higher LSN in the same history, means the primary lost data,
-as by restoring a backup. It gets a checkpoint too. A commit that fails to apply, or arrives damaged,
-also causes one.
+as by restoring a backup. It gets a checkpoint too. So does one whose state turns out to differ, which
+a patch's checksum reveals as soon as a record that differs is updated, or which arrives damaged.
+Differences in records that are never patched stay unnoticed.
 
 A memory-only primary starts a new history on each start, so its replicas follow it to an empty state.
 
@@ -156,6 +160,11 @@ Messages are forward and backward compatible, so fields can differ freely. For c
 
 Only the ID and the name travel. Indices need no metadata, as each side derives its own from its code
 when it knows the collection.
+
+This covers schemas. A change to the log format itself, `kFormatVersion`, comes with a new protocol
+version, and the two sides must then speak the same one. Formats 1 and 2 are not interchangeable in
+the stream: a primary refuses replicas that speak another protocol, with the reason in
+`Status().last_error`.
 
 ## Performance
 

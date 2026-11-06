@@ -258,4 +258,5 @@ Stored data depends on these bytes. When changing `message.h` or `message.cpp`:
 | `gen/templates/message_class_template.h.jinja2` | Generated classes |
 | `gen/schema_validator.py` | Schema checks; `MAX_FIELD_ID` must match `kMaxFieldId` |
 | `tests/message_test.cpp` | Generated API and schema evolution tests |
+| `lib/gendb/message_test.cpp`, `ResultBytesArePartOfTheLogFormat` | Pins the bytes patches produce, which the log depends on: see [the storage engine](storage_engine.md#files) |
 | `tests/database_test.cpp` | Messages through transactions, indices, sequences and recovery |

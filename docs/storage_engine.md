@@ -111,10 +111,31 @@ only ephemeral collections do not get one. Collections are identified in frames 
 name, so reordering them in the schema is safe, at 4 bytes per entry.
 
 **Log format.** Each segment starts with a header (format version, history ID, first LSN, collection
-names). A commit is `[lsn: u64] [count: u32]`, then for each record `[collection: u32] [deleted: u8]
-[key size: varint] [value size: varint] key value`, which is 21 bytes per commit and 7 or more per
-record on top of keys and values. Records are logged whole, even after a patch: recovery does not
-depend on the patch code, and a reader of the log needs no earlier state.
+names). A commit is `[lsn: u64] [count: u32]`, then for each record `[collection: u32] [op: u8] [key
+size: varint] [value size: varint] key value`, which is 21 bytes per commit and 7 or more per record
+on top of keys and values. The operation is a put, a delete or a patch.
+
+**Patches.** An `Update` is logged as its patch, when that is smaller than the record:
+
+| A commit changing one float | Whole record | Patch |
+| --- | ---: | ---: |
+| 57-byte account | 93 bytes | 47 bytes |
+| Record with a 1 KB string | 1,087 bytes | 47 bytes |
+
+The value is `[crc32c of the resulting record: u32] [patch]`, and the patch is field IDs and values,
+so it needs no schema and unknown fields travel too. Several `Update`s of one record in a transaction
+make one patch against the committed record. A record created or replaced in the transaction is
+logged whole, as is a `Put`, which says nothing about what changed.
+
+**The checksum** is what makes this safe. A replay recomputes the record from the previous one, and
+the frame's own checksum cannot tell if that previous state was wrong. Comparing the result catches
+it at the first patch to that record: recovery reports `DataLoss`, and a replica fetches a new
+checkpoint. Records logged whole need no such check, as they do not depend on earlier state.
+
+This makes **the bytes a patch produces part of the on-disk format**: `Rebuild` and
+`ApplyPatchInplace` must keep giving the same result for logs already written, and
+`ResultBytesArePartOfTheLogFormat` pins them. A change to them has to bump `kFormatVersion` and keep
+old logs replayable, for instance by taking a checkpoint with the old code first.
 
 **A new segment** starts at `wal_segment_bytes`. The old one is fsynced before the new one exists,
 which is what makes the next rule safe.
@@ -202,7 +223,7 @@ snapshot held across many commits keeps every version they replaced. `engine().S
 
 1. **Write set.** `Put`, `Update` and `Delete` build new versions privately. Index changes are
    computed here from the old and new messages, and a change and its opposite cancel out.
-2. **Log.** All the records go into one frame. On failure nothing has been applied, and the
+2. **Log.** All the changes go into one frame, as patches where possible. On failure nothing has been applied, and the
    transaction is rolled back.
 3. **Apply.** Versions and index entries are linked in, then the sequence number is published.
 4. **Deliver and reclaim.**
@@ -285,6 +306,15 @@ mean much.
 | Commit one scalar patch, memory only | 465 ns | 468 ns |
 | Commit under a long-lived snapshot | 350 ns | 366 ns |
 
+Logging patches, compared with the same code logging whole records, one changed field per commit:
+
+| Operation | Whole records | Patches |
+| --- | ---: | ---: |
+| Non-durable commit, small record | 525 ns | 569 ns |
+| Non-durable commit, record with a 1 KB string | 1.15 µs | 850 ns |
+| Log for 100,000 updates of 57-byte accounts | 9.3 MB | 4.7 MB |
+| Replaying those updates, with opening | 122 ms | 127 ms |
+
 Non-durable commits are 40% faster. Everything else is within this machine's noise, as expected: the
 read path did not change, and a durable commit is one `fdatasync` either way. Most of the time to open
 goes to inserting into the skip list; building indices from sorted keys would be the next thing to
@@ -307,6 +337,9 @@ of table slots, and about 43 bytes per index entry plus its key, before allocato
 - `Checkpoint()` must not be called while holding a transaction on the same thread.
 - Views from a `ScopedWrite` are invalidated by writing that key and by `Commit`. Views from a
   `Snapshot` live until it is destroyed.
+- A replica that crashes just after logging a commit that does not fit its state, before it can fetch
+  a checkpoint, then fails to open with `DataLoss`. Delete its directory to seed it again. This takes
+  a replica already wrong through a bug or a damaged disk.
 - Tested by killing processes and by cutting and damaging files. Power loss itself and failing disks
   are not simulated, so the ordering of fsyncs is checked by review only. The kill tests use `fork`
   and are skipped under ThreadSanitizer.
@@ -318,9 +351,9 @@ of table slots, and about 43 bytes per index entry plus its key, before allocato
    would need a read-through tier.
 2. **Full checkpoints**, rather than incremental ones. The write cost is the whole dataset each time,
    amortized by the trigger above. Far simpler, and the same bytes seed a replica.
-3. **Whole records in the log**, rather than patches. Larger logs for small updates to large
-   messages, but recovery and replicas do not depend on the patch code. The entry has room for a
-   patch form if logs turn out to matter.
+3. **Patches in the log, with a checksum of the result.** Smaller logs and less to send, at the price
+   of recovery depending on the patch code, whose output is now part of the format, and about 8% on
+   commits of small records.
 4. **Before and after states for subscribers**, rather than patches, as explained above.
 5. **Backpressure rather than loss** when a queued subscriber falls behind.
 6. **Keeping foreign collections** rather than refusing to open or dropping them. Safe by default, at

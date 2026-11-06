@@ -22,7 +22,7 @@ applyTo: "**"
 Schemas evolve only in backward-compatible ways: a field keeps its ID and type forever, new fields are appended, and unused fields get `(deprecated)` instead of being removed.
 
 ## Storage Engine
-`docs/storage_engine.md` describes transactions, snapshots, durability, compaction and subscriptions. Read it before changing `lib/gendb/engine.*`, `record_table.h`, `ordered_index.h`, `wal.*`, `checkpoint.*`, `log_format.h` or `file_io.*`. Their concurrency is lock-free with one writer: run `SnapshotTest` and `ReplicationTest` under ThreadSanitizer after any change. Files on disk must stay readable across versions, or bump `kFormatVersion`.
+`docs/storage_engine.md` describes transactions, snapshots, durability, compaction and subscriptions. Read it before changing `lib/gendb/engine.*`, `record_table.h`, `ordered_index.h`, `wal.*`, `checkpoint.*`, `log_format.h` or `file_io.*`. Their concurrency is lock-free with one writer: run `SnapshotTest` and `ReplicationTest` under ThreadSanitizer after any change. Files on disk must stay readable across versions, or bump `kFormatVersion`. The log holds patches with a checksum of their result, so the bytes `Rebuild` and `ApplyPatchInplace` produce are part of that format too: never update the pinned values in `ResultBytesArePartOfTheLogFormat` without handling old logs.
 
 ## Replication
 `docs/replication.md` describes the protocol and how transports plug in. The core in `lib/gendb/replication.*` must not depend on any network library: gRPC stays in `replication_grpc.*` and its optional target.
