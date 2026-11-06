@@ -30,10 +30,25 @@ ScanCursor::ScanCursor(const Transaction& txn, size_t collection)
 void ScanCursor::Next() noexcept {
   _value.reset();
   while (_next <= _slots->mask) {
+    // A record is a slot, then a node, then a version, each anywhere in memory. Asking for them
+    // ahead of time, a stage at a time, turns the misses into something the next few steps do not
+    // wait for.
+    if (_next + kPrefetchNode <= _slots->mask) {
+      const RecordNode* soon = _slots->slots[_next + kPrefetchNode].load(std::memory_order_relaxed);
+      if (soon != nullptr && soon != RecordTable::Erased()) __builtin_prefetch(soon);
+      // Acquire, as this one goes on to read the node.
+      const RecordNode* sooner =
+          _slots->slots[_next + kPrefetchVersion].load(std::memory_order_acquire);
+      if (sooner != nullptr && sooner != RecordTable::Erased()) {
+        __builtin_prefetch(sooner->head.load(std::memory_order_relaxed));
+      }
+    }
     const RecordNode* node = _slots->slots[_next++].load(std::memory_order_acquire);
     if (node == nullptr || node == RecordTable::Erased()) continue;
     // A record the transaction changed comes with the uncommitted ones, below.
-    if (_txn != nullptr && _txn->FindPending(_collection, node->key()) != nullptr) continue;
+    if (_txn != nullptr && _txn->FindPending(_collection, node->hash, node->key()) != nullptr) {
+      continue;
+    }
     const Version* v = node->head.load(std::memory_order_acquire);
     while (v != nullptr && v->seq > _seq) v = v->older;
     if (v != nullptr && !v->tombstone) {
@@ -72,7 +87,7 @@ IndexCursor::IndexCursor(const Engine& engine, size_t index, uint64_t seq, const
       _hi(std::move(hi)),
       _options(options) {
   if (txn != nullptr) {
-    const auto& deltas = txn->_index_deltas[index];
+    const auto& deltas = txn->_index_deltas[index].Ordered();
     for (auto it = deltas.lower_bound(lo); it != deltas.end() && (_hi.empty() || it->first < _hi);
          ++it) {
       _deltas.push_back({it->first, it->second.added, it->second.secondary_size});
@@ -106,9 +121,12 @@ const IndexEntry* IndexCursor::PreviousVisible(std::string_view bound) const noe
   }
 }
 
-std::optional<BytesConstView> IndexCursor::Lookup(std::string_view primary_key) const noexcept {
-  if (_txn != nullptr) return _txn->Get(_collection, AsBytes(primary_key));
-  return _engine->ReadAt(_collection, HashKey(primary_key), primary_key, _seq);
+std::optional<BytesConstView> IndexCursor::Lookup(const IndexEntry* entry) const noexcept {
+  if (_txn != nullptr) return _txn->Get(_collection, AsBytes(entry->primary_key()));
+  const Version* v = entry->node->head.load(std::memory_order_acquire);
+  while (v != nullptr && v->seq > _seq) v = v->older;
+  if (v == nullptr || v->tombstone) return std::nullopt;
+  return v->bytes();
 }
 
 void IndexCursor::Next() {
@@ -129,12 +147,12 @@ void IndexCursor::Next() {
       if (_entry != nullptr && delta->key == _entry->key()) advance();
       if (delta->added) {
         _primary_key = std::string_view(delta->key).substr(delta->secondary_size);
-        _value = Lookup(_primary_key);
+        _value = _txn->Get(_collection, AsBytes(_primary_key));
       }
       ++_next_delta;
     } else {
       _primary_key = _entry->primary_key();
-      _value = Lookup(_primary_key);
+      _value = Lookup(_entry);
       advance();
     }
   }

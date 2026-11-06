@@ -10,7 +10,11 @@
 #include <span>
 #include <string_view>
 
+#include "gendb/block_pool.h"
+
 namespace gendb::internal {
+
+struct RecordNode;
 
 inline constexpr uint64_t kNeverDeleted = std::numeric_limits<uint64_t>::max();
 
@@ -19,6 +23,9 @@ inline constexpr uint64_t kNeverDeleted = std::numeric_limits<uint64_t>::max();
 struct IndexEntry {
   uint64_t created;
   std::atomic<uint64_t> deleted;
+  // The record, which lives at least as long as this is visible to anybody, so that a scan has no
+  // need to look it up by primary key. Null only at the head of a list.
+  const RecordNode* node;
   uint32_t key_size;
   uint32_t secondary_size;
   uint8_t height;
@@ -42,20 +49,16 @@ struct IndexEntry {
 // may be standing on an entry: Unlink hides it from new traversals and keeps its next pointers
 // intact, and the engine frees it once no snapshot can still reach it.
 class OrderedIndex {
+  static constexpr int kMaxHeight = 12;
+
  public:
-  OrderedIndex() : _head(NewEntry({}, 0, 0, kMaxHeight)) {}
-  ~OrderedIndex() {
-    IndexEntry* e = _head;
-    while (e != nullptr) {
-      IndexEntry* next = e->next()[0].load(std::memory_order_relaxed);
-      Destroy(e);
-      e = next;
-    }
-  }
+  // Entries live in `pool`, which frees them when it goes.
+  explicit OrderedIndex(BlockPool& pool)
+      : _pool(pool), _head(NewEntry({}, 0, 0, nullptr, kMaxHeight)) {}
   OrderedIndex(const OrderedIndex&) = delete;
   OrderedIndex& operator=(const OrderedIndex&) = delete;
 
-  static void Destroy(IndexEntry* e) noexcept { ::operator delete(e); }
+  void Destroy(IndexEntry* e) noexcept { _pool.Free(e, BlockSize(e->height, e->key_size)); }
 
   // Any thread, with a pinned snapshot: the first entry with key >= `key`.
   const IndexEntry* LowerBound(std::string_view key) const noexcept {
@@ -88,7 +91,8 @@ class OrderedIndex {
   }
 
   // Writer only. Equal keys, from a deleted entry and its re-insertion, stay in insertion order.
-  void Insert(std::string_view key, uint32_t secondary_size, uint64_t created) {
+  void Insert(std::string_view key, uint32_t secondary_size, uint64_t created,
+              const RecordNode* node) {
     std::array<IndexEntry*, kMaxHeight> preds;
     IndexEntry* e = _head;
     for (int level = kMaxHeight - 1; level >= 0; --level) {
@@ -99,7 +103,7 @@ class OrderedIndex {
       preds[level] = e;
     }
     const int height = RandomHeight();
-    IndexEntry* entry = NewEntry(key, secondary_size, created, height);
+    IndexEntry* entry = NewEntry(key, secondary_size, created, node, height);
     if (height > _height.load(std::memory_order_relaxed)) {
       _height.store(height, std::memory_order_relaxed);
     }
@@ -110,11 +114,90 @@ class OrderedIndex {
     }
   }
 
+  // Writer only: changes in rising key order, each going on from where the last one was instead of
+  // from the top, which in a large transaction saves most of the search.
+  class SortedEditor {
+   public:
+    explicit SortedEditor(OrderedIndex& index) noexcept : _index(index) {
+      _preds.fill(index._head);
+    }
+
+    IndexEntry* Insert(std::string_view key, uint32_t secondary_size, uint64_t created,
+                       const RecordNode* node) {
+      MoveTo<true>(key);
+      const int height = _index.RandomHeight();
+      IndexEntry* entry = _index.NewEntry(key, secondary_size, created, node, height);
+      if (height > _index._height.load(std::memory_order_relaxed)) {
+        _index._height.store(height, std::memory_order_relaxed);
+      }
+      for (int level = 0; level < height; ++level) {
+        entry->next()[level].store(_preds[level]->next()[level].load(std::memory_order_relaxed),
+                                   std::memory_order_relaxed);
+        _preds[level]->next()[level].store(entry, std::memory_order_release);
+        _preds[level] = entry;
+      }
+      return entry;
+    }
+
+    void Unlink(IndexEntry* target) noexcept {
+      MoveTo<false>(target->key());
+      for (int level = 0; level < target->height; ++level) {
+        // Past any entries of the same key that were deleted before it.
+        IndexEntry* pred = _preds[level];
+        while (pred->next()[level].load(std::memory_order_relaxed) != target) {
+          pred = pred->next()[level].load(std::memory_order_relaxed);
+        }
+        pred->next()[level].store(target->next()[level].load(std::memory_order_relaxed),
+                                  std::memory_order_release);
+      }
+    }
+
+    // The entry with this key that is not deleted yet.
+    IndexEntry* FindLive(std::string_view key) noexcept {
+      MoveTo<false>(key);
+      IndexEntry* e = _preds[0]->next()[0].load(std::memory_order_relaxed);
+      while (e != nullptr && e->key() == key) {
+        if (e->deleted.load(std::memory_order_relaxed) == kNeverDeleted) return e;
+        e = e->next()[0].load(std::memory_order_relaxed);
+      }
+      return nullptr;
+    }
+
+   private:
+    // `_preds[level]` holds the last entry of each level before the previous key, which is before
+    // this one. While its next entry is at or past this key, every level above needs no look
+    // either, as a later entry there would be on this level too.
+    template <bool kPastEqual>
+    void MoveTo(std::string_view key) noexcept {
+      const auto before = [key](const IndexEntry* e) {
+        return e != nullptr && (kPastEqual ? e->key() <= key : e->key() < key);
+      };
+      int level = 0;
+      while (level < kMaxHeight - 1 &&
+             before(_preds[level]->next()[level].load(std::memory_order_relaxed))) {
+        ++level;
+      }
+      IndexEntry* e = _preds[level];
+      for (;; --level) {
+        for (IndexEntry* n = e->next()[level].load(std::memory_order_relaxed); before(n);
+             n = e->next()[level].load(std::memory_order_relaxed)) {
+          e = n;
+        }
+        _preds[level] = e;
+        if (level == 0) return;
+      }
+    }
+
+    OrderedIndex& _index;
+    std::array<IndexEntry*, kMaxHeight> _preds;
+  };
+
   // Fills an empty index from sorted keys, in linear time, before any reader exists.
   struct SortedKey {
     const char* data;
     uint32_t size;
     uint32_t secondary_size;
+    const RecordNode* node;
   };
   void BuildSorted(std::span<const SortedKey> keys, uint64_t created) {
     std::array<IndexEntry*, kMaxHeight> tails;
@@ -122,7 +205,8 @@ class OrderedIndex {
     int top = 1;
     for (const SortedKey& key : keys) {
       const int height = RandomHeight();
-      IndexEntry* entry = NewEntry({key.data, key.size}, key.secondary_size, created, height);
+      IndexEntry* entry =
+          NewEntry({key.data, key.size}, key.secondary_size, created, key.node, height);
       for (int level = 0; level < height; ++level) {
         tails[level]->next()[level].store(entry, std::memory_order_relaxed);
         tails[level] = entry;
@@ -142,34 +226,17 @@ class OrderedIndex {
     return nullptr;
   }
 
-  // Writer only.
-  void Unlink(IndexEntry* target) noexcept {
-    IndexEntry* e = _head;
-    const std::string_view key = target->key();
-    for (int level = _height.load(std::memory_order_relaxed) - 1; level >= 0; --level) {
-      for (IndexEntry* n = e->next()[level].load(std::memory_order_relaxed);
-           n != nullptr && n->key() < key; n = e->next()[level].load(std::memory_order_relaxed)) {
-        e = n;
-      }
-      if (level >= target->height) continue;
-      IndexEntry* pred = e;
-      while (pred->next()[level].load(std::memory_order_relaxed) != target) {
-        pred = pred->next()[level].load(std::memory_order_relaxed);
-      }
-      pred->next()[level].store(target->next()[level].load(std::memory_order_relaxed),
-                                std::memory_order_release);
-    }
+ private:
+  static size_t BlockSize(int height, size_t key_size) noexcept {
+    return sizeof(IndexEntry) + sizeof(std::atomic<IndexEntry*>) * height + key_size;
   }
 
- private:
-  static constexpr int kMaxHeight = 12;
-
-  static IndexEntry* NewEntry(std::string_view key, uint32_t secondary_size, uint64_t created,
-                              int height) {
-    const size_t links = sizeof(std::atomic<IndexEntry*>) * height;
-    auto* e = static_cast<IndexEntry*>(::operator new(sizeof(IndexEntry) + links + key.size()));
+  IndexEntry* NewEntry(std::string_view key, uint32_t secondary_size, uint64_t created,
+                       const RecordNode* node, int height) {
+    auto* e = static_cast<IndexEntry*>(_pool.Allocate(BlockSize(height, key.size())));
     e->created = created;
     new (&e->deleted) std::atomic<uint64_t>(kNeverDeleted);
+    e->node = node;
     e->key_size = static_cast<uint32_t>(key.size());
     e->secondary_size = secondary_size;
     e->height = static_cast<uint8_t>(height);
@@ -187,6 +254,7 @@ class OrderedIndex {
     return height < kMaxHeight ? height : kMaxHeight;
   }
 
+  BlockPool& _pool;
   IndexEntry* _head;
   std::atomic<int> _height{1};
   uint64_t _rng = 0x9e3779b97f4a7c15;

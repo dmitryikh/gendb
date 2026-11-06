@@ -96,7 +96,7 @@ class Engine::CheckpointLoader final : public internal::CheckpointHandler {
     const size_t c = *_current;
     const uint64_t hash = HashKey(key);
     if (_opening) {  // Nothing else is in the tables, and indices come later.
-      Version* version = Version::Copy(AsBytes(value));
+      Version* version = Version::Copy(_engine._pool, AsBytes(value));
       version->seq = _seq;
       _engine.NodeForWrite(c, hash, key, _seq)->head.store(version, std::memory_order_relaxed);
       return;
@@ -109,12 +109,12 @@ class Engine::CheckpointLoader final : public internal::CheckpointHandler {
       return;
     }
     if (node == nullptr) node = _engine.NodeForWrite(c, hash, key, _seq);
-    Version* version = Version::Copy(AsBytes(value));
+    Version* version = Version::Copy(_engine._pool, AsBytes(value));
     Link(c, node, version, head);
     if (existed) {
-      _engine.UpdateIndexNow(c, node->key(), head->bytes(), version->bytes(), _seq);
+      _engine.UpdateIndexNow(c, node, head->bytes(), version->bytes(), _seq);
     } else {
-      _engine.UpdateIndexNow(c, node->key(), std::nullopt, version->bytes(), _seq);
+      _engine.UpdateIndexNow(c, node, std::nullopt, version->bytes(), _seq);
     }
   }
 
@@ -129,8 +129,8 @@ class Engine::CheckpointLoader final : public internal::CheckpointHandler {
         if (node->install_epoch == _epoch) continue;
         Version* head = node->head.load(std::memory_order_relaxed);
         if (head == nullptr || head->tombstone) continue;
-        Link(c, node, Version::Create(0, true), head);
-        _engine.UpdateIndexNow(c, node->key(), head->bytes(), std::nullopt, _seq);
+        Link(c, node, Version::Create(_engine._pool, 0, true), head);
+        _engine.UpdateIndexNow(c, node, head->bytes(), std::nullopt, _seq);
       }
     }
   }
@@ -198,7 +198,12 @@ void Engine::BuildIndices(uint64_t seq) {
     // Each worker encodes the keys of its part of the table and sorts them.
     struct Part {
       std::string arena;
-      std::vector<std::pair<size_t, uint32_t>> ends;  // Offset of the end, and secondary size.
+      struct End {
+        size_t offset;
+        uint32_t secondary_size;
+        const RecordNode* node;
+      };
+      std::vector<End> ends;
       std::vector<SortedKey> keys;
     };
     std::vector<Part> parts(workers);
@@ -216,13 +221,13 @@ void Engine::BuildIndices(uint64_t seq) {
         }
         const auto secondary = static_cast<uint32_t>(part.arena.size() - start);
         part.arena.append(node->key());
-        part.ends.emplace_back(part.arena.size(), secondary);
+        part.ends.push_back({part.arena.size(), secondary, node});
       }
       part.keys.reserve(part.ends.size());
       size_t start = 0;
-      for (const auto& [end, secondary] : part.ends) {
+      for (const auto& [end, secondary, node] : part.ends) {
         part.keys.push_back(
-            {part.arena.data() + start, static_cast<uint32_t>(end - start), secondary});
+            {part.arena.data() + start, static_cast<uint32_t>(end - start), secondary, node});
         start = end;
       }
       std::sort(part.keys.begin(), part.keys.end(), KeyLess);

@@ -52,7 +52,7 @@ Engine::Engine(EngineSchema schema, EngineOptions options)
   std::vector<std::pair<uint32_t, size_t>> ids;
   for (size_t i = 0; i < schema_size; ++i) {
     const CollectionDef& def = _schema.collections[i];
-    _collections[i] = std::make_unique<Collection>();
+    _collections[i] = std::make_unique<Collection>(_pool);
     _collections[i]->id = internal::CollectionIdOf(def.name);
     _collections[i]->name = def.name;
     _collections[i]->ephemeral = def.ephemeral;
@@ -71,7 +71,7 @@ Engine::Engine(EngineSchema schema, EngineOptions options)
     }
   }
   for (size_t i = 0; i < _schema.indices.size(); ++i) {
-    _indices.push_back(std::make_unique<OrderedIndex>());
+    _indices.push_back(std::make_unique<OrderedIndex>(_pool));
     _collections[_schema.indices[i].collection]->indices.push_back(i);
   }
   _history = HistoryId::Random();
@@ -150,7 +150,7 @@ absl::StatusOr<size_t> Engine::AddForeignCollection(uint32_t id, std::string_vie
   if (index == _collections.size()) {
     return absl::ResourceExhaustedError("Too many collections that the schema does not have");
   }
-  auto collection = std::make_unique<Collection>();
+  auto collection = std::make_unique<Collection>(_pool);
   collection->id = id;
   collection->name = std::string(name);
   collection->ephemeral = false;
@@ -257,13 +257,17 @@ void Engine::Reclaim(uint64_t up_to_seq) noexcept {
   const uint64_t next_seq = up_to_seq == internal::kNeverDeleted
                                 ? internal::kNeverDeleted
                                 : _committed_seq.load(std::memory_order_relaxed) + 1;
+  // A commit's deleted index entries come in key order, so each unlink goes on from the last.
+  std::optional<OrderedIndex::SortedEditor> unlinker;
+  size_t unlinking_index = 0;
+  std::string_view unlinked_key;
   while (!_garbage.empty() && _garbage.front().seq <= up_to_seq) {
     const Garbage g = _garbage.front();
     _garbage.pop_front();
     switch (g.kind) {
       case Garbage::kOlderVersion: {
         auto* newer = static_cast<Version*>(g.ptr);
-        Version::Destroy(newer->older);
+        Version::Destroy(_pool, newer->older);
         newer->older = nullptr;
         break;
       }
@@ -273,14 +277,14 @@ void Engine::Reclaim(uint64_t up_to_seq) noexcept {
         // Otherwise the key was written again, and a newer version now owns the tombstone.
         if (head->seq == g.seq) {
           _collections[g.owner]->table.Erase(node);
-          _garbage.push_back({next_seq, Garbage::kRecord, node, 0});
+          _garbage.push_back({next_seq, Garbage::kRecord, node, g.owner});
         }
         break;
       }
       case Garbage::kRecord: {
         auto* node = static_cast<RecordNode*>(g.ptr);
-        Version::Destroy(node->head.load(std::memory_order_relaxed));
-        RecordTable::DestroyNode(node);
+        Version::Destroy(_pool, node->head.load(std::memory_order_relaxed));
+        _collections[g.owner]->table.DestroyNode(node);
         break;
       }
       case Garbage::kSlots:
@@ -288,12 +292,17 @@ void Engine::Reclaim(uint64_t up_to_seq) noexcept {
         break;
       case Garbage::kIndexEntryToUnlink: {
         auto* entry = static_cast<IndexEntry*>(g.ptr);
-        _indices[g.owner]->Unlink(entry);
-        _garbage.push_back({next_seq, Garbage::kIndexEntry, entry, 0});
+        if (!unlinker.has_value() || unlinking_index != g.owner || entry->key() < unlinked_key) {
+          unlinker.emplace(*_indices[g.owner]);
+          unlinking_index = g.owner;
+        }
+        unlinker->Unlink(entry);
+        unlinked_key = entry->key();
+        _garbage.push_back({next_seq, Garbage::kIndexEntry, entry, g.owner});
         break;
       }
       case Garbage::kIndexEntry:
-        OrderedIndex::Destroy(static_cast<IndexEntry*>(g.ptr));
+        _indices[g.owner]->Destroy(static_cast<IndexEntry*>(g.ptr));
         break;
     }
   }
@@ -305,10 +314,11 @@ void Engine::ReclaimUnpinned(uint64_t seq) noexcept {
   Reclaim(OldestPinned(seq));
 }
 
-void Engine::UpdateIndexNow(size_t collection, std::string_view key,
+void Engine::UpdateIndexNow(size_t collection, const RecordNode* node,
                             std::optional<BytesConstView> before,
                             std::optional<BytesConstView> after, uint64_t seq) {
   if (_indices_deferred) return;
+  const std::string_view key = node->key();
   std::string& old_key = _old_index_key;
   std::string& new_key = _new_index_key;
   for (size_t i : _collections[collection]->indices) {
@@ -329,7 +339,7 @@ void Engine::UpdateIndexNow(size_t collection, std::string_view key,
     if (has) {
       const auto secondary_size = static_cast<uint32_t>(new_key.size());
       new_key.append(key);
-      index.Insert(new_key, secondary_size, seq);
+      index.Insert(new_key, secondary_size, seq, node);
     }
   }
 }

@@ -32,7 +32,8 @@ gendb::EngineSchema MakeSchema() {
                               gendb::internal::key_codec::AppendField(message.age(), out);
                               return true;
                             },
-                            /*unique=*/false});
+                            /*unique=*/false,
+                            /*fields=*/{5}});
   schema.indices.push_back({"position_by_account_id", PositionCollId,
                             [](gendb::BytesConstView bytes, std::string& out) {
                               const Position message{bytes};
@@ -40,7 +41,8 @@ gendb::EngineSchema MakeSchema() {
                               gendb::internal::key_codec::AppendField(message.account_id(), out);
                               return true;
                             },
-                            /*unique=*/false});
+                            /*unique=*/false,
+                            /*fields=*/{2}});
   schema.indices.push_back({"position_by_account_and_instrument", PositionCollId,
                             [](gendb::BytesConstView bytes, std::string& out) {
                               const Position message{bytes};
@@ -50,7 +52,8 @@ gendb::EngineSchema MakeSchema() {
                               gendb::internal::key_codec::AppendField(message.instrument(), out);
                               return true;
                             },
-                            /*unique=*/false});
+                            /*unique=*/false,
+                            /*fields=*/{2, 4}});
   schema.indices.push_back({"account_by_address", AccountCollId,
                             [](gendb::BytesConstView bytes, std::string& out) {
                               const Account message{bytes};
@@ -58,7 +61,8 @@ gendb::EngineSchema MakeSchema() {
                               gendb::internal::key_codec::AppendField(message.address(), out);
                               return true;
                             },
-                            /*unique=*/true});
+                            /*unique=*/true,
+                            /*fields=*/{4}});
   return schema;
 }
 

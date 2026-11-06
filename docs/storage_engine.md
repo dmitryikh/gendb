@@ -198,7 +198,19 @@ Tables and indices have exactly one writer, so readers can be lock-free with pla
 - `RecordTable` is an open-addressing table of pointers. A lookup is a hash and a few atomic loads.
   Growing it publishes a new slot array.
 - `OrderedIndex` is a skip list of `encoded field + primary key`, using the order-preserving
-  `key_codec`. Entries carry `created` and `deleted` sequence numbers.
+  `key_codec`. Entries carry `created` and `deleted` sequence numbers, and point at their record, so that
+  a scan does not look it up again.
+
+Versions, records and index entries live in a `BlockPool`, under the writer lock: lists of free blocks by
+size, over large chunks. A general allocator took more than half of the time of write-heavy workloads,
+and scattered in memory what is read together. The pool goes back to the system only when the database
+closes, and what a large delete frees waits for writes of the same sizes.
+
+A transaction keeps what it does to an index apart, in a hash table, and at commit sorts it and puts it in
+in key order, each change going on from where the last one was. Putting changes in right away, hidden from
+snapshots, was tried and is slower, as a batch in key order keeps the search in cache. Reading an index in
+order in a transaction turns its changes into a tree for the rest of it. A patch that does not touch an
+index's fields leaves that index alone, which the generated schema makes possible by listing them.
 
 ### Pinning
 

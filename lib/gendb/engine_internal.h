@@ -38,16 +38,16 @@ inline uint32_t CrcOf(BytesConstView bytes) noexcept {
 
 // What a patch does to a record: on the writer, in recovery and on replicas alike, which must
 // produce the same bytes, since the log holds only the patch. Null if the record is malformed.
-inline Version* PatchedVersion(BytesConstView current, const MessagePatch& patch) {
+inline Version* PatchedVersion(BlockPool& pool, BytesConstView current, const MessagePatch& patch) {
   const auto view = MessageView::Open(current);
   if (!view.has_value()) return nullptr;
   if (CanApplyPatchInplace(patch, *view)) {
-    Version* next = Version::Copy(current);
+    Version* next = Version::Copy(pool, current);
     ApplyPatchInplace(patch, std::span<uint8_t>(next->data(), next->size));
     return next;
   }
   try {
-    return Version::Copy(Rebuild(*view, patch));
+    return Version::Copy(pool, Rebuild(*view, patch));
   } catch (const std::invalid_argument&) {
     return nullptr;
   }

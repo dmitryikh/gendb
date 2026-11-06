@@ -46,7 +46,7 @@ case "${1:-}" in
   asan)
     install_dependencies build/ci-asan Debug "${without_grpc[@]}"
     configure build/ci-asan Debug \
-      -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer" \
+      -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -DNDEBUG_SANITIZER" \
       -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
     cmake --build build/ci-asan
     ctest --test-dir build/ci-asan --output-on-failure --timeout 300
