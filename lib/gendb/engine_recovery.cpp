@@ -1,4 +1,7 @@
+#include <algorithm>
 #include <chrono>
+#include <string>
+#include <thread>
 #include <utility>
 
 #include "absl/strings/str_cat.h"
@@ -23,6 +26,7 @@ using internal::kCheckpointPrefix;
 using internal::kCheckpointSuffix;
 using internal::kTempSuffix;
 using internal::NumberedPath;
+using internal::OrderedIndex;
 using internal::ParseStatus;
 using internal::RecordNode;
 using internal::RecordTable;
@@ -51,7 +55,11 @@ class Engine::CheckpointLoader final : public internal::CheckpointHandler {
  public:
   // With `seq` 0, the engine is recovering, and uses the checkpoint's LSN.
   CheckpointLoader(Engine& engine, uint64_t seq, std::vector<Change>* changes)
-      : _engine(engine), _seq(seq), _epoch(++engine._install_epoch), _changes(changes) {}
+      : _engine(engine),
+        _seq(seq),
+        _epoch(++engine._install_epoch),
+        _changes(changes),
+        _opening(seq == 0) {}
 
   uint64_t seq() const noexcept { return _seq; }
   const LogPosition& position() const noexcept { return _position; }
@@ -87,6 +95,12 @@ class Engine::CheckpointLoader final : public internal::CheckpointHandler {
     if (!_current.has_value()) return;
     const size_t c = *_current;
     const uint64_t hash = HashKey(key);
+    if (_opening) {  // Nothing else is in the tables, and indices come later.
+      Version* version = Version::Copy(AsBytes(value));
+      version->seq = _seq;
+      _engine.NodeForWrite(c, hash, key, _seq)->head.store(version, std::memory_order_relaxed);
+      return;
+    }
     RecordNode* node = _engine._collections[c]->table.Find(hash, key);
     Version* head = node == nullptr ? nullptr : node->head.load(std::memory_order_relaxed);
     const bool existed = head != nullptr && !head->tombstone;
@@ -144,9 +158,101 @@ class Engine::CheckpointLoader final : public internal::CheckpointHandler {
   uint64_t _seq;
   uint32_t _epoch;
   std::vector<Change>* _changes;
+  const bool _opening;
   LogPosition _position{};
   std::optional<size_t> _current;
 };
+
+namespace {
+
+using SortedKey = OrderedIndex::SortedKey;
+
+bool KeyLess(const SortedKey& a, const SortedKey& b) noexcept {
+  return std::string_view(a.data, a.size) < std::string_view(b.data, b.size);
+}
+
+// Runs fn(0), ..., fn(count - 1), each on a thread of its own but the last.
+template <typename F>
+void RunOnThreads(size_t count, const F& fn) {
+  std::vector<std::thread> threads;
+  threads.reserve(count - 1);
+  for (size_t i = 0; i + 1 < count; ++i) threads.emplace_back(fn, i);
+  fn(count - 1);
+  for (std::thread& thread : threads) thread.join();
+}
+
+}  // namespace
+
+void Engine::BuildIndices(uint64_t seq) {
+  constexpr size_t kRecordsPerThread = 16384;
+  unsigned threads = _options.recovery_threads;
+  if (threads == 0) threads = std::min(std::max(1u, std::thread::hardware_concurrency()), 8u);
+
+  for (size_t i = 0; i < _indices.size(); ++i) {
+    const IndexDef& def = _schema.indices[i];
+    const RecordTable& table = _collections[def.collection]->table;
+    const RecordTable::Slots* slots = table.LoadSlots();
+    const size_t capacity = slots->mask + 1;
+    const size_t workers = std::clamp<size_t>(table.live() / kRecordsPerThread, 1, threads);
+
+    // Each worker encodes the keys of its part of the table and sorts them.
+    struct Part {
+      std::string arena;
+      std::vector<std::pair<size_t, uint32_t>> ends;  // Offset of the end, and secondary size.
+      std::vector<SortedKey> keys;
+    };
+    std::vector<Part> parts(workers);
+    RunOnThreads(workers, [&](size_t w) {
+      Part& part = parts[w];
+      for (size_t slot = capacity * w / workers; slot < capacity * (w + 1) / workers; ++slot) {
+        const RecordNode* node = slots->slots[slot].load(std::memory_order_relaxed);
+        if (node == nullptr || node == RecordTable::Erased()) continue;
+        const Version* head = node->head.load(std::memory_order_relaxed);
+        if (head == nullptr || head->tombstone) continue;
+        const size_t start = part.arena.size();
+        if (!def.extract(head->bytes(), part.arena)) {
+          part.arena.resize(start);
+          continue;
+        }
+        const auto secondary = static_cast<uint32_t>(part.arena.size() - start);
+        part.arena.append(node->key());
+        part.ends.emplace_back(part.arena.size(), secondary);
+      }
+      part.keys.reserve(part.ends.size());
+      size_t start = 0;
+      for (const auto& [end, secondary] : part.ends) {
+        part.keys.push_back(
+            {part.arena.data() + start, static_cast<uint32_t>(end - start), secondary});
+        start = end;
+      }
+      std::sort(part.keys.begin(), part.keys.end(), KeyLess);
+    });
+
+    // Then the sorted parts merge, in pairs, on as many threads as there are pairs.
+    std::vector<SortedKey> keys;
+    std::vector<size_t> bounds{0};
+    size_t total = 0;
+    for (const Part& part : parts) total += part.keys.size();
+    keys.reserve(total);
+    for (const Part& part : parts) {
+      keys.insert(keys.end(), part.keys.begin(), part.keys.end());
+      bounds.push_back(keys.size());
+    }
+    while (bounds.size() > 2) {
+      const size_t pairs = (bounds.size() - 1) / 2;
+      RunOnThreads(pairs, [&](size_t p) {
+        std::inplace_merge(keys.begin() + static_cast<ptrdiff_t>(bounds[p * 2]),
+                           keys.begin() + static_cast<ptrdiff_t>(bounds[p * 2 + 1]),
+                           keys.begin() + static_cast<ptrdiff_t>(bounds[p * 2 + 2]), KeyLess);
+      });
+      std::vector<size_t> merged;
+      for (size_t b = 0; b < bounds.size(); b += 2) merged.push_back(bounds[b]);
+      if (merged.back() != bounds.back()) merged.push_back(bounds.back());
+      bounds = std::move(merged);
+    }
+    _indices[i]->BuildSorted(keys, seq);
+  }
+}
 
 absl::Status Engine::Recover() {
   const auto started = std::chrono::steady_clock::now();
@@ -173,6 +279,7 @@ absl::Status Engine::Recover() {
   _wal = std::make_unique<Wal>(
       Wal::Options{_file_system, path, _options.wal_segment_bytes, std::move(names)});
 
+  _indices_deferred = true;
   auto checkpoints =
       internal::ListNumbered(*_file_system, path, kCheckpointPrefix, kCheckpointSuffix);
   if (!checkpoints.ok()) return checkpoints.status();
@@ -211,6 +318,8 @@ absl::Status Engine::Recover() {
     info.log_bytes_replayed = recovered->bytes_replayed;
     info.torn_bytes_cut = recovered->torn_bytes_cut;
   }
+  _indices_deferred = false;
+  BuildIndices(_committed_seq.load(std::memory_order_relaxed));
   _history = history.value_or(_history);
   RETURN_IF_ERROR(_wal->StartSegment(_history, lsn + 1));
   RETURN_IF_ERROR(PurgeWal());
@@ -326,7 +435,7 @@ absl::Status Engine::InstallCheckpoint(CheckpointStage& stage, const LogPosition
   _history_generation.fetch_add(1, std::memory_order_acq_rel);
   _ring->Reset(position.lsn);
   _lsn.store(position.lsn, std::memory_order_release);
-  _committed_seq.store(seq, std::memory_order_release);
+  _committed_seq.store(seq, std::memory_order_seq_cst);
   Notify(seq, changes);
   ReclaimUnpinned(seq);
   return absl::OkStatus();

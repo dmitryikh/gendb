@@ -114,10 +114,10 @@ absl::Status Engine::SyncWal() {
 
 EngineStats Engine::Stats() const {
   size_t active = 0;
-  {
-    std::lock_guard lock(_snapshots_mutex);
-    for (const auto& [seq, count] : _snapshots) active += count;
+  for (const SnapshotSlot& slot : _snapshot_slots) {
+    if (slot.pinned.load(std::memory_order_relaxed) != 0) ++active;
   }
+  active += _overflow_count.load(std::memory_order_relaxed);
   const uint64_t lsn = _lsn.load(std::memory_order_acquire);
   EngineStats stats{};
   stats.committed_seq = _committed_seq.load(std::memory_order_acquire);
@@ -166,18 +166,64 @@ absl::StatusOr<size_t> Engine::AddForeignCollection(uint32_t id, std::string_vie
   return index;
 }
 
-uint64_t Engine::PinSnapshot() const {
-  std::lock_guard lock(_snapshots_mutex);
+uint64_t Engine::PinSnapshot(int32_t* slot) const {
+  // Threads tend to keep to a slot of their own.
+  static std::atomic<size_t> next_thread{0};
+  thread_local const size_t preferred = next_thread.fetch_add(1, std::memory_order_relaxed);
+
+  for (size_t i = 0; i < kSnapshotSlots; ++i) {
+    const size_t index = (preferred + i) % kSnapshotSlots;
+    std::atomic<uint64_t>& pinned = _snapshot_slots[index].pinned;
+    if (pinned.load(std::memory_order_relaxed) != 0) continue;
+
+    size_t used = _snapshot_slots_used.load(std::memory_order_seq_cst);
+    while (used <= index && !_snapshot_slots_used.compare_exchange_weak(used, index + 1)) {
+    }
+    uint64_t seq = _committed_seq.load(std::memory_order_seq_cst);
+    uint64_t expected = 0;
+    if (!pinned.compare_exchange_strong(expected, seq + 1, std::memory_order_seq_cst)) continue;
+    // See SnapshotSlot.
+    for (uint64_t now = _committed_seq.load(std::memory_order_seq_cst); now != seq;
+         now = _committed_seq.load(std::memory_order_seq_cst)) {
+      seq = now;
+      pinned.store(seq + 1, std::memory_order_seq_cst);
+    }
+    *slot = static_cast<int32_t>(index);
+    return seq;
+  }
+
+  _overflow_count.fetch_add(1, std::memory_order_seq_cst);
+  std::lock_guard lock(_overflow_mutex);
   // Inside the lock, so that a concurrent Reclaim sees this pin or a seq at least as new as it.
-  const uint64_t seq = _committed_seq.load(std::memory_order_acquire);
-  ++_snapshots[seq];
+  const uint64_t seq = _committed_seq.load(std::memory_order_seq_cst);
+  ++_overflow_snapshots[seq];
+  *slot = -1;
   return seq;
 }
 
-void Engine::UnpinSnapshot(uint64_t seq) const noexcept {
-  std::lock_guard lock(_snapshots_mutex);
-  auto it = _snapshots.find(seq);
-  if (--it->second == 0) _snapshots.erase(it);
+void Engine::UnpinSnapshot(uint64_t seq, int32_t slot) const noexcept {
+  if (slot >= 0) {
+    _snapshot_slots[static_cast<size_t>(slot)].pinned.store(0, std::memory_order_release);
+    return;
+  }
+  std::lock_guard lock(_overflow_mutex);
+  auto it = _overflow_snapshots.find(seq);
+  if (--it->second == 0) _overflow_snapshots.erase(it);
+  _overflow_count.fetch_sub(1, std::memory_order_relaxed);
+}
+
+uint64_t Engine::OldestPinned(uint64_t newest) const noexcept {
+  uint64_t oldest = newest;
+  const size_t used = _snapshot_slots_used.load(std::memory_order_seq_cst);
+  for (size_t i = 0; i < used; ++i) {
+    const uint64_t pinned = _snapshot_slots[i].pinned.load(std::memory_order_seq_cst);
+    if (pinned != 0 && pinned - 1 < oldest) oldest = pinned - 1;
+  }
+  if (_overflow_count.load(std::memory_order_seq_cst) != 0) {
+    std::lock_guard lock(_overflow_mutex);
+    if (!_overflow_snapshots.empty()) oldest = std::min(oldest, _overflow_snapshots.begin()->first);
+  }
+  return oldest;
 }
 
 std::optional<BytesConstView> Engine::ReadAt(size_t collection, uint64_t hash, std::string_view key,
@@ -255,17 +301,14 @@ void Engine::Reclaim(uint64_t up_to_seq) noexcept {
 }
 
 void Engine::ReclaimUnpinned(uint64_t seq) noexcept {
-  uint64_t oldest = seq;
-  {
-    std::lock_guard lock(_snapshots_mutex);
-    if (!_snapshots.empty()) oldest = _snapshots.begin()->first;
-  }
-  Reclaim(oldest);
+  if (_garbage.empty()) return;
+  Reclaim(OldestPinned(seq));
 }
 
 void Engine::UpdateIndexNow(size_t collection, std::string_view key,
                             std::optional<BytesConstView> before,
                             std::optional<BytesConstView> after, uint64_t seq) {
+  if (_indices_deferred) return;
   std::string& old_key = _old_index_key;
   std::string& new_key = _new_index_key;
   for (size_t i : _collections[collection]->indices) {

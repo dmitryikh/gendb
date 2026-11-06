@@ -7,6 +7,7 @@
 #include <cstring>
 #include <limits>
 #include <new>
+#include <span>
 #include <string_view>
 
 namespace gendb::internal {
@@ -107,6 +108,28 @@ class OrderedIndex {
                                  std::memory_order_relaxed);
       preds[level]->next()[level].store(entry, std::memory_order_release);
     }
+  }
+
+  // Fills an empty index from sorted keys, in linear time, before any reader exists.
+  struct SortedKey {
+    const char* data;
+    uint32_t size;
+    uint32_t secondary_size;
+  };
+  void BuildSorted(std::span<const SortedKey> keys, uint64_t created) {
+    std::array<IndexEntry*, kMaxHeight> tails;
+    tails.fill(_head);
+    int top = 1;
+    for (const SortedKey& key : keys) {
+      const int height = RandomHeight();
+      IndexEntry* entry = NewEntry({key.data, key.size}, key.secondary_size, created, height);
+      for (int level = 0; level < height; ++level) {
+        tails[level]->next()[level].store(entry, std::memory_order_relaxed);
+        tails[level] = entry;
+      }
+      if (height > top) top = height;
+    }
+    _height.store(top, std::memory_order_release);
   }
 
   // Writer only: the entry with this key that is not deleted yet.

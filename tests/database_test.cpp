@@ -783,6 +783,76 @@ TEST(SnapshotTest, ConcurrentReadersSurviveReclamation) {
   EXPECT_EQ(wrong.load(), 0);
 }
 
+// There are only so many slots for snapshots: the rest must be just as safe.
+TEST(SnapshotTest, MoreSnapshotsThanSlotsStayIsolated) {
+  Db db;
+  const auto put = [&db](int32_t age) {
+    auto writer = db.CreateWriter();
+    ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(1).set_age(age).Build()).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+  };
+  put(0);
+  std::vector<Snapshot> snapshots;
+  for (int32_t i = 1; i <= 200; ++i) {
+    snapshots.push_back(db.CreateSnapshot());
+    put(i);
+  }
+  EXPECT_EQ(db.engine().Stats().active_snapshots, 200u);
+  for (size_t i = 0; i < snapshots.size(); ++i) {
+    Account account;
+    ASSERT_TRUE(snapshots[i].GetAccount(1, account).ok());
+    EXPECT_EQ(account.age(), static_cast<int32_t>(i));
+  }
+  snapshots.clear();
+  EXPECT_EQ(db.engine().Stats().active_snapshots, 0u);
+  // Index entries take two commits to go: one to unlink them, and one to free them.
+  put(1000);
+  put(1001);
+  EXPECT_LE(db.engine().Stats().pending_garbage, 3u);
+}
+
+// Snapshots opened and closed on many threads, more at once than there are slots, while versions
+// they could be reading are reclaimed. For ThreadSanitizer above all.
+TEST(SnapshotTest, ManyThreadsPinningThroughSlotsAndOverflowDuringReclamation) {
+  Db db;
+  {
+    auto writer = db.CreateWriter();
+    ASSERT_TRUE(
+        writer.PutAccount(AccountBuilder().set_account_id(1).set_age(1).set_balance(1.f).Build())
+            .ok());
+    ASSERT_TRUE(writer.Commit().ok());
+  }
+  std::atomic<bool> done{false};
+  std::atomic<int> torn{0};
+  std::vector<std::thread> readers;
+  for (int r = 0; r < 8; ++r) {
+    readers.emplace_back([&] {
+      while (!done.load()) {
+        std::vector<Snapshot> held;
+        for (int i = 0; i < 12; ++i) held.push_back(db.CreateSnapshot());
+        for (const Snapshot& snapshot : held) {
+          Account account;
+          if (!snapshot.GetAccount(1, account).ok() ||
+              static_cast<float>(account.age()) != account.balance()) {
+            torn.fetch_add(1);
+          }
+        }
+      }
+    });
+  }
+  for (int32_t i = 2; i < 3000; ++i) {
+    auto writer = db.CreateWriter();
+    ASSERT_TRUE(
+        writer.UpdateAccount(1, AccountPatchBuilder().set_age(i).set_balance(float(i)).Build())
+            .ok());
+    ASSERT_TRUE(writer.Commit().ok());
+  }
+  done = true;
+  for (auto& reader : readers) reader.join();
+  EXPECT_EQ(torn.load(), 0);
+  EXPECT_EQ(db.engine().Stats().active_snapshots, 0u);
+}
+
 TEST(TransactionTest, RollbackDiscardsEverything) {
   Db db;
   {

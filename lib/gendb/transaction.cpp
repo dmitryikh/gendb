@@ -73,6 +73,7 @@ void Transaction::SetPending(size_t collection, uint64_t hash, std::string_view 
 void Transaction::UpdateIndices(size_t collection, std::string_view key,
                                 std::optional<BytesConstView> before,
                                 std::optional<BytesConstView> after) {
+  if (_engine->_indices_deferred) return;
   for (size_t i : _engine->_collections[collection]->indices) {
     const auto extract = _engine->_schema.indices[i].extract;
     _old_key.clear();
@@ -341,7 +342,7 @@ void Transaction::Publish(bool logged, uint64_t lsn, std::string_view frame) {
     if (engine._ring->enabled()) engine._ring->Push(lsn, frame);
     engine._lsn.store(lsn, std::memory_order_release);
   }
-  engine._committed_seq.store(seq, std::memory_order_release);
+  engine._committed_seq.store(seq, std::memory_order_seq_cst);
 
   if (notify && !changes.empty()) engine.Notify(seq, changes);
 

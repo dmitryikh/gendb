@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -94,6 +95,9 @@ struct EngineOptions {
   uint64_t wal_retain_bytes = uint64_t{64} << 20;
   // Log kept for connected replicas that fall behind. Past it, they are sent a new checkpoint.
   uint64_t wal_replica_limit_bytes = uint64_t{4} << 30;
+
+  // Threads to build indices with when opening; zero means the hardware's, up to 8.
+  unsigned recovery_threads = 0;
 
   // Follows a primary through a Replica: only ephemeral collections accept local commits.
   bool replica = false;
@@ -280,8 +284,13 @@ class Engine {
 
   Engine(EngineSchema schema, EngineOptions options);
   absl::Status Recover();
-  uint64_t PinSnapshot() const;
-  void UnpinSnapshot(uint64_t seq) const noexcept;
+  // Fills all indices from the tables, while opening.
+  void BuildIndices(uint64_t seq);
+  // Returns the snapshot's sequence number, and its slot, or -1 if it took the overflow.
+  uint64_t PinSnapshot(int32_t* slot) const;
+  void UnpinSnapshot(uint64_t seq, int32_t slot) const noexcept;
+  // The oldest pinned sequence number, or `newest` if none is older.
+  uint64_t OldestPinned(uint64_t newest) const noexcept;
   std::optional<BytesConstView> ReadAt(size_t collection, uint64_t hash, std::string_view key,
                                        uint64_t seq) const noexcept;
   internal::RecordNode* NodeForWrite(size_t collection, uint64_t hash, std::string_view key,
@@ -410,8 +419,25 @@ class Engine {
   std::mutex _room_mutex;
   std::condition_variable _room_cv;
 
-  mutable std::mutex _snapshots_mutex;
-  mutable absl::btree_map<uint64_t, uint32_t> _snapshots;  // Pinned seq to reader count.
+  // While opening, indices wait to be built in one go.
+  bool _indices_deferred = false;
+
+  // Pinned snapshots, one per slot, so that threads do not contend. A slot holds seq + 1, or 0 if
+  // free. Pinning and reclaiming follow the same pattern from opposite sides, with sequentially
+  // consistent atomics: the writer publishes a seq and then reads the slots, and a reader writes
+  // its slot and then reads the seq again. So either the writer sees the pin, or the reader sees
+  // the seq and moves its pin up to it.
+  struct alignas(64) SnapshotSlot {
+    std::atomic<uint64_t> pinned{0};
+  };
+  static constexpr size_t kSnapshotSlots = 64;
+  mutable std::array<SnapshotSlot, kSnapshotSlots> _snapshot_slots;
+  // No slot at or above this has been used, which spares the writer from reading them all.
+  mutable std::atomic<size_t> _snapshot_slots_used{0};
+  // For more snapshots at once than there are slots.
+  mutable std::mutex _overflow_mutex;
+  mutable absl::btree_map<uint64_t, uint32_t> _overflow_snapshots;  // Pinned seq to reader count.
+  mutable std::atomic<size_t> _overflow_count{0};
 };
 
 // A live subscription: destroying it cancels it. Do that outside its own callback.
@@ -444,11 +470,13 @@ class Subscription {
 // keeps superseded versions in memory: do not hold one longer than needed.
 class EngineSnapshot {
  public:
-  explicit EngineSnapshot(const Engine& engine) : _engine(&engine), _seq(engine.PinSnapshot()) {}
+  explicit EngineSnapshot(const Engine& engine)
+      : _engine(&engine), _seq(engine.PinSnapshot(&_slot)) {}
   ~EngineSnapshot() {
-    if (_engine != nullptr) _engine->UnpinSnapshot(_seq);
+    if (_engine != nullptr) _engine->UnpinSnapshot(_seq, _slot);
   }
-  EngineSnapshot(EngineSnapshot&& other) noexcept : _engine(other._engine), _seq(other._seq) {
+  EngineSnapshot(EngineSnapshot&& other) noexcept
+      : _engine(other._engine), _slot(other._slot), _seq(other._seq) {
     other._engine = nullptr;
   }
   EngineSnapshot(const EngineSnapshot&) = delete;
@@ -462,6 +490,7 @@ class EngineSnapshot {
   friend class ScanCursor;
 
   const Engine* _engine;
+  int32_t _slot = -1;  // Before _seq, which sets it.
   uint64_t _seq;
 };
 

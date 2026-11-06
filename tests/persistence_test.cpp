@@ -635,3 +635,56 @@ TEST(BackupTest, AMemoryOnlyDatabaseCanBeBackedUpAndOpened) {
   restored->reset();
   std::filesystem::remove_all(path);
 }
+
+// Indices are built in one go on open, on several threads, and must be what inserting one by one
+// would give: in order, complete, and working for later changes.
+TEST_F(PersistentDbTest, IndicesBuiltOnOpenMatchTheRecords) {
+  constexpr int kAccounts = 100'000;
+  const auto age_of = [](uint64_t id) { return static_cast<int32_t>(id * 7919 % 100); };
+  {
+    auto db = Db::Open({.path = _path, .sync_commits = false});
+    ASSERT_TRUE(db.ok());
+    {
+      auto writer = (*db)->CreateWriter();
+      for (uint64_t id = 1; id <= kAccounts; ++id) {
+        ASSERT_TRUE(
+            writer.PutAccount(AccountBuilder().set_account_id(id).set_age(age_of(id)).Build())
+                .ok());
+      }
+      ASSERT_TRUE(writer.Commit().ok());
+    }
+    ASSERT_TRUE((*db)->engine().Checkpoint().ok());
+    // In the log, on top of the checkpoint: moved within the index, and gone from it.
+    auto writer = (*db)->CreateWriter();
+    ASSERT_TRUE(writer.UpdateAccount(1, AccountPatchBuilder().set_age(500).Build()).ok());
+    ASSERT_TRUE(writer.DeleteAccount(2).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+  }
+  for (unsigned threads : {1u, 3u, 8u}) {
+    auto db = Db::Open({.path = _path, .recovery_threads = threads});
+    ASSERT_TRUE(db.ok()) << db.status();
+    auto snapshot = (*db)->CreateSnapshot();
+    int rows = 0;
+    int32_t previous_age = -1;
+    uint64_t previous_id = 0;
+    for (auto it = snapshot.GetAccountByAgeRange(std::nullopt, std::nullopt); it.Valid();
+         it.Next()) {
+      const int32_t age = it.Value().age();
+      const uint64_t id = it.Value().account_id();
+      ASSERT_TRUE(age > previous_age || (age == previous_age && id > previous_id));
+      if (id != 3) ASSERT_EQ(age, id == 1 ? 500 : age_of(id));  // Each round moves account 3.
+      previous_age = age;
+      previous_id = id;
+      ++rows;
+    }
+    EXPECT_EQ(rows, kAccounts - 1);
+    EXPECT_FALSE(snapshot.GetAccountByAgeEqual(age_of(2)).Value().account_id() == 2u);
+    // The index keeps working after being built this way.
+    auto writer = (*db)->CreateWriter();
+    ASSERT_TRUE(
+        writer.UpdateAccount(3, AccountPatchBuilder().set_age(600 + int(threads)).Build()).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+    auto later = (*db)->CreateSnapshot();
+    EXPECT_TRUE(later.GetAccountByAgeEqual(600 + int(threads)).Valid());
+  }
+}
