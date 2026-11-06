@@ -54,22 +54,21 @@ TEST_F(ChangeSubscriptionTest, DeliversBeforeAfterAndWhatChanged) {
   });
 
   auto writer = db.CreateWriter();
-  ASSERT_TRUE(writer.PutAccount(1, AccountBuilder().set_account_id(1).set_age(30).Build()).ok());
+  ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(1).set_age(30).Build()).ok());
   ASSERT_TRUE(writer.Commit().ok());
   ASSERT_TRUE(writer.UpdateAccount(1, AccountPatchBuilder().set_age(31).Build()).ok());
   ASSERT_TRUE(writer.Commit().ok());
   // A Put reports just the same, field by field.
   ASSERT_TRUE(
-      writer.PutAccount(1, AccountBuilder().set_account_id(1).set_age(31).set_name("A").Build())
-          .ok());
+      writer.PutAccount(AccountBuilder().set_account_id(1).set_age(31).set_name("A").Build()).ok());
   ASSERT_TRUE(writer.Commit().ok());
   ASSERT_TRUE(writer.DeleteAccount(1).ok());
   ASSERT_TRUE(writer.Commit().ok());
   // Not a collection this subscriber follows.
-  ASSERT_TRUE(writer.PutConfig("c", ConfigBuilder().set_config_name("c").Build()).ok());
+  ASSERT_TRUE(writer.PutConfig(ConfigBuilder().set_config_name("c").Build()).ok());
   ASSERT_TRUE(writer.Commit().ok());
   // Rolled back: never seen.
-  ASSERT_TRUE(writer.PutAccount(2, AccountBuilder().set_account_id(2).Build()).ok());
+  ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(2).Build()).ok());
   writer.Rollback();
   subscription.WaitUntilDelivered();
 
@@ -97,16 +96,14 @@ TEST_F(ChangeSubscriptionTest, QueuedCallbackCanCommitAndBackPressureDoesNotDead
            [this, &delivered](const gendb::tests::AccountChange& change) {
              auto writer = db.CreateWriter();
              const uint64_t id = change.after().account_id();
-             ASSERT_TRUE(
-                 writer.PutConfig(std::to_string(id), ConfigBuilder().set_config_name("x").Build())
-                     .ok());
+             ASSERT_TRUE(writer.PutConfig(ConfigBuilder().set_config_name("x").Build()).ok());
              ASSERT_TRUE(writer.Commit().ok());
              ++delivered;
            }},
       {.max_queue_bytes = 1});
   for (uint64_t id = 0; id < 200; ++id) {
     auto writer = db.CreateWriter();
-    ASSERT_TRUE(writer.PutAccount(id, AccountBuilder().set_account_id(id).Build()).ok());
+    ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(id).Build()).ok());
     ASSERT_TRUE(writer.Commit().ok());
   }
   subscription.WaitUntilDelivered();
@@ -126,13 +123,13 @@ TEST_F(ChangeSubscriptionTest, InlineRunsDuringCommitAndCancelStopsDelivery) {
                                           }},
                                      {.delivery = gendb::Delivery::kInline});
     auto writer = db.CreateWriter();
-    ASSERT_TRUE(writer.PutAccount(1, AccountBuilder().set_account_id(1).Build()).ok());
+    ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(1).Build()).ok());
     ASSERT_TRUE(writer.Commit().ok());
     EXPECT_EQ(calls, 1);  // Already delivered.
     EXPECT_TRUE(visible_to_snapshot);
   }
   auto writer = db.CreateWriter();
-  ASSERT_TRUE(writer.PutAccount(2, AccountBuilder().set_account_id(2).Build()).ok());
+  ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(2).Build()).ok());
   ASSERT_TRUE(writer.Commit().ok());
   EXPECT_EQ(calls, 1);
 }

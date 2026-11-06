@@ -34,7 +34,7 @@ void Commit(Db& db, uint64_t commits) {
       auto writer = db.CreateWriter();
       if (id % 2 == 1) {
         (void)writer.PutAccount(
-            id, AccountBuilder().set_account_id(id).set_name("Ann").set_age(30).Build());
+            AccountBuilder().set_account_id(id).set_name("Ann").set_age(30).Build());
       } else {
         (void)writer.UpdateAccount(id - 1, AccountPatchBuilder().set_age(31).Build());
       }

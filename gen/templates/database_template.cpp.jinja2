@@ -43,7 +43,8 @@ absl::Status ToMessage(std::optional<gendb::BytesConstView> value, T& message) {
 
 }  // namespace
 
-Db::Db() : _engine(std::make_unique<gendb::Engine>(MakeSchema())) {}
+Db::Db(std::shared_ptr<gendb::EngineObserver> observer)
+    : _engine(std::make_unique<gendb::Engine>(MakeSchema(), std::move(observer))) {}
 
 absl::StatusOr<std::unique_ptr<Db>> Db::Open(const DbOptions& options) {
   auto engine = gendb::Engine::Open(MakeSchema(), options);
@@ -100,12 +101,19 @@ absl::Status ScopedWrite::Get{{coll.type}}({{ key_param(coll) }}, {{ coll.type }
   return ToMessage(_txn.Get({{ coll.enum_name }}, {{ key_expr(coll) }}), {{ coll.type_snake_case }});
 }
 
-absl::Status ScopedWrite::Put{{coll.type}}({{ key_param(coll) }}, gendb::BytesConstView {{ coll.type_snake_case }}) {
-  _txn.Put({{ coll.enum_name }}, {{ key_expr(coll) }}, {{ coll.type_snake_case }});
+absl::Status ScopedWrite::Put{{coll.type}}(gendb::BytesConstView {{ coll.type_snake_case }}) {
+  const {{ coll.type }} message{ {{- coll.type_snake_case -}} };
+{% for pk in coll.pk_fields %}
+  if (!message.has_{{ pk.name }}()) return absl::InvalidArgumentError("{{ coll.type }}: the primary key field {{ pk.name }} is not set");
+{% endfor %}
+  _txn.Put({{ coll.enum_name }}, To{{ coll.type }}Key(message), {{ coll.type_snake_case }});
   return absl::OkStatus();
 }
 
 absl::Status ScopedWrite::Update{{coll.type}}({{ key_param(coll) }}, const gendb::MessagePatch& update) {
+{% for pk in coll.pk_fields %}
+  if (update.Modifies({{ coll.type }}::{{ pk.name | pascalcase }})) return absl::InvalidArgumentError("{{ coll.type }}: a patch cannot change the primary key field {{ pk.name }}");
+{% endfor %}
   return _txn.Update({{ coll.enum_name }}, {{ key_expr(coll) }}, update);
 }
 
@@ -155,7 +163,7 @@ absl::Status ScopedWrite::Next{{ seq.name | pascalcase }}({{seq.ref_type}} next_
   }
   MetadataValueBuilder builder;
   builder.set_type(key.type).set_id(key.id).set_uint_value(next);
-  RETURN_IF_ERROR(PutMetadataValue(key, builder.Build()));
+  RETURN_IF_ERROR(PutMetadataValue(builder.Build()));
   next_id = static_cast<{{ seq.cpp_type }}>(next);
   return absl::OkStatus();
 }

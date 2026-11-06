@@ -50,7 +50,8 @@ absl::Status ToMessage(std::optional<gendb::BytesConstView> value, T& message) {
 
 }  // namespace
 
-Db::Db() : _engine(std::make_unique<gendb::Engine>(MakeSchema())) {}
+Db::Db(std::shared_ptr<gendb::EngineObserver> observer)
+    : _engine(std::make_unique<gendb::Engine>(MakeSchema(), std::move(observer))) {}
 
 absl::StatusOr<std::unique_ptr<Db>> Db::Open(const DbOptions& options) {
   auto engine = gendb::Engine::Open(MakeSchema(), options);
@@ -117,14 +118,24 @@ absl::Status ScopedWrite::GetMetadataValue(const MetadataValueKey& key,
   return ToMessage(_txn.Get(MetadataValueCollId, ToMetadataValueKey(key)), metadata_value);
 }
 
-absl::Status ScopedWrite::PutMetadataValue(const MetadataValueKey& key,
-                                           gendb::BytesConstView metadata_value) {
-  _txn.Put(MetadataValueCollId, ToMetadataValueKey(key), metadata_value);
+absl::Status ScopedWrite::PutMetadataValue(gendb::BytesConstView metadata_value) {
+  const MetadataValue message{metadata_value};
+  if (!message.has_type())
+    return absl::InvalidArgumentError("MetadataValue: the primary key field type is not set");
+  if (!message.has_id())
+    return absl::InvalidArgumentError("MetadataValue: the primary key field id is not set");
+  _txn.Put(MetadataValueCollId, ToMetadataValueKey(message), metadata_value);
   return absl::OkStatus();
 }
 
 absl::Status ScopedWrite::UpdateMetadataValue(const MetadataValueKey& key,
                                               const gendb::MessagePatch& update) {
+  if (update.Modifies(MetadataValue::Type))
+    return absl::InvalidArgumentError(
+        "MetadataValue: a patch cannot change the primary key field type");
+  if (update.Modifies(MetadataValue::Id))
+    return absl::InvalidArgumentError(
+        "MetadataValue: a patch cannot change the primary key field id");
   return _txn.Update(MetadataValueCollId, ToMetadataValueKey(key), update);
 }
 
@@ -144,12 +155,18 @@ absl::Status ScopedWrite::GetAccount(uint64_t account_id, Account& account) cons
   return ToMessage(_txn.Get(AccountCollId, ToAccountKey(account_id)), account);
 }
 
-absl::Status ScopedWrite::PutAccount(uint64_t account_id, gendb::BytesConstView account) {
-  _txn.Put(AccountCollId, ToAccountKey(account_id), account);
+absl::Status ScopedWrite::PutAccount(gendb::BytesConstView account) {
+  const Account message{account};
+  if (!message.has_account_id())
+    return absl::InvalidArgumentError("Account: the primary key field account_id is not set");
+  _txn.Put(AccountCollId, ToAccountKey(message), account);
   return absl::OkStatus();
 }
 
 absl::Status ScopedWrite::UpdateAccount(uint64_t account_id, const gendb::MessagePatch& update) {
+  if (update.Modifies(Account::AccountId))
+    return absl::InvalidArgumentError(
+        "Account: a patch cannot change the primary key field account_id");
   return _txn.Update(AccountCollId, ToAccountKey(account_id), update);
 }
 
@@ -169,12 +186,18 @@ absl::Status ScopedWrite::GetPosition(int32_t position_id, Position& position) c
   return ToMessage(_txn.Get(PositionCollId, ToPositionKey(position_id)), position);
 }
 
-absl::Status ScopedWrite::PutPosition(int32_t position_id, gendb::BytesConstView position) {
-  _txn.Put(PositionCollId, ToPositionKey(position_id), position);
+absl::Status ScopedWrite::PutPosition(gendb::BytesConstView position) {
+  const Position message{position};
+  if (!message.has_position_id())
+    return absl::InvalidArgumentError("Position: the primary key field position_id is not set");
+  _txn.Put(PositionCollId, ToPositionKey(message), position);
   return absl::OkStatus();
 }
 
 absl::Status ScopedWrite::UpdatePosition(int32_t position_id, const gendb::MessagePatch& update) {
+  if (update.Modifies(Position::PositionId))
+    return absl::InvalidArgumentError(
+        "Position: a patch cannot change the primary key field position_id");
   return _txn.Update(PositionCollId, ToPositionKey(position_id), update);
 }
 
@@ -194,13 +217,19 @@ absl::Status ScopedWrite::GetConfig(std::string_view config_name, Config& config
   return ToMessage(_txn.Get(ConfigCollId, ToConfigKey(config_name)), config);
 }
 
-absl::Status ScopedWrite::PutConfig(std::string_view config_name, gendb::BytesConstView config) {
-  _txn.Put(ConfigCollId, ToConfigKey(config_name), config);
+absl::Status ScopedWrite::PutConfig(gendb::BytesConstView config) {
+  const Config message{config};
+  if (!message.has_config_name())
+    return absl::InvalidArgumentError("Config: the primary key field config_name is not set");
+  _txn.Put(ConfigCollId, ToConfigKey(message), config);
   return absl::OkStatus();
 }
 
 absl::Status ScopedWrite::UpdateConfig(std::string_view config_name,
                                        const gendb::MessagePatch& update) {
+  if (update.Modifies(Config::ConfigName))
+    return absl::InvalidArgumentError(
+        "Config: a patch cannot change the primary key field config_name");
   return _txn.Update(ConfigCollId, ToConfigKey(config_name), update);
 }
 
@@ -220,12 +249,18 @@ absl::Status ScopedWrite::GetSession(uint64_t session_id, Session& session) cons
   return ToMessage(_txn.Get(SessionCollId, ToSessionKey(session_id)), session);
 }
 
-absl::Status ScopedWrite::PutSession(uint64_t session_id, gendb::BytesConstView session) {
-  _txn.Put(SessionCollId, ToSessionKey(session_id), session);
+absl::Status ScopedWrite::PutSession(gendb::BytesConstView session) {
+  const Session message{session};
+  if (!message.has_session_id())
+    return absl::InvalidArgumentError("Session: the primary key field session_id is not set");
+  _txn.Put(SessionCollId, ToSessionKey(message), session);
   return absl::OkStatus();
 }
 
 absl::Status ScopedWrite::UpdateSession(uint64_t session_id, const gendb::MessagePatch& update) {
+  if (update.Modifies(Session::SessionId))
+    return absl::InvalidArgumentError(
+        "Session: a patch cannot change the primary key field session_id");
   return _txn.Update(SessionCollId, ToSessionKey(session_id), update);
 }
 
@@ -310,7 +345,7 @@ absl::Status ScopedWrite::NextAccountIdSequence(uint64_t& next_id) {
   }
   MetadataValueBuilder builder;
   builder.set_type(key.type).set_id(key.id).set_uint_value(next);
-  RETURN_IF_ERROR(PutMetadataValue(key, builder.Build()));
+  RETURN_IF_ERROR(PutMetadataValue(builder.Build()));
   next_id = static_cast<uint64_t>(next);
   return absl::OkStatus();
 }
@@ -328,7 +363,7 @@ absl::Status ScopedWrite::NextPositionIdSequence(int32_t& next_id) {
   }
   MetadataValueBuilder builder;
   builder.set_type(key.type).set_id(key.id).set_uint_value(next);
-  RETURN_IF_ERROR(PutMetadataValue(key, builder.Build()));
+  RETURN_IF_ERROR(PutMetadataValue(builder.Build()));
   next_id = static_cast<int32_t>(next);
   return absl::OkStatus();
 }

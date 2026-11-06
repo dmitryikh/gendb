@@ -33,7 +33,7 @@ TEST(DbTest, AddAndGetAccount) {
     builder.set_account_id(1);
     builder.set_name("Alice");
     std::vector<uint8_t> buffer = builder.Build();
-    EXPECT_TRUE(writer.PutAccount(1, buffer).ok());
+    EXPECT_TRUE(writer.PutAccount(buffer).ok());
     ASSERT_TRUE(writer.Commit().ok());
   }
   {
@@ -54,7 +54,7 @@ TEST(DbTest, AddAndGetPosition) {
     builder.set_account_id(1);
     builder.set_instrument("AAPL");
     std::vector<uint8_t> buffer = builder.Build();
-    EXPECT_TRUE(writer.PutPosition(10, buffer).ok());
+    EXPECT_TRUE(writer.PutPosition(buffer).ok());
     ASSERT_TRUE(writer.Commit().ok());
   }
   {
@@ -76,7 +76,7 @@ TEST(DbTest, UpdateAccountWithPatch) {
     builder.set_name("Bob");
     builder.set_balance(100.0f);
     std::vector<uint8_t> buffer = builder.Build();
-    EXPECT_TRUE(writer.PutAccount(2, buffer).ok());
+    EXPECT_TRUE(writer.PutAccount(buffer).ok());
     ASSERT_TRUE(writer.Commit().ok());
   }
   {
@@ -104,7 +104,7 @@ TEST(DbTest, UpdatePositionWithPatch) {
     builder.set_instrument("GOOG");
     builder.set_open_price(100.0f);
     std::vector<uint8_t> buffer = builder.Build();
-    EXPECT_TRUE(writer.PutPosition(20, buffer).ok());
+    EXPECT_TRUE(writer.PutPosition(buffer).ok());
     ASSERT_TRUE(writer.Commit().ok());
   }
   {
@@ -130,7 +130,7 @@ TEST(DbTest, NoChangesWithoutCommit) {
     builder.set_account_id(3);
     builder.set_name("Charlie");
     std::vector<uint8_t> buffer = builder.Build();
-    EXPECT_TRUE(writer.PutAccount(3, buffer).ok());
+    EXPECT_TRUE(writer.PutAccount(buffer).ok());
     // Do not commit
   }
   {
@@ -149,7 +149,7 @@ TEST(DbTest, NoYetCommittedChangesNotVisibleFromOtherReaders) {
     builder.set_account_id(5);
     builder.set_name("Eve");
     std::vector<uint8_t> buffer = builder.Build();
-    EXPECT_TRUE(writer.PutAccount(5, buffer).ok());
+    EXPECT_TRUE(writer.PutAccount(buffer).ok());
     // Do not commit yet.
     {
       auto snapshot = db.CreateSnapshot();
@@ -176,7 +176,7 @@ TEST(DbTest, NoYetCommittedChangesVisibleInWriter) {
     builder.set_account_id(4);
     builder.set_name("David");
     std::vector<uint8_t> buffer = builder.Build();
-    EXPECT_TRUE(writer.PutAccount(4, buffer).ok());
+    EXPECT_TRUE(writer.PutAccount(buffer).ok());
 
     Account account;
     EXPECT_TRUE(writer.GetAccount(4, account).ok());
@@ -193,19 +193,19 @@ TEST(DbTest, GetAccountByAgeRange) {
     builder.set_name("Anna");
     builder.set_age(20);
     std::vector<uint8_t> buffer = builder.Build();
-    EXPECT_TRUE(writer.PutAccount(100, buffer).ok());
+    EXPECT_TRUE(writer.PutAccount(buffer).ok());
 
     builder.set_account_id(101);
     builder.set_name("Ben");
     builder.set_age(25);
     buffer = builder.Build();
-    EXPECT_TRUE(writer.PutAccount(101, buffer).ok());
+    EXPECT_TRUE(writer.PutAccount(buffer).ok());
 
     builder.set_account_id(102);
     builder.set_name("Cara");
     builder.set_age(30);
     buffer = builder.Build();
-    EXPECT_TRUE(writer.PutAccount(102, buffer).ok());
+    EXPECT_TRUE(writer.PutAccount(buffer).ok());
 
     ASSERT_TRUE(writer.Commit().ok());
   }
@@ -231,19 +231,19 @@ TEST(DbTest, GetAccountByAgeEqual) {
     builder.set_name("Dan");
     builder.set_age(40);
     std::vector<uint8_t> buffer = builder.Build();
-    EXPECT_TRUE(writer.PutAccount(200, buffer).ok());
+    EXPECT_TRUE(writer.PutAccount(buffer).ok());
 
     builder.set_account_id(201);
     builder.set_name("Eve");
     builder.set_age(40);
     buffer = builder.Build();
-    EXPECT_TRUE(writer.PutAccount(201, buffer).ok());
+    EXPECT_TRUE(writer.PutAccount(buffer).ok());
 
     builder.set_account_id(202);
     builder.set_name("Finn");
     builder.set_age(41);
     buffer = builder.Build();
-    EXPECT_TRUE(writer.PutAccount(202, buffer).ok());
+    EXPECT_TRUE(writer.PutAccount(buffer).ok());
 
     ASSERT_TRUE(writer.Commit().ok());
   }
@@ -269,19 +269,19 @@ TEST(DbTest, GetPositionByAccountIdRange) {
     builder.set_account_id(10);
     builder.set_instrument("AAPL");
     std::vector<uint8_t> buffer = builder.Build();
-    EXPECT_TRUE(writer.PutPosition(1, buffer).ok());
+    EXPECT_TRUE(writer.PutPosition(buffer).ok());
 
     builder.set_position_id(2);
     builder.set_account_id(15);
     builder.set_instrument("GOOG");
     buffer = builder.Build();
-    EXPECT_TRUE(writer.PutPosition(2, buffer).ok());
+    EXPECT_TRUE(writer.PutPosition(buffer).ok());
 
     builder.set_position_id(3);
     builder.set_account_id(20);
     builder.set_instrument("MSFT");
     buffer = builder.Build();
-    EXPECT_TRUE(writer.PutPosition(3, buffer).ok());
+    EXPECT_TRUE(writer.PutPosition(buffer).ok());
 
     ASSERT_TRUE(writer.Commit().ok());
   }
@@ -307,19 +307,19 @@ TEST(DbTest, GetPositionByAccountIdEqual) {
     builder.set_account_id(30);
     builder.set_instrument("TSLA");
     std::vector<uint8_t> buffer = builder.Build();
-    EXPECT_TRUE(writer.PutPosition(4, buffer).ok());
+    EXPECT_TRUE(writer.PutPosition(buffer).ok());
 
     builder.set_position_id(5);
     builder.set_account_id(30);
     builder.set_instrument("AMZN");
     buffer = builder.Build();
-    EXPECT_TRUE(writer.PutPosition(5, buffer).ok());
+    EXPECT_TRUE(writer.PutPosition(buffer).ok());
 
     builder.set_position_id(6);
     builder.set_account_id(31);
     builder.set_instrument("NFLX");
     buffer = builder.Build();
-    EXPECT_TRUE(writer.PutPosition(6, buffer).ok());
+    EXPECT_TRUE(writer.PutPosition(buffer).ok());
 
     ASSERT_TRUE(writer.Commit().ok());
   }
@@ -344,7 +344,7 @@ TEST(DbTest, PositionByAccountIdIndex_UncommittedNotVisibleToSnapshot) {
   builder.set_account_id(50);
   builder.set_instrument("AAPL");
   std::vector<uint8_t> buffer = builder.Build();
-  EXPECT_TRUE(writer.PutPosition(100, buffer).ok());
+  EXPECT_TRUE(writer.PutPosition(buffer).ok());
   // Do not commit yet.
   {
     auto snapshot = db.CreateSnapshot();
@@ -374,7 +374,7 @@ TEST(DbTest, PositionByAccountIdIndex_UncommittedVisibleToWriter) {
     builder.set_account_id(51);
     builder.set_instrument("GOOG");
     std::vector<uint8_t> buffer = builder.Build();
-    EXPECT_TRUE(writer.PutPosition(101, buffer).ok());
+    EXPECT_TRUE(writer.PutPosition(buffer).ok());
 
     auto it = writer.GetPositionByAccountIdEqual(51);
     // Should see the uncommitted position
@@ -396,9 +396,7 @@ TEST(DbTest, NextAccountIdSequence) {
     EXPECT_EQ(next_id, 1);
     // Add an account
     EXPECT_TRUE(
-        writer
-            .PutAccount(next_id, AccountBuilder().set_account_id(next_id).set_name("First").Build())
-            .ok());
+        writer.PutAccount(AccountBuilder().set_account_id(next_id).set_name("First").Build()).ok());
     ASSERT_TRUE(writer.Commit().ok());
   }
 
@@ -410,9 +408,7 @@ TEST(DbTest, NextAccountIdSequence) {
     EXPECT_EQ(next_id2, 2);
     // Add another account
     EXPECT_TRUE(
-        writer2
-            .PutAccount(next_id2,
-                        AccountBuilder().set_account_id(next_id2).set_name("Second").Build())
+        writer2.PutAccount(AccountBuilder().set_account_id(next_id2).set_name("Second").Build())
             .ok());
     ASSERT_TRUE(writer2.Commit().ok());
   }
@@ -436,9 +432,7 @@ TEST(DbTest, NextPositionIdSequence) {
     EXPECT_EQ(next_id, 1);
     // Add a position
     EXPECT_TRUE(
-        writer
-            .PutPosition(next_id,
-                         PositionBuilder().set_position_id(next_id).set_account_id(1).Build())
+        writer.PutPosition(PositionBuilder().set_position_id(next_id).set_account_id(1).Build())
             .ok());
     ASSERT_TRUE(writer.Commit().ok());
   }
@@ -451,9 +445,7 @@ TEST(DbTest, NextPositionIdSequence) {
     EXPECT_EQ(next_id2, 2);
     // Add another position
     EXPECT_TRUE(
-        writer2
-            .PutPosition(next_id2,
-                         PositionBuilder().set_position_id(next_id2).set_account_id(2).Build())
+        writer2.PutPosition(PositionBuilder().set_position_id(next_id2).set_account_id(2).Build())
             .ok());
     ASSERT_TRUE(writer2.Commit().ok());
   }
@@ -475,9 +467,7 @@ TEST(DbTest, NextAccountIdSequence_NotCommitted) {
     EXPECT_TRUE(writer.NextAccountIdSequence(next_id).ok());
     EXPECT_EQ(next_id, 1);
     EXPECT_TRUE(
-        writer
-            .PutAccount(next_id,
-                        AccountBuilder().set_account_id(next_id).set_name("Uncommitted").Build())
+        writer.PutAccount(AccountBuilder().set_account_id(next_id).set_name("Uncommitted").Build())
             .ok());
     // Do not commit
   }
@@ -495,7 +485,7 @@ TEST(DbTest, UnknownFieldsSurviveUpdate) {
     AccountBuilder builder;
     builder.set_account_id(50).set_name("Eve");
     builder.AddStringField(1000, "from a newer schema");
-    EXPECT_TRUE(writer.PutAccount(50, builder.Build()).ok());
+    EXPECT_TRUE(writer.PutAccount(builder.Build()).ok());
     ASSERT_TRUE(writer.Commit().ok());
   }
   {
@@ -514,10 +504,8 @@ TEST(DbTest, IndexFollowsPatchesOfIndexedField) {
   Db db;
   {
     auto writer = db.CreateWriter();
-    EXPECT_TRUE(
-        writer.PutAccount(60, AccountBuilder().set_account_id(60).set_age(20).Build()).ok());
-    EXPECT_TRUE(
-        writer.PutAccount(61, AccountBuilder().set_account_id(61).set_age(20).Build()).ok());
+    EXPECT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(60).set_age(20).Build()).ok());
+    EXPECT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(61).set_age(20).Build()).ok());
     ASSERT_TRUE(writer.Commit().ok());
   }
   {
@@ -552,7 +540,7 @@ TEST(DbTest, EndToEndWorkflow) {
     const std::string name = "Grace";
     AccountBuilder account;
     account.set_account_id(account_id).set_name(name).set_age(33).set_is_active(true);
-    ASSERT_TRUE(writer.PutAccount(account_id, account.Build()).ok());
+    ASSERT_TRUE(writer.PutAccount(account.Build()).ok());
 
     ASSERT_TRUE(writer.NextPositionIdSequence(position_id).ok());
     PositionBuilder position;
@@ -560,7 +548,7 @@ TEST(DbTest, EndToEndWorkflow) {
         .set_account_id(static_cast<int32_t>(account_id))
         .set_instrument("EURUSD")
         .set_direction(Direction::kBuy);
-    ASSERT_TRUE(writer.PutPosition(position_id, position.Build()).ok());
+    ASSERT_TRUE(writer.PutPosition(position.Build()).ok());
     ASSERT_TRUE(writer.Commit().ok());
   }
   {
@@ -594,8 +582,7 @@ TEST(DbTest, DeleteRemovesRecordAndIndexEntry) {
   Db db;
   {
     auto writer = db.CreateWriter();
-    ASSERT_TRUE(
-        writer.PutAccount(70, AccountBuilder().set_account_id(70).set_age(40).Build()).ok());
+    ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(70).set_age(40).Build()).ok());
     ASSERT_TRUE(writer.Commit().ok());
   }
   {
@@ -616,9 +603,9 @@ TEST(DbTest, DeleteRemovesRecordAndIndexEntry) {
 TEST(DbTest, PutOverwriteMovesIndexEntry) {
   Db db;
   auto writer = db.CreateWriter();
-  ASSERT_TRUE(writer.PutAccount(71, AccountBuilder().set_account_id(71).set_age(1).Build()).ok());
+  ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(71).set_age(1).Build()).ok());
   ASSERT_TRUE(writer.Commit().ok());
-  ASSERT_TRUE(writer.PutAccount(71, AccountBuilder().set_account_id(71).set_age(2).Build()).ok());
+  ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(71).set_age(2).Build()).ok());
   ASSERT_TRUE(writer.Commit().ok());
   EXPECT_FALSE(writer.GetAccountByAgeEqual(1).Valid());
   EXPECT_TRUE(writer.GetAccountByAgeEqual(2).Valid());
@@ -628,16 +615,16 @@ TEST(DbTest, PutOverwriteMovesIndexEntry) {
 TEST(DbTest, WriterSeesItsOwnChangesAcrossALoopBeforeCommit) {
   Db db;
   auto writer = db.CreateWriter();
-  ASSERT_TRUE(writer.PutAccount(1, AccountBuilder().set_account_id(1).set_age(0).Build()).ok());
+  ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(1).set_age(0).Build()).ok());
   for (int32_t i = 1; i <= 3; ++i) {
     Account account;
     ASSERT_TRUE(writer.GetAccount(1, account).ok());
     EXPECT_EQ(account.age(), i - 1);
     ASSERT_TRUE(writer.UpdateAccount(1, AccountPatchBuilder().set_age(i).Build()).ok());
   }
-  ASSERT_TRUE(writer.PutAccount(2, AccountBuilder().set_account_id(2).set_age(3).Build()).ok());
+  ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(2).set_age(3).Build()).ok());
   ASSERT_TRUE(writer.DeleteAccount(2).ok());
-  ASSERT_TRUE(writer.PutAccount(3, AccountBuilder().set_account_id(3).set_age(3).Build()).ok());
+  ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(3).set_age(3).Build()).ok());
 
   Account account;
   EXPECT_FALSE(writer.GetAccount(2, account).ok());
@@ -658,7 +645,7 @@ TEST(DbTest, ScanSeesEveryRecordOfTheSnapshot) {
   {
     auto writer = db.CreateWriter();
     for (uint64_t id = 1; id <= 100; ++id) {
-      ASSERT_TRUE(writer.PutAccount(id, AccountBuilder().set_account_id(id).Build()).ok());
+      ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(id).Build()).ok());
     }
     ASSERT_TRUE(writer.Commit().ok());
   }
@@ -677,7 +664,7 @@ TEST(SnapshotTest, IsolatedFromLaterCommitsUntilDestroyed) {
   Db db;
   const auto put = [&](int32_t age) {
     auto writer = db.CreateWriter();
-    ASSERT_TRUE(writer.PutAccount(1, AccountBuilder().set_account_id(1).set_age(age).Build()).ok());
+    ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(1).set_age(age).Build()).ok());
     ASSERT_TRUE(writer.Commit().ok());
   };
   put(10);
@@ -713,8 +700,8 @@ TEST(SnapshotTest, IsolatedFromLaterCommitsUntilDestroyed) {
 TEST(SnapshotTest, ConcurrentReadersOnlySeeWholeCommits) {
   Db db;
   const auto put_balances = [&](ScopedWrite& writer, int32_t a, int32_t b) {
-    ASSERT_TRUE(writer.PutAccount(1, AccountBuilder().set_account_id(1).set_age(a).Build()).ok());
-    ASSERT_TRUE(writer.PutAccount(2, AccountBuilder().set_account_id(2).set_age(b).Build()).ok());
+    ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(1).set_age(a).Build()).ok());
+    ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(2).set_age(b).Build()).ok());
   };
   {
     auto writer = db.CreateWriter();
@@ -740,7 +727,8 @@ TEST(SnapshotTest, ConcurrentReadersOnlySeeWholeCommits) {
     auto writer = db.CreateWriter();
     put_balances(writer, 500 + i % 100, 500 - i % 100);
     // New keys force the hash table to grow under the readers.
-    ASSERT_TRUE(writer.PutConfig("config" + std::to_string(i), ConfigBuilder().Build()).ok());
+    const std::string name = std::to_string(i);
+    ASSERT_TRUE(writer.PutConfig(ConfigBuilder().set_config_name(name).Build()).ok());
     ASSERT_TRUE(writer.Commit().ok());
   }
   done = true;
@@ -786,7 +774,7 @@ TEST(SnapshotTest, ConcurrentReadersSurviveReclamation) {
     for (uint64_t id = first_id; id < first_id + 10; ++id) {
       AccountBuilder builder;
       builder.set_account_id(id).set_age(1 + cycle % 900);
-      ASSERT_TRUE(writer.PutAccount(id, builder.Build()).ok());
+      ASSERT_TRUE(writer.PutAccount(builder.Build()).ok());
     }
     ASSERT_TRUE(writer.Commit().ok());
   }
@@ -799,7 +787,7 @@ TEST(TransactionTest, RollbackDiscardsEverything) {
   Db db;
   {
     auto writer = db.CreateWriter();
-    ASSERT_TRUE(writer.PutAccount(1, AccountBuilder().set_account_id(1).set_age(5).Build()).ok());
+    ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(1).set_age(5).Build()).ok());
     uint64_t id = 0;
     ASSERT_TRUE(writer.NextAccountIdSequence(id).ok());
     writer.Rollback();

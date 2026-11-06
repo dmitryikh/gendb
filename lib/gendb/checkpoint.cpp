@@ -1,6 +1,5 @@
 #include "gendb/checkpoint.h"
 
-#include <cstdio>
 #include <filesystem>
 
 #include "absl/strings/str_cat.h"
@@ -104,6 +103,7 @@ absl::Status ReadCheckpoint(FrameSource& source, CheckpointHandler& handler) {
   for (;;) {
     Frame frame;
     const ParseStatus status = source.Peek(&frame);
+    RETURN_IF_ERROR(source.status());
     if (status != ParseStatus::kOk) return absl::DataLossError("Incomplete or damaged checkpoint");
     Decoder decoder(frame.body);
     switch (frame.type) {
@@ -160,10 +160,13 @@ absl::Status ReadCheckpoint(FrameSource& source, CheckpointHandler& handler) {
   }
 }
 
-absl::StatusOr<std::unique_ptr<CheckpointStage>> CheckpointStage::Create(std::string path) {
+absl::StatusOr<std::unique_ptr<CheckpointStage>> CheckpointStage::Create(
+    std::shared_ptr<FileSystem> file_system, std::string path) {
   auto stage = std::make_unique<CheckpointStage>();
-  if (!path.empty()) {
-    auto file = AppendFile::Create(std::move(path));
+  stage->_file_system = std::move(file_system);
+  stage->_path = std::move(path);
+  if (!stage->_path.empty()) {
+    auto file = stage->_file_system->Create(stage->_path);
     if (!file.ok()) return file.status();
     stage->_file = std::move(*file);
   }
@@ -179,18 +182,15 @@ absl::Status CheckpointStage::Add(std::string_view frames) {
 absl::Status CheckpointStage::Publish(const std::string& final_path) {
   if (_file == nullptr) return absl::OkStatus();
   RETURN_IF_ERROR(_file->Sync());
-  if (std::rename(_file->path().c_str(), final_path.c_str()) != 0) {
-    return ErrnoStatus("rename", final_path);
-  }
-  const std::string directory = std::filesystem::path(final_path).parent_path().string();
-  return SyncDirectory(directory);
+  RETURN_IF_ERROR(_file_system->Rename(_path, final_path));
+  return _file_system->SyncDirectory(std::filesystem::path(final_path).parent_path().string());
 }
 
 absl::StatusOr<std::unique_ptr<FrameSource>> CheckpointStage::OpenSource(const std::string& path) {
   if (_file == nullptr) {
     return std::unique_ptr<FrameSource>(new MemoryFrameSource(std::move(_chunks)));
   }
-  auto reader = FrameFileReader::Open(path);
+  auto reader = FrameFileReader::Open(*_file_system, path);
   if (!reader.ok()) return reader.status();
   return std::unique_ptr<FrameSource>(std::move(*reader));
 }

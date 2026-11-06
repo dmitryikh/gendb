@@ -1,7 +1,5 @@
 #include <algorithm>
-#include <cstdio>
-#include <filesystem>
-#include <system_error>
+#include <chrono>
 #include <utility>
 
 #include "absl/strings/str_cat.h"
@@ -41,6 +39,7 @@ absl::Status Engine::ExportCheckpoint(
 absl::Status Engine::Checkpoint() {
   if (_wal == nullptr) return absl::FailedPreconditionError("The engine is in memory only");
   std::lock_guard serial(_checkpoint_mutex);
+  const auto started = std::chrono::steady_clock::now();
 
   std::optional<EngineSnapshot> snapshot;
   LogPosition position;
@@ -57,8 +56,11 @@ absl::Status Engine::Checkpoint() {
     snapshot.emplace(*this);
     log_bytes = _wal_bytes_since_checkpoint.exchange(0, std::memory_order_relaxed);
   }
-  const auto failed = [&](absl::Status status) {
-    _wal_bytes_since_checkpoint.fetch_add(log_bytes, std::memory_order_relaxed);
+  const auto report = [&](absl::Status status, uint64_t bytes) {
+    if (_options.observer != nullptr) {
+      _options.observer->OnCheckpoint(
+          {position.lsn, bytes, std::chrono::steady_clock::now() - started, status});
+    }
     return status;
   };
 
@@ -66,38 +68,41 @@ absl::Status Engine::Checkpoint() {
   const std::string final_path =
       NumberedPath(path, kCheckpointPrefix, position.lsn, kCheckpointSuffix);
   const std::string temp_path = absl::StrCat(final_path, kTempSuffix);
-  auto file = internal::AppendFile::Create(temp_path);
-  if (!file.ok()) return failed(file.status());
-  absl::Status status = ExportCheckpoint(
-      *snapshot, position, [&file](std::string_view frames) { return (*file)->Append(frames); });
+  auto file = _file_system->Create(temp_path);
+  absl::Status status = file.status();
+  if (status.ok()) {
+    status = ExportCheckpoint(*snapshot, position,
+                              [&file](std::string_view frames) { return (*file)->Append(frames); });
+  }
   snapshot.reset();  // Lets go of the old versions before the slow sync.
   if (status.ok()) status = (*file)->Sync();
-  if (status.ok() && std::rename(temp_path.c_str(), final_path.c_str()) != 0) {
-    status = internal::ErrnoStatus("rename", final_path);
-  }
-  if (status.ok()) status = internal::SyncDirectory(path);
+  if (status.ok()) status = _file_system->Rename(temp_path, final_path);
+  if (status.ok()) status = _file_system->SyncDirectory(path);
   if (!status.ok()) {
-    std::error_code ignored;
-    std::filesystem::remove(temp_path, ignored);
-    return failed(std::move(status));
+    (void)_file_system->Remove(temp_path);
+    _wal_bytes_since_checkpoint.fetch_add(log_bytes, std::memory_order_relaxed);
+    return report(std::move(status), 0);
   }
 
   _checkpoint_bytes.store((*file)->size(), std::memory_order_relaxed);
   _checkpoint_lsn.store(position.lsn, std::memory_order_relaxed);
   _rewrite_checkpoint.store(false, std::memory_order_relaxed);
   RemoveCheckpointsBelow(position.lsn);
-  return PurgeWal();
+  return report(PurgeWal(), (*file)->size());
 }
 
 void Engine::RemoveCheckpointsBelow(uint64_t lsn) const {
-  auto checkpoints = internal::ListNumbered(_options.path, kCheckpointPrefix, kCheckpointSuffix);
+  auto checkpoints =
+      internal::ListNumbered(*_file_system, _options.path, kCheckpointPrefix, kCheckpointSuffix);
   if (!checkpoints.ok()) return;  // Leftovers are harmless: the newest one is used.
+  bool removed = false;
   for (uint64_t old : *checkpoints) {
     if (old == lsn) continue;
-    std::error_code ignored;
-    std::filesystem::remove(NumberedPath(_options.path, kCheckpointPrefix, old, kCheckpointSuffix),
-                            ignored);
+    (void)_file_system->Remove(
+        NumberedPath(_options.path, kCheckpointPrefix, old, kCheckpointSuffix));
+    removed = true;
   }
+  if (removed) (void)_file_system->SyncDirectory(_options.path);
 }
 
 absl::Status Engine::PurgeWal() {
@@ -122,7 +127,7 @@ void Engine::AfterCommit(uint64_t wal_bytes) {
 
 void Engine::RecordBackgroundError(absl::Status status) {
   if (status.ok()) return;
-  std::fprintf(stderr, "gendb: background work failed: %s\n", status.ToString().c_str());
+  Log(LogLevel::kError, absl::StrCat("Background work failed: ", status.ToString()));
   std::lock_guard lock(_background_mutex);
   _background_error = std::move(status);
 }

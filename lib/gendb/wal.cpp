@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <charconv>
 #include <cstdio>
-#include <filesystem>
 #include <system_error>
 
 #include "absl/strings/str_cat.h"
@@ -12,18 +11,13 @@
 namespace gendb::internal {
 namespace {
 
-namespace fs = std::filesystem;
-
 constexpr std::string_view kSegmentPrefix = "wal-";
 constexpr std::string_view kSegmentSuffix = ".log";
 constexpr uint64_t kSegmentMagic = 0x4c41574244470a31;
 
-absl::Status RemoveFile(const std::string& path) {
-  std::error_code error;
-  fs::remove(path, error);
-  if (error) return absl::InternalError(absl::StrCat("remove ", path, ": ", error.message()));
-  return absl::OkStatus();
-}
+// How often a sync mark goes into the log. Damage in about this much of the end of a segment, after
+// a crash, cannot be told from a torn tail.
+constexpr uint64_t kSyncMarkIntervalBytes = 4096;
 
 }  // namespace
 
@@ -34,12 +28,13 @@ std::string NumberedPath(const std::string& dir, std::string_view prefix, uint64
   return absl::StrCat(dir, "/", prefix, digits, suffix);
 }
 
-absl::StatusOr<std::vector<uint64_t>> ListNumbered(const std::string& dir, std::string_view prefix,
+absl::StatusOr<std::vector<uint64_t>> ListNumbered(FileSystem& file_system, const std::string& dir,
+                                                   std::string_view prefix,
                                                    std::string_view suffix) {
+  auto names = file_system.List(dir);
+  if (!names.ok()) return names.status();
   std::vector<uint64_t> lsns;
-  std::error_code error;
-  for (const auto& entry : fs::directory_iterator(dir, error)) {
-    const std::string name = entry.path().filename().string();
+  for (const std::string& name : *names) {
     if (name.size() <= prefix.size() + suffix.size() || !name.starts_with(prefix) ||
         !name.ends_with(suffix)) {
       continue;
@@ -50,17 +45,45 @@ absl::StatusOr<std::vector<uint64_t>> ListNumbered(const std::string& dir, std::
     const auto [end, parsed] = std::from_chars(first, last, lsn);
     if (parsed == std::errc() && end == last) lsns.push_back(lsn);
   }
-  if (error) return absl::InternalError(absl::StrCat("list ", dir, ": ", error.message()));
   std::sort(lsns.begin(), lsns.end());
   return lsns;
 }
 
+absl::StatusOr<bool> Wal::MarkedDurableAfter(const std::string& path, uint64_t offset,
+                                             uint64_t lsn) {
+  FileSystem& file_system = *_options.file_system;
+  auto size = file_system.FileSize(path);
+  if (!size.ok()) return size.status();
+  if (*size <= offset) return false;
+  auto file = file_system.OpenForRead(path);
+  if (!file.ok()) return file.status();
+  std::string rest(*size - offset, '\0');
+  auto got = (*file)->Read(offset, rest.data(), rest.size());
+  if (!got.ok()) return got.status();
+  std::string_view view(rest.data(), *got);
+  while (view.size() >= kFrameHeaderSize) {
+    Frame frame;
+    if (ParseFrame(view, &frame) != ParseStatus::kOk) {
+      view.remove_prefix(1);
+      continue;
+    }
+    if (frame.type == FrameType::kSyncMark) {
+      Decoder mark(frame.body);
+      const uint64_t synced = mark.Fixed64();
+      if (mark.ok() && synced >= lsn) return true;
+    }
+    view.remove_prefix(frame.raw.size());
+  }
+  return false;
+}
+
 absl::StatusOr<Wal::Recovered> Wal::Recover(
     uint64_t after_lsn, const std::function<absl::Status(const Frame&)>& apply) {
-  auto first_lsns = ListNumbered(_options.dir, kSegmentPrefix, kSegmentSuffix);
+  FileSystem& file_system = *_options.file_system;
+  auto first_lsns = ListNumbered(file_system, _options.dir, kSegmentPrefix, kSegmentSuffix);
   if (!first_lsns.ok()) return first_lsns.status();
 
-  Recovered result{after_lsn, 0, std::nullopt};
+  Recovered result{after_lsn, 0, 0, 0, std::nullopt};
   const auto add_name = [this](uint32_t id, std::string_view name) {
     for (const auto& [known, _] : _seen_collections) {
       if (known == id) return;
@@ -72,15 +95,20 @@ absl::StatusOr<Wal::Recovered> Wal::Recover(
     const uint64_t first_lsn = (*first_lsns)[i];
     const std::string path = NumberedPath(_options.dir, kSegmentPrefix, first_lsn, kSegmentSuffix);
     const bool last_segment = i + 1 == first_lsns->size();
-    auto reader = FrameFileReader::Open(path);
+    auto reader = FrameFileReader::Open(file_system, path);
     if (!reader.ok()) return reader.status();
 
     // The header. A crash while creating the last segment can leave it incomplete.
     Frame frame;
     const ParseStatus header = (*reader)->Peek(&frame);
+    RETURN_IF_ERROR((*reader)->status());
     if (header != ParseStatus::kOk) {
-      if (!last_segment) return absl::DataLossError(absl::StrCat("Damaged header: ", path));
-      RETURN_IF_ERROR(RemoveFile(path));
+      auto marked = MarkedDurableAfter(path, 0, result.last_lsn + 1);
+      if (!marked.ok()) return marked.status();
+      if (!last_segment || *marked) {
+        return absl::DataLossError(absl::StrCat("Damaged header: ", path));
+      }
+      RETURN_IF_ERROR(file_system.Remove(path));
       continue;
     }
     Decoder decoder(frame.body);
@@ -111,12 +139,23 @@ absl::StatusOr<Wal::Recovered> Wal::Recover(
     if (!superseded) {
       for (;;) {
         const ParseStatus status = (*reader)->Peek(&frame);
+        // A failure to read says nothing about the data, and must not look like a torn tail.
+        RETURN_IF_ERROR((*reader)->status());
         if (status != ParseStatus::kOk) {
-          const bool clean_end = status == ParseStatus::kIncomplete && (*reader)->at_end();
-          if (!last_segment && !clean_end) {
-            return absl::DataLossError(absl::StrCat("Damaged segment: ", path));
+          if (status == ParseStatus::kIncomplete && (*reader)->at_end()) break;
+          const uint64_t damaged_at = (*reader)->offset();
+          auto marked = MarkedDurableAfter(path, damaged_at, result.last_lsn + 1);
+          if (!marked.ok()) return marked.status();
+          if (!last_segment || *marked) {
+            return absl::DataLossError(absl::StrCat("Damaged segment at offset ", damaged_at,
+                                                    ", in data known to be durable: ", path));
           }
-          break;  // In the last segment, a torn tail: never acknowledged as durable.
+          break;  // The tail of a crash: nothing in it was acknowledged as durable.
+        }
+        if (frame.type == FrameType::kSyncMark) {
+          size = (*reader)->offset() + frame.raw.size();
+          (*reader)->Advance();
+          continue;
         }
         if (frame.type != FrameType::kCommit) {
           return absl::DataLossError(absl::StrCat("Unexpected frame in ", path));
@@ -131,19 +170,23 @@ absl::StatusOr<Wal::Recovered> Wal::Recover(
           RETURN_IF_ERROR(apply(frame));
           result.last_lsn = commit.lsn;
           result.bytes_replayed += frame.raw.size();
+          ++result.commits_replayed;
         }
         size = (*reader)->offset() + frame.raw.size();
         (*reader)->Advance();
       }
       if (last_segment) {
-        std::error_code error;
-        const uint64_t on_disk = fs::file_size(path, error);
-        if (!error && on_disk > size) RETURN_IF_ERROR(TruncateAndSync(path, size));
+        auto on_disk = file_system.FileSize(path);
+        if (!on_disk.ok()) return on_disk.status();
+        if (*on_disk > size) {
+          result.torn_bytes_cut = *on_disk - size;
+          RETURN_IF_ERROR(file_system.TruncateAndSync(path, size));
+        }
       }
     } else {
-      std::error_code error;
-      size = fs::file_size(path, error);
-      if (error) return absl::InternalError(absl::StrCat("stat ", path));
+      auto on_disk = file_system.FileSize(path);
+      if (!on_disk.ok()) return on_disk.status();
+      size = *on_disk;
     }
     _segments.push_back({first_lsn, path, size});
   }
@@ -159,7 +202,7 @@ absl::Status Wal::OpenSegmentLocked(uint64_t first_lsn) {
   // Without commits, the latest segment can be replaced under the same number.
   if (!_segments.empty() && _segments.back().first_lsn == first_lsn) _segments.pop_back();
 
-  auto file = AppendFile::Create(path);
+  auto file = _options.file_system->Create(path);
   if (!file.ok()) return file.status();
 
   std::string header;
@@ -176,9 +219,9 @@ absl::Status Wal::OpenSegmentLocked(uint64_t first_lsn) {
   EndFrame(header, begin);
   RETURN_IF_ERROR((*file)->Append(header));
   RETURN_IF_ERROR((*file)->Sync());
-  RETURN_IF_ERROR(SyncDirectory(_options.dir));
+  RETURN_IF_ERROR(_options.file_system->SyncDirectory(_options.dir));
 
-  _current = std::move(*file);
+  _current = std::shared_ptr<WritableFile>(std::move(*file));
   _segments.push_back({first_lsn, std::move(path), _current->size()});
   return absl::OkStatus();
 }
@@ -208,8 +251,15 @@ absl::Status Wal::Append(std::string_view frames, uint64_t last_lsn, bool sync) 
     return _failure;
   }
   // Only this thread replaces _current, so reading it here needs no lock.
-  AppendFile& file = *_current;
+  WritableFile& file = *_current;
+  const uint64_t synced = _synced_lsn.load(std::memory_order_acquire);
+  if (_bytes_since_mark >= kSyncMarkIntervalBytes && synced > _marked_lsn) {
+    if (absl::Status status = WriteSyncMark(file, synced); !status.ok()) {
+      return Fail(std::move(status));
+    }
+  }
   if (absl::Status status = file.Append(frames); !status.ok()) return Fail(std::move(status));
+  _bytes_since_mark += frames.size();
   _written_lsn.store(last_lsn, std::memory_order_release);
   if (sync) {
     if (absl::Status status = file.Sync(); !status.ok()) return Fail(std::move(status));
@@ -219,6 +269,24 @@ absl::Status Wal::Append(std::string_view frames, uint64_t last_lsn, bool sync) 
     if (absl::Status status = Rotate(); !status.ok()) return Fail(std::move(status));
   }
   return absl::OkStatus();
+}
+
+absl::Status Wal::WriteSyncMark(WritableFile& file, uint64_t synced) {
+  std::string mark;
+  const size_t begin = BeginFrame(mark, FrameType::kSyncMark);
+  PutFixed64(mark, synced);
+  EndFrame(mark, begin);
+  RETURN_IF_ERROR(file.Append(mark));
+  _marked_lsn = synced;
+  _bytes_since_mark = 0;
+  return absl::OkStatus();
+}
+
+absl::Status Wal::Close() {
+  RETURN_IF_ERROR(Sync());
+  if (_current == nullptr) return absl::OkStatus();
+  RETURN_IF_ERROR(WriteSyncMark(*_current, _synced_lsn.load(std::memory_order_acquire)));
+  return _current->Sync();
 }
 
 absl::Status Wal::Rotate() {
@@ -253,7 +321,7 @@ absl::Status Wal::AddCollection(uint32_t id, std::string name) {
 }
 
 absl::Status Wal::Sync() {
-  std::shared_ptr<AppendFile> file;
+  std::shared_ptr<WritableFile> file;
   uint64_t written;
   {
     // Together: every commit up to `written` is in this file, or in one Rotate already synced.
@@ -290,19 +358,22 @@ absl::Status Wal::Purge(uint64_t lsn, uint64_t retain_bytes) {
     }
     _segments.erase(_segments.begin(), _segments.begin() + static_cast<ptrdiff_t>(count));
   }
-  for (const std::string& path : removed) RETURN_IF_ERROR(RemoveFile(path));
-  if (!removed.empty()) RETURN_IF_ERROR(SyncDirectory(_options.dir));
+  for (const std::string& path : removed) RETURN_IF_ERROR(_options.file_system->Remove(path));
+  if (!removed.empty()) RETURN_IF_ERROR(_options.file_system->SyncDirectory(_options.dir));
   return absl::OkStatus();
 }
 
 absl::Status Wal::RemoveAll() {
   std::lock_guard lock(_mutex);
+  if (!_failure.ok()) return _failure;
   _current.reset();
   while (!_segments.empty()) {
-    RETURN_IF_ERROR(RemoveFile(_segments.back().path));
+    RETURN_IF_ERROR(_options.file_system->Remove(_segments.back().path));
     _segments.pop_back();
+    // One at a time: without it, the disk can keep any of these removals and not the others.
+    RETURN_IF_ERROR(_options.file_system->SyncDirectory(_options.dir));
   }
-  return SyncDirectory(_options.dir);
+  return absl::OkStatus();
 }
 
 uint64_t Wal::total_bytes() const {
@@ -328,7 +399,8 @@ std::optional<std::string> Wal::SegmentFor(uint64_t lsn) const {
 }
 
 absl::Status WalCursor::Open(const std::string& path) {
-  auto reader = FrameFileReader::Open(path);
+  FileSystem& file_system = *_wal._options.file_system;
+  auto reader = FrameFileReader::Open(file_system, path);
   if (!reader.ok()) return reader.status();
   _reader = std::move(*reader);
   _reader_path = path;
@@ -354,6 +426,7 @@ absl::StatusOr<bool> WalCursor::Read(uint64_t* position, uint64_t limit, size_t 
   while (_next_lsn <= limit && out->size() - start_size < max_bytes) {
     Frame frame;
     const ParseStatus status = _reader->Peek(&frame);
+    RETURN_IF_ERROR(_reader->status());
     if (status == ParseStatus::kCorrupt) {
       return absl::DataLossError(absl::StrCat("Damaged segment: ", _reader_path));
     }

@@ -62,10 +62,21 @@ add_executable(replication_test
     generated/database.h
     generated/database.cpp
 )
-target_include_directories(replication_test PRIVATE ${CMAKE_SOURCE_DIR}/examples)
+target_include_directories(replication_test PRIVATE ${CMAKE_SOURCE_DIR}/examples ${CMAKE_SOURCE_DIR}/tests)
 target_link_libraries(replication_test PRIVATE gendb_lib GTest::gtest_main GTest::gmock)
 add_dependencies(replication_test codegen db_codegen)
 add_test(NAME replication_test COMMAND replication_test)
+
+# Crash points and failed operations, on a file system that simulates a disk.
+add_executable(fault_injection_test
+    fault_injection_test.cpp
+    generated/database.h
+    generated/database.cpp
+)
+target_include_directories(fault_injection_test PRIVATE ${CMAKE_SOURCE_DIR}/tests)
+target_link_libraries(fault_injection_test PRIVATE gendb_lib GTest::gtest_main GTest::gmock)
+add_dependencies(fault_injection_test codegen db_codegen)
+add_test(NAME fault_injection_test COMMAND fault_injection_test)
 
 if(TARGET gendb_replication_grpc)
     add_executable(replication_grpc_test

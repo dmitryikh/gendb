@@ -1,11 +1,4 @@
-#include <fcntl.h>
-#include <sys/file.h>
-#include <unistd.h>
-
-#include <cstdio>
-#include <cstdlib>
-#include <filesystem>
-#include <system_error>
+#include <chrono>
 #include <utility>
 
 #include "absl/strings/str_cat.h"
@@ -156,37 +149,40 @@ class Engine::CheckpointLoader final : public internal::CheckpointHandler {
 };
 
 absl::Status Engine::Recover() {
+  const auto started = std::chrono::steady_clock::now();
   const std::string& path = _options.path;
-  std::error_code error;
-  std::filesystem::create_directories(path, error);
-  if (error) return absl::InternalError(absl::StrCat("create ", path, ": ", error.message()));
+  _file_system = _options.file_system != nullptr ? _options.file_system : DefaultFileSystem();
+  RETURN_IF_ERROR(_file_system->CreateDirectories(path));
 
-  const std::string lock_path = absl::StrCat(path, "/LOCK");
-  _lock_fd = open(lock_path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0644);
-  if (_lock_fd < 0) return internal::ErrnoStatus("open", lock_path);
-  if (flock(_lock_fd, LOCK_EX | LOCK_NB) != 0) {
-    return absl::FailedPreconditionError(absl::StrCat(path, " is open in another engine"));
-  }
+  auto lock = _file_system->Lock(absl::StrCat(path, "/LOCK"));
+  if (!lock.ok()) return lock.status();
+  _file_lock = std::move(*lock);
 
   // Unfinished work of a previous run.
-  for (const auto& entry : std::filesystem::directory_iterator(path, error)) {
-    if (entry.path().string().ends_with(kTempSuffix)) std::filesystem::remove(entry.path(), error);
+  auto names_on_disk = _file_system->List(path);
+  if (!names_on_disk.ok()) return names_on_disk.status();
+  for (const std::string& name : *names_on_disk) {
+    if (name.ends_with(kTempSuffix)) {
+      RETURN_IF_ERROR(_file_system->Remove(absl::StrCat(path, "/", name)));
+    }
   }
 
   internal::CollectionNames names;
   for (size_t c = 0; c < collection_count(); ++c) {
     if (!_collections[c]->ephemeral) names.emplace_back(_collections[c]->id, _collections[c]->name);
   }
-  _wal = std::make_unique<Wal>(Wal::Options{path, _options.wal_segment_bytes, std::move(names)});
+  _wal = std::make_unique<Wal>(
+      Wal::Options{_file_system, path, _options.wal_segment_bytes, std::move(names)});
 
-  auto checkpoints = internal::ListNumbered(path, kCheckpointPrefix, kCheckpointSuffix);
+  auto checkpoints =
+      internal::ListNumbered(*_file_system, path, kCheckpointPrefix, kCheckpointSuffix);
   if (!checkpoints.ok()) return checkpoints.status();
   std::optional<HistoryId> history;
   uint64_t lsn = 0;
   if (!checkpoints->empty()) {
     lsn = checkpoints->back();
     const std::string file = NumberedPath(path, kCheckpointPrefix, lsn, kCheckpointSuffix);
-    auto reader = FrameFileReader::Open(file);
+    auto reader = FrameFileReader::Open(*_file_system, file);
     if (!reader.ok()) return reader.status();
     CheckpointLoader loader(*this, /*seq=*/0, /*changes=*/nullptr);
     if (absl::Status status = internal::ReadCheckpoint(**reader, loader); !status.ok()) {
@@ -197,10 +193,13 @@ absl::Status Engine::Recover() {
     _lsn.store(lsn, std::memory_order_relaxed);
     _committed_seq.store(lsn, std::memory_order_relaxed);
     _checkpoint_lsn.store(lsn, std::memory_order_relaxed);
-    _checkpoint_bytes.store(std::filesystem::file_size(file, error), std::memory_order_relaxed);
+    auto file_size = _file_system->FileSize(file);
+    if (!file_size.ok()) return file_size.status();
+    _checkpoint_bytes.store(*file_size, std::memory_order_relaxed);
     Reclaim(lsn);  // Nothing has read this engine yet.
   }
 
+  RecoveryInfo info{};
   {
     Transaction txn(*this);
     auto recovered = _wal->Recover(
@@ -209,10 +208,24 @@ absl::Status Engine::Recover() {
     lsn = recovered->last_lsn;
     if (recovered->history.has_value()) history = recovered->history;
     _wal_bytes_since_checkpoint.store(recovered->bytes_replayed, std::memory_order_relaxed);
+    info.commits_replayed = recovered->commits_replayed;
+    info.log_bytes_replayed = recovered->bytes_replayed;
+    info.torn_bytes_cut = recovered->torn_bytes_cut;
   }
   _history = history.value_or(_history);
   RETURN_IF_ERROR(_wal->StartSegment(_history, lsn + 1));
-  return PurgeWal();
+  RETURN_IF_ERROR(PurgeWal());
+
+  if (info.torn_bytes_cut > 0) {
+    Log(LogLevel::kWarning, absl::StrCat("Cut ", info.torn_bytes_cut,
+                                         " bytes of an unfinished write from the end of the log"));
+  }
+  if (_options.observer != nullptr) {
+    info.lsn = lsn;
+    info.duration = std::chrono::steady_clock::now() - started;
+    _options.observer->OnRecovery(info);
+  }
+  return absl::OkStatus();
 }
 
 absl::Status Engine::ApplyCommitFrame(Transaction& txn, const Frame& frame) {
@@ -270,8 +283,9 @@ absl::Status Engine::ApplyCommitFrame(Transaction& txn, const Frame& frame) {
 }
 
 absl::StatusOr<std::unique_ptr<CheckpointStage>> Engine::NewCheckpointStage() const {
-  if (_wal == nullptr) return CheckpointStage::Create("");
-  return CheckpointStage::Create(absl::StrCat(_options.path, "/incoming", kTempSuffix));
+  if (_wal == nullptr) return CheckpointStage::Create(nullptr, "");
+  return CheckpointStage::Create(_file_system,
+                                 absl::StrCat(_options.path, "/incoming", kTempSuffix));
 }
 
 absl::Status Engine::InstallCheckpoint(CheckpointStage& stage, const LogPosition& position) {
@@ -282,27 +296,30 @@ absl::Status Engine::InstallCheckpoint(CheckpointStage& stage, const LogPosition
   if (_wal != nullptr) {
     // A crash at any point leaves a state from which the replica recovers and asks again.
     final_path = NumberedPath(_options.path, kCheckpointPrefix, position.lsn, kCheckpointSuffix);
-    RETURN_IF_ERROR(_wal->RemoveAll());
-    RETURN_IF_ERROR(stage.Publish(final_path));
-    RemoveCheckpointsBelow(position.lsn);
-    RETURN_IF_ERROR(_wal->StartSegment(position.history, position.lsn + 1));
-    std::error_code error;
-    _checkpoint_bytes.store(std::filesystem::file_size(final_path, error),
-                            std::memory_order_relaxed);
+    absl::Status files = _wal->RemoveAll();
+    if (files.ok()) files = stage.Publish(final_path);
+    if (files.ok()) {
+      RemoveCheckpointsBelow(position.lsn);
+      files = _wal->StartSegment(position.history, position.lsn + 1);
+    }
+    if (!files.ok()) return _wal->Fail(std::move(files));
+    auto file_size = _file_system->FileSize(final_path);
+    _checkpoint_bytes.store(file_size.value_or(0), std::memory_order_relaxed);
     _checkpoint_lsn.store(position.lsn, std::memory_order_relaxed);
     _wal_bytes_since_checkpoint.store(0, std::memory_order_relaxed);
   }
   auto source = stage.OpenSource(final_path);
-  if (!source.ok()) return source.status();
+  if (!source.ok()) return _wal != nullptr ? _wal->Fail(source.status()) : source.status();
 
   const uint64_t seq = _committed_seq.load(std::memory_order_relaxed) + 1;
   std::vector<Change> changes;
   CheckpointLoader loader(*this, seq, _subscribers.empty() ? nullptr : &changes);
-  // Every frame was verified on arrival and the schema checked up front, so this can fail only if
-  // the disk fails right now, with the old state already gone: restart and recover from the file.
+  // Every frame was verified on arrival, so this can fail only if the disk fails right now, with
+  // the old state already gone. Reads keep the old state, and a restart recovers from the file.
   if (absl::Status status = internal::ReadCheckpoint(**source, loader); !status.ok()) {
-    std::fprintf(stderr, "gendb: cannot install a checkpoint: %s\n", status.ToString().c_str());
-    std::abort();
+    _broken.store(true, std::memory_order_release);
+    Log(LogLevel::kError, absl::StrCat("Installing a checkpoint: ", status.ToString()));
+    return _wal != nullptr ? _wal->Fail(std::move(status)) : status;
   }
   loader.RemoveMissing();
 

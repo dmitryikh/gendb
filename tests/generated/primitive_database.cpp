@@ -30,7 +30,8 @@ absl::Status ToMessage(std::optional<gendb::BytesConstView> value, T& message) {
 
 }  // namespace
 
-Db::Db() : _engine(std::make_unique<gendb::Engine>(MakeSchema())) {}
+Db::Db(std::shared_ptr<gendb::EngineObserver> observer)
+    : _engine(std::make_unique<gendb::Engine>(MakeSchema(), std::move(observer))) {}
 
 absl::StatusOr<std::unique_ptr<Db>> Db::Open(const DbOptions& options) {
   auto engine = gendb::Engine::Open(MakeSchema(), options);
@@ -82,14 +83,24 @@ absl::Status ScopedWrite::GetMetadataValue(const MetadataValueKey& key,
   return ToMessage(_txn.Get(MetadataValueCollId, ToMetadataValueKey(key)), metadata_value);
 }
 
-absl::Status ScopedWrite::PutMetadataValue(const MetadataValueKey& key,
-                                           gendb::BytesConstView metadata_value) {
-  _txn.Put(MetadataValueCollId, ToMetadataValueKey(key), metadata_value);
+absl::Status ScopedWrite::PutMetadataValue(gendb::BytesConstView metadata_value) {
+  const MetadataValue message{metadata_value};
+  if (!message.has_type())
+    return absl::InvalidArgumentError("MetadataValue: the primary key field type is not set");
+  if (!message.has_id())
+    return absl::InvalidArgumentError("MetadataValue: the primary key field id is not set");
+  _txn.Put(MetadataValueCollId, ToMetadataValueKey(message), metadata_value);
   return absl::OkStatus();
 }
 
 absl::Status ScopedWrite::UpdateMetadataValue(const MetadataValueKey& key,
                                               const gendb::MessagePatch& update) {
+  if (update.Modifies(MetadataValue::Type))
+    return absl::InvalidArgumentError(
+        "MetadataValue: a patch cannot change the primary key field type");
+  if (update.Modifies(MetadataValue::Id))
+    return absl::InvalidArgumentError(
+        "MetadataValue: a patch cannot change the primary key field id");
   return _txn.Update(MetadataValueCollId, ToMetadataValueKey(key), update);
 }
 
@@ -111,14 +122,18 @@ absl::Status ScopedWrite::GetMessageA(gendb::tests::primitive::KeyEnum key,
   return ToMessage(_txn.Get(MessageACollId, ToMessageAKey(key)), message_a);
 }
 
-absl::Status ScopedWrite::PutMessageA(gendb::tests::primitive::KeyEnum key,
-                                      gendb::BytesConstView message_a) {
-  _txn.Put(MessageACollId, ToMessageAKey(key), message_a);
+absl::Status ScopedWrite::PutMessageA(gendb::BytesConstView message_a) {
+  const MessageA message{message_a};
+  if (!message.has_key())
+    return absl::InvalidArgumentError("MessageA: the primary key field key is not set");
+  _txn.Put(MessageACollId, ToMessageAKey(message), message_a);
   return absl::OkStatus();
 }
 
 absl::Status ScopedWrite::UpdateMessageA(gendb::tests::primitive::KeyEnum key,
                                          const gendb::MessagePatch& update) {
+  if (update.Modifies(MessageA::Key))
+    return absl::InvalidArgumentError("MessageA: a patch cannot change the primary key field key");
   return _txn.Update(MessageACollId, ToMessageAKey(key), update);
 }
 

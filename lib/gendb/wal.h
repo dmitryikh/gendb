@@ -14,6 +14,7 @@
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "gendb/file_io.h"
+#include "gendb/file_system.h"
 #include "gendb/log_format.h"
 
 namespace gendb::internal {
@@ -22,14 +23,24 @@ namespace gendb::internal {
 using CollectionNames = std::vector<std::pair<uint32_t, std::string>>;
 
 // The write-ahead log: commit frames in numbered segments, wal-<first LSN>.log, with contiguous
-// LSNs. A crash can only tear the tail of the last segment, because a segment is synced before the
-// next one exists; recovery cuts a torn tail, and treats damage anywhere else as data loss.
+// LSNs. A crash can only tear the unsynced tail of the last segment, because a segment is synced
+// before the next one exists; recovery cuts a torn tail, and treats damage anywhere else as data
+// loss.
+//
+// To tell the two apart in the last segment, sync marks record every few KB how far the log was
+// known to be durable, and one closes the log on a clean shutdown. Damage that a later mark says
+// was durable is data loss, and anything else may be the tail of a crash. The OS can write pages of
+// unsynced data out of order, so intact commits after the damage do not prove anything by
+// themselves.
 //
 // One writer calls Append and Rotate, under the engine's writer lock. Sync can run on any thread
 // and never holds up Append: a slow fsync delays only commits that wait for it.
 class Wal {
+  friend class WalCursor;
+
  public:
   struct Options {
+    std::shared_ptr<FileSystem> file_system;
     std::string dir;
     uint64_t segment_bytes;
     CollectionNames collections;
@@ -37,6 +48,8 @@ class Wal {
   struct Recovered {
     uint64_t last_lsn;
     uint64_t bytes_replayed;
+    uint64_t commits_replayed;
+    uint64_t torn_bytes_cut;
     std::optional<HistoryId> history;  // Of the newest segment, if any.
   };
 
@@ -59,6 +72,10 @@ class Wal {
   absl::Status AddCollection(uint32_t id, std::string name);
   // Makes every appended commit durable.
   absl::Status Sync();
+  // Syncs and leaves a last sync mark, for a clean shutdown.
+  absl::Status Close();
+  // Stops the log, as after a failed write. Later appends return `status`.
+  absl::Status Fail(absl::Status status);
   // Removes segments that hold only commits at or below `lsn`, keeping the newest `retain_bytes`
   // of them, and never the current segment.
   absl::Status Purge(uint64_t lsn, uint64_t retain_bytes);
@@ -82,7 +99,9 @@ class Wal {
 
   absl::Status OpenSegmentLocked(uint64_t first_lsn);
   absl::Status RollLocked();
-  absl::Status Fail(absl::Status status);
+  absl::Status WriteSyncMark(WritableFile& file, uint64_t synced);
+  // Whether the rest of a damaged last segment says that commit `lsn` had been durable.
+  absl::StatusOr<bool> MarkedDurableAfter(const std::string& path, uint64_t offset, uint64_t lsn);
 
   const Options _options;
   HistoryId _history;
@@ -90,13 +109,15 @@ class Wal {
 
   mutable std::mutex _mutex;
   CollectionNames _collections;
-  std::shared_ptr<AppendFile> _current;
+  std::shared_ptr<WritableFile> _current;
   std::vector<Segment> _segments;  // Oldest first; the last one is _current.
   absl::Status _failure;
 
   std::atomic<bool> _failed{false};
   std::atomic<uint64_t> _written_lsn{0};
   std::atomic<uint64_t> _synced_lsn{0};
+  uint64_t _bytes_since_mark = 0;  // Writer only.
+  uint64_t _marked_lsn = 0;        // Writer only.
 };
 
 // Reads committed frames back from the segments, for a replica that the in-memory ring no longer
@@ -122,7 +143,8 @@ class WalCursor {
 std::string NumberedPath(const std::string& dir, std::string_view prefix, uint64_t lsn,
                          std::string_view suffix);
 // LSNs of the files `<prefix><lsn><suffix>` in `dir`, ascending.
-absl::StatusOr<std::vector<uint64_t>> ListNumbered(const std::string& dir, std::string_view prefix,
+absl::StatusOr<std::vector<uint64_t>> ListNumbered(FileSystem& file_system, const std::string& dir,
+                                                   std::string_view prefix,
                                                    std::string_view suffix);
 
 }  // namespace gendb::internal

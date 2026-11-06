@@ -21,7 +21,7 @@ constexpr auto kPatience = std::chrono::seconds(30);
 
 void Put(Db& db, uint64_t id) {
   auto writer = db.CreateWriter();
-  ASSERT_TRUE(writer.PutAccount(id, AccountBuilder().set_account_id(id).set_age(30).Build()).ok());
+  ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(id).set_age(30).Build()).ok());
   ASSERT_TRUE(writer.Commit().ok());
 }
 

@@ -21,8 +21,10 @@
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "gendb/bytes.h"
+#include "gendb/file_system.h"
 #include "gendb/log_format.h"
 #include "gendb/message.h"
+#include "gendb/observer.h"
 #include "gendb/ordered_index.h"
 #include "gendb/record_table.h"
 
@@ -66,6 +68,10 @@ struct EngineSchema {
 struct EngineOptions {
   // Database directory, created if missing. Open it from one process at a time.
   std::string path;
+  // Where it lives; the real disk by default.
+  std::shared_ptr<FileSystem> file_system;
+  // Logs and metrics. See EngineObserver.
+  std::shared_ptr<EngineObserver> observer;
 
   // True: durable. Commit returns after an fsync, and a commit survives power loss.
   // False: non-durable. Commit returns after handing the data to the OS: a commit survives the
@@ -157,7 +163,7 @@ struct EngineStats {
 class Engine {
  public:
   // In memory only: there is nothing to recover, and all data is ephemeral.
-  explicit Engine(EngineSchema schema);
+  explicit Engine(EngineSchema schema, std::shared_ptr<EngineObserver> observer = nullptr);
   // Loads the latest checkpoint from `options.path`, then replays the log after it.
   static absl::StatusOr<std::unique_ptr<Engine>> Open(EngineSchema schema, EngineOptions options);
   ~Engine();
@@ -262,6 +268,7 @@ class Engine {
   absl::Status PurgeWal();
   void RemoveCheckpointsBelow(uint64_t lsn) const;
   void BackgroundLoop();
+  void Log(LogLevel level, std::string_view message) const;
   void RecordBackgroundError(absl::Status status);
 
   // Subscriptions.
@@ -317,11 +324,14 @@ class Engine {
   internal::HistoryId _history;                  // Under the writer lock.
   std::atomic<uint64_t> _history_generation{0};  // Changes with the history or the collections.
   std::atomic<bool> _replica;
+  // A checkpoint failed to load halfway: memory holds records no commit may publish.
+  std::atomic<bool> _broken{false};
   std::unique_ptr<CommitRing> _ring;
 
   // Persistence; null in memory.
   std::unique_ptr<internal::Wal> _wal;
-  int _lock_fd = -1;
+  std::shared_ptr<FileSystem> _file_system;
+  std::unique_ptr<FileLock> _file_lock;
   std::mutex _checkpoint_mutex;  // Serializes checkpoints. Taken before the writer lock.
   std::atomic<uint64_t> _checkpoint_lsn{0};
   std::atomic<uint64_t> _checkpoint_bytes{0};

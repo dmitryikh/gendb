@@ -1,9 +1,5 @@
 #include "gendb/engine.h"
 
-#include <fcntl.h>
-#include <sys/file.h>
-#include <unistd.h>
-
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -38,7 +34,12 @@ std::string PrefixSuccessor(std::string_view prefix) {
   return next;
 }
 
-Engine::Engine(EngineSchema schema) : Engine(std::move(schema), EngineOptions{}) {}
+Engine::Engine(EngineSchema schema, std::shared_ptr<EngineObserver> observer)
+    : Engine(std::move(schema), EngineOptions{.observer = std::move(observer)}) {}
+
+void Engine::Log(LogLevel level, std::string_view message) const {
+  if (_options.observer != nullptr) _options.observer->OnLog(level, message);
+}
 
 Engine::Engine(EngineSchema schema, EngineOptions options)
     : _schema(std::move(schema)),
@@ -83,9 +84,12 @@ Engine::~Engine() {
   _background_cv.notify_all();
   if (_background.joinable()) _background.join();
   StopSubscribers();
-  if (_wal != nullptr) (void)_wal->Sync();
+  if (_wal != nullptr) {
+    if (absl::Status status = _wal->Close(); !status.ok()) {
+      Log(LogLevel::kError, absl::StrCat("Closing the log: ", status.ToString()));
+    }
+  }
   Reclaim(internal::kNeverDeleted);
-  if (_lock_fd >= 0) close(_lock_fd);
 }
 
 std::unique_lock<std::mutex> Engine::AcquireWriter() {

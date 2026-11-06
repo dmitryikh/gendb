@@ -18,10 +18,12 @@
 
 #include "account.fbs.h"
 #include "database.h"
+#include "lib/loopback_transport.h"
 #include "tcp_transport.h"
 
 namespace {
 
+using gendb::testing::LoopbackServer;
 using gendb::tests::Account;
 using gendb::tests::AccountBuilder;
 using gendb::tests::AccountChange;
@@ -32,104 +34,9 @@ using gendb::tests::SessionBuilder;
 
 constexpr auto kPatience = std::chrono::seconds(30);
 
-// The simplest possible transport: two message queues in one process.
-class Pipe {
- public:
-  void Push(std::string message) {
-    {
-      std::lock_guard lock(_mutex);
-      _messages.push_back(std::move(message));
-    }
-    _cv.notify_all();
-  }
-  absl::Status Pop(std::string* message) {
-    std::unique_lock lock(_mutex);
-    _cv.wait(lock, [this] { return _closed || !_messages.empty(); });
-    if (_closed) return absl::UnavailableError("closed");
-    *message = std::move(_messages.front());
-    _messages.pop_front();
-    return absl::OkStatus();
-  }
-  void Close() {
-    {
-      std::lock_guard lock(_mutex);
-      _closed = true;
-    }
-    _cv.notify_all();
-  }
-
- private:
-  std::mutex _mutex;
-  std::condition_variable _cv;
-  std::deque<std::string> _messages;
-  bool _closed = false;
-};
-
-class PipeConnection final : public gendb::Connection {
- public:
-  PipeConnection(std::shared_ptr<Pipe> in, std::shared_ptr<Pipe> out)
-      : _in(std::move(in)), _out(std::move(out)) {}
-  ~PipeConnection() override { Close(); }
-
-  absl::Status Send(std::string_view message) override {
-    _out->Push(std::string(message));
-    return absl::OkStatus();
-  }
-  absl::Status Receive(std::string* message) override { return _in->Pop(message); }
-  void Close() override {
-    _in->Close();
-    _out->Close();
-  }
-
- private:
-  std::shared_ptr<Pipe> _in, _out;
-};
-
-// A primary's end: each connection gets a thread calling Serve, like a server's accept loop.
-class LoopbackServer {
- public:
-  explicit LoopbackServer(gendb::Engine& engine, gendb::ReplicationServerOptions options = {})
-      : _server(engine, options) {}
-  ~LoopbackServer() {
-    _server.Shutdown();
-    for (auto& thread : _threads) thread.join();
-  }
-
-  gendb::Connector connector() {
-    return [this]() -> absl::StatusOr<std::unique_ptr<gendb::Connection>> {
-      std::lock_guard lock(_mutex);
-      if (_refuse) return absl::UnavailableError("refused");
-      auto to_server = std::make_shared<Pipe>();
-      auto to_client = std::make_shared<Pipe>();
-      auto server_side = std::make_shared<PipeConnection>(to_server, to_client);
-      _open.push_back(server_side);
-      _threads.emplace_back([this, server_side] { (void)_server.Serve(*server_side); });
-      return std::unique_ptr<gendb::Connection>(new PipeConnection(to_client, to_server));
-    };
-  }
-  // Breaks every connection, as a network failure would.
-  void DropConnections() {
-    std::lock_guard lock(_mutex);
-    for (auto& connection : _open) connection->Close();
-    _open.clear();
-  }
-  void Refuse(bool refuse) {
-    std::lock_guard lock(_mutex);
-    _refuse = refuse;
-  }
-  gendb::ReplicationServer& server() { return _server; }
-
- private:
-  gendb::ReplicationServer _server;
-  std::mutex _mutex;
-  std::vector<std::shared_ptr<PipeConnection>> _open;
-  std::vector<std::thread> _threads;
-  bool _refuse = false;
-};
-
 void Put(Db& db, uint64_t id, int32_t age = 30) {
   auto writer = db.CreateWriter();
-  ASSERT_TRUE(writer.PutAccount(id, AccountBuilder().set_account_id(id).set_age(age).Build()).ok());
+  ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(id).set_age(age).Build()).ok());
   ASSERT_TRUE(writer.Commit().ok());
 }
 
@@ -193,16 +100,16 @@ TEST_F(ReplicationTest, ReplicaRejectsLocalWritesExceptEphemeral) {
   gendb::Replica replica(replica_db.engine(), server.connector());
 
   auto writer = replica_db.CreateWriter();
-  ASSERT_TRUE(writer.PutAccount(1, AccountBuilder().set_account_id(1).Build()).ok());
+  ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(1).Build()).ok());
   EXPECT_EQ(writer.Commit().code(), absl::StatusCode::kFailedPrecondition);
 
   // Its own sessions are its own, and not replicated, on either side.
-  ASSERT_TRUE(writer.PutSession(7, SessionBuilder().set_session_id(7).Build()).ok());
+  ASSERT_TRUE(writer.PutSession(SessionBuilder().set_session_id(7).Build()).ok());
   EXPECT_TRUE(writer.Commit().ok());
   EXPECT_EQ(replica_db.engine().Stats().lsn, 0u);
 
   auto primary_writer = primary.CreateWriter();
-  ASSERT_TRUE(primary_writer.PutSession(8, SessionBuilder().set_session_id(8).Build()).ok());
+  ASSERT_TRUE(primary_writer.PutSession(SessionBuilder().set_session_id(8).Build()).ok());
   ASSERT_TRUE(primary_writer.Commit().ok());
   EXPECT_EQ(primary.engine().Stats().lsn, 0u);
 }
@@ -383,8 +290,7 @@ TEST_F(ReplicationTest, CommitLargerThanAMessageArrivesWhole) {
   {
     // Closed before waiting: starting a replica's session takes the writer lock for a moment.
     auto writer = primary.CreateWriter();
-    ASSERT_TRUE(
-        writer.PutAccount(1, AccountBuilder().set_account_id(1).set_name(name).Build()).ok());
+    ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(1).set_name(name).Build()).ok());
     ASSERT_TRUE(writer.Commit().ok());
   }
   ASSERT_TRUE(replica.WaitForLsn(1, kPatience)) << replica.Status().last_error;
@@ -414,10 +320,8 @@ TEST_F(ReplicationTest, ReadersSeeWholeCommitsWhileFollowing) {
   });
   for (int32_t round = 1; round <= 2000; ++round) {
     auto writer = primary.CreateWriter();
-    ASSERT_TRUE(
-        writer.PutAccount(1, AccountBuilder().set_account_id(1).set_age(round).Build()).ok());
-    ASSERT_TRUE(
-        writer.PutAccount(2, AccountBuilder().set_account_id(2).set_age(round).Build()).ok());
+    ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(1).set_age(round).Build()).ok());
+    ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(2).set_age(round).Build()).ok());
     ASSERT_TRUE(writer.Commit().ok());
   }
   ASSERT_TRUE(replica.WaitForLsn(2000, kPatience)) << replica.Status().last_error;
@@ -438,7 +342,7 @@ TEST_F(ReplicationTest, PatchesGiveTheReplicaExactlyThePrimarysBytes) {
   builder.AddStringField(1000, "from a newer schema");
   {
     auto writer = primary.CreateWriter();
-    ASSERT_TRUE(writer.PutAccount(1, builder.Build()).ok());
+    ASSERT_TRUE(writer.PutAccount(builder.Build()).ok());
     ASSERT_TRUE(writer.Commit().ok());
     ASSERT_TRUE(writer.UpdateAccount(1, AccountPatchBuilder().set_age(31).Build()).ok());
     ASSERT_TRUE(writer.Commit().ok());
@@ -475,7 +379,7 @@ TEST_F(ReplicationTest, DivergedReplicaIsCaughtByThePatchChecksumAndHealed) {
     ASSERT_TRUE(db.ok());
     auto writer = (*db)->CreateWriter();
     ASSERT_TRUE(
-        writer.PutAccount(1, AccountBuilder().set_account_id(1).set_age(1).set_balance(1.f).Build())
+        writer.PutAccount(AccountBuilder().set_account_id(1).set_age(1).set_balance(1.f).Build())
             .ok());
     ASSERT_TRUE(writer.Commit().ok());
   }
@@ -683,7 +587,7 @@ TEST_F(ReplicationTest, BusyWriterStarvesNeitherCheckpointNorNewReplica) {
     uint64_t id = 0;
     while (!done.load()) {
       auto writer = (*primary)->CreateWriter();
-      (void)writer.PutAccount(++id % 1000, AccountBuilder().set_account_id(id).Build());
+      (void)writer.PutAccount(AccountBuilder().set_account_id(id).Build());
       (void)writer.Commit();
     }
   });

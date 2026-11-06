@@ -38,7 +38,7 @@ std::vector<uint8_t> MakeAccount(uint64_t id) {
 
 void Fill(Db& db) {
   auto writer = db.CreateWriter();
-  for (uint64_t id = 0; id < kRecords; ++id) (void)writer.PutAccount(id, MakeAccount(id));
+  for (uint64_t id = 0; id < kRecords; ++id) (void)writer.PutAccount(MakeAccount(id));
   (void)writer.Commit();
 }
 
@@ -169,7 +169,7 @@ void PersistentCommit(benchmark::State& state) {
     uint64_t i = 0;
     for (auto _ : state) {
       auto writer = (*db)->CreateWriter();
-      (void)writer.PutAccount(i, MakeAccount(i));
+      (void)writer.PutAccount(MakeAccount(i));
       (void)writer.Commit();
       ++i;
     }
@@ -195,7 +195,7 @@ void LoggedCommit(benchmark::State& state) {
     };
     {
       auto writer = (*db)->CreateWriter();
-      (void)writer.PutAccount(1, make(0.f));
+      (void)writer.PutAccount(make(0.f));
       (void)writer.Commit();
     }
     const std::vector<uint8_t> whole = make(1.f);
@@ -206,7 +206,7 @@ void LoggedCommit(benchmark::State& state) {
       if (state.range(1) != 0) {
         (void)writer.UpdateAccount(1, AccountPatchBuilder().set_balance(float(i++)).Build());
       } else {
-        (void)writer.PutAccount(1, whole);
+        (void)writer.PutAccount(whole);
       }
       (void)writer.Commit();
     }

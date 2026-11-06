@@ -13,7 +13,7 @@ TEST(PrimitiveDbTest, AddAndGetMessageA) {
     builder.set_key(KeyEnum::kFirstValue);
     builder.set_data("value42");
     std::vector<uint8_t> buffer = builder.Build();
-    EXPECT_TRUE(writer.PutMessageA(KeyEnum::kFirstValue, buffer).ok());
+    EXPECT_TRUE(writer.PutMessageA(buffer).ok());
     ASSERT_TRUE(writer.Commit().ok());
   }
   {
@@ -33,7 +33,7 @@ TEST(PrimitiveDbTest, UpdateMessageAWithPatch) {
     builder.set_key(KeyEnum::kSecondValue);
     builder.set_data("initial");
     std::vector<uint8_t> buffer = builder.Build();
-    EXPECT_TRUE(writer.PutMessageA(KeyEnum::kSecondValue, buffer).ok());
+    EXPECT_TRUE(writer.PutMessageA(buffer).ok());
     ASSERT_TRUE(writer.Commit().ok());
   }
   {
@@ -58,7 +58,7 @@ TEST(PrimitiveDbTest, NoChangesWithoutCommit) {
     builder.set_key(KeyEnum::kUnknown);
     builder.set_data("uncommitted");
     std::vector<uint8_t> buffer = builder.Build();
-    EXPECT_TRUE(writer.PutMessageA(KeyEnum::kUnknown, buffer).ok());
+    EXPECT_TRUE(writer.PutMessageA(buffer).ok());
     // Do not commit
   }
   {
@@ -77,7 +77,7 @@ TEST(PrimitiveDbTest, NoYetCommittedChangesNotVisibleFromOtherReaders) {
     builder.set_key(KeyEnum::kFirstValue);
     builder.set_data("notvisible");
     std::vector<uint8_t> buffer = builder.Build();
-    EXPECT_TRUE(writer.PutMessageA(KeyEnum::kFirstValue, buffer).ok());
+    EXPECT_TRUE(writer.PutMessageA(buffer).ok());
     // Do not commit yet.
     {
       auto snapshot = db.CreateSnapshot();
@@ -104,7 +104,7 @@ TEST(PrimitiveDbTest, NoYetCommittedChangesVisibleInWriter) {
     builder.set_key(KeyEnum::kSecondValue);
     builder.set_data("visibleinwriter");
     std::vector<uint8_t> buffer = builder.Build();
-    EXPECT_TRUE(writer.PutMessageA(KeyEnum::kSecondValue, buffer).ok());
+    EXPECT_TRUE(writer.PutMessageA(buffer).ok());
 
     MessageA message_a;
     EXPECT_TRUE(writer.GetMessageA(KeyEnum::kSecondValue, message_a).ok());

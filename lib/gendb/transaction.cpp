@@ -1,3 +1,4 @@
+#include <chrono>
 #include <utility>
 
 #include "gendb/commit_ring.h"
@@ -191,6 +192,10 @@ std::pair<bool, bool> Transaction::ResolveWrites() noexcept {
 
 absl::Status Transaction::Commit(CommitOptions options) {
   Engine& engine = *_engine;
+  if (engine._broken.load(std::memory_order_acquire)) {
+    Rollback();
+    return absl::FailedPreconditionError("A checkpoint failed to install: reopen the database");
+  }
   const auto [any, logged] = ResolveWrites();
   if (!any) {
     Rollback();
@@ -233,11 +238,18 @@ absl::Status Transaction::Commit(CommitOptions options) {
       frame = buffer;
     }
     if (engine._wal != nullptr) {
-      absl::Status status =
-          engine._wal->Append(frame, lsn, options.sync.value_or(engine._options.sync_commits));
+      const bool sync = options.sync.value_or(engine._options.sync_commits);
+      const EngineObserver* observer = engine._options.observer.get();
+      const auto started = observer != nullptr ? std::chrono::steady_clock::now()
+                                               : std::chrono::steady_clock::time_point{};
+      absl::Status status = engine._wal->Append(frame, lsn, sync);
       if (!status.ok()) {
         Rollback();
         return status;
+      }
+      if (observer != nullptr) {
+        engine._options.observer->OnCommit(
+            {lsn, _writes.size(), frame.size(), sync, std::chrono::steady_clock::now() - started});
       }
     }
   }

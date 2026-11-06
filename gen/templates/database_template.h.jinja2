@@ -147,7 +147,7 @@ struct ChangeHandlers {
 class Db {
  public:
   // In memory only.
-  Db();
+  explicit Db(std::shared_ptr<gendb::EngineObserver> observer = nullptr);
   // Recovers committed state from disk.
   static absl::StatusOr<std::unique_ptr<Db>> Open(const DbOptions& options);
 
@@ -196,7 +196,9 @@ class ScopedWrite {
     {{ visibility }}:
   {% endif %}
   absl::Status Get{{coll.type}}({% if coll.pk_fields | length > 1 %}const {{coll.type}}Key& key{% else %}{{ coll.pk_fields[0].const_ref_type }} {{coll.pk_fields[0].name}}{% endif %}, {{ coll.type}}& {{ coll.type_snake_case }}) const;
-  absl::Status Put{{coll.type}}({% if coll.pk_fields | length > 1 %}const {{coll.type}}Key& key{% else %}{{ coll.pk_fields[0].const_ref_type }} {{coll.pk_fields[0].name}}{% endif %}, gendb::BytesConstView {{ coll.type_snake_case }});
+  // The key comes from the message, which must have its primary key fields set.
+  absl::Status Put{{coll.type}}(gendb::BytesConstView {{ coll.type_snake_case }});
+  // A patch cannot change the primary key: that is another record.
   absl::Status Update{{coll.type}}({% if coll.pk_fields | length > 1 %}const {{coll.type}}Key& key{% else %}{{ coll.pk_fields[0].const_ref_type }} {{coll.pk_fields[0].name}}{% endif %}, const gendb::MessagePatch& update);
   absl::Status Delete{{coll.type}}({% if coll.pk_fields | length > 1 %}const {{coll.type}}Key& key{% else %}{{ coll.pk_fields[0].const_ref_type }} {{coll.pk_fields[0].name}}{% endif %});
 {% endfor %}

@@ -29,6 +29,7 @@ enum class FrameType : uint8_t {
   kCollection = 4,
   kRecords = 5,
   kCheckpointFooter = 6,
+  kSyncMark = 7,
 };
 
 inline constexpr size_t kFrameHeaderSize = 8;

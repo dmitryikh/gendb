@@ -160,6 +160,10 @@ absl::Status ReplicationServer::Serve(Connection& connection) {
   }
   absl::Status status = RunSession(connection, session);
   connection.Close();
+  if (!status.ok() && status.code() != absl::StatusCode::kCancelled) {
+    _engine.Log(LogLevel::kInfo,
+                absl::StrCat("Replication session ", session.id, " ended: ", status.ToString()));
+  }
   {
     std::lock_guard lock(_mutex);
     std::erase(_sessions, &session);
@@ -350,6 +354,7 @@ void Replica::Run() {
     absl::Status status = RunSession();
     std::unique_lock lock(_mutex);
     if (_stopped) break;
+    _engine.Log(LogLevel::kWarning, absl::StrCat("Replication: ", status.ToString()));
     _last_error = std::move(status);
     _state = ReplicaState::kConnecting;
     // A session that got somewhere says nothing about the next one.

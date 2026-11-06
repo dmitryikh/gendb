@@ -257,7 +257,7 @@ struct ChangeHandlers {
 class Db {
  public:
   // In memory only.
-  Db();
+  explicit Db(std::shared_ptr<gendb::EngineObserver> observer = nullptr);
   // Recovers committed state from disk.
   static absl::StatusOr<std::unique_ptr<Db>> Open(const DbOptions& options);
 
@@ -310,25 +310,35 @@ class Snapshot {
 class ScopedWrite {
  private:
   absl::Status GetMetadataValue(const MetadataValueKey& key, MetadataValue& metadata_value) const;
-  absl::Status PutMetadataValue(const MetadataValueKey& key, gendb::BytesConstView metadata_value);
+  // The key comes from the message, which must have its primary key fields set.
+  absl::Status PutMetadataValue(gendb::BytesConstView metadata_value);
+  // A patch cannot change the primary key: that is another record.
   absl::Status UpdateMetadataValue(const MetadataValueKey& key, const gendb::MessagePatch& update);
   absl::Status DeleteMetadataValue(const MetadataValueKey& key);
 
  public:
   absl::Status GetAccount(uint64_t account_id, Account& account) const;
-  absl::Status PutAccount(uint64_t account_id, gendb::BytesConstView account);
+  // The key comes from the message, which must have its primary key fields set.
+  absl::Status PutAccount(gendb::BytesConstView account);
+  // A patch cannot change the primary key: that is another record.
   absl::Status UpdateAccount(uint64_t account_id, const gendb::MessagePatch& update);
   absl::Status DeleteAccount(uint64_t account_id);
   absl::Status GetPosition(int32_t position_id, Position& position) const;
-  absl::Status PutPosition(int32_t position_id, gendb::BytesConstView position);
+  // The key comes from the message, which must have its primary key fields set.
+  absl::Status PutPosition(gendb::BytesConstView position);
+  // A patch cannot change the primary key: that is another record.
   absl::Status UpdatePosition(int32_t position_id, const gendb::MessagePatch& update);
   absl::Status DeletePosition(int32_t position_id);
   absl::Status GetConfig(std::string_view config_name, Config& config) const;
-  absl::Status PutConfig(std::string_view config_name, gendb::BytesConstView config);
+  // The key comes from the message, which must have its primary key fields set.
+  absl::Status PutConfig(gendb::BytesConstView config);
+  // A patch cannot change the primary key: that is another record.
   absl::Status UpdateConfig(std::string_view config_name, const gendb::MessagePatch& update);
   absl::Status DeleteConfig(std::string_view config_name);
   absl::Status GetSession(uint64_t session_id, Session& session) const;
-  absl::Status PutSession(uint64_t session_id, gendb::BytesConstView session);
+  // The key comes from the message, which must have its primary key fields set.
+  absl::Status PutSession(gendb::BytesConstView session);
+  // A patch cannot change the primary key: that is another record.
   absl::Status UpdateSession(uint64_t session_id, const gendb::MessagePatch& update);
   absl::Status DeleteSession(uint64_t session_id);
 

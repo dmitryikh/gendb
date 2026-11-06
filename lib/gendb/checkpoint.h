@@ -62,7 +62,8 @@ absl::Status ReadCheckpoint(FrameSource& source, CheckpointHandler& handler);
 class CheckpointStage {
  public:
   // An empty `path` stages in memory.
-  static absl::StatusOr<std::unique_ptr<CheckpointStage>> Create(std::string path);
+  static absl::StatusOr<std::unique_ptr<CheckpointStage>> Create(
+      std::shared_ptr<FileSystem> file_system, std::string path);
 
   absl::Status Add(std::string_view frames);
   // Syncs a staged file and moves it to `final_path`, in the same directory.
@@ -71,7 +72,9 @@ class CheckpointStage {
   absl::StatusOr<std::unique_ptr<FrameSource>> OpenSource(const std::string& path);
 
  private:
-  std::unique_ptr<AppendFile> _file;
+  std::shared_ptr<FileSystem> _file_system;
+  std::string _path;
+  std::unique_ptr<WritableFile> _file;
   std::vector<std::string> _chunks;
 };
 

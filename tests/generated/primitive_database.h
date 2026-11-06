@@ -99,7 +99,7 @@ struct ChangeHandlers {
 class Db {
  public:
   // In memory only.
-  Db();
+  explicit Db(std::shared_ptr<gendb::EngineObserver> observer = nullptr);
   // Recovers committed state from disk.
   static absl::StatusOr<std::unique_ptr<Db>> Open(const DbOptions& options);
 
@@ -139,13 +139,17 @@ class Snapshot {
 class ScopedWrite {
  private:
   absl::Status GetMetadataValue(const MetadataValueKey& key, MetadataValue& metadata_value) const;
-  absl::Status PutMetadataValue(const MetadataValueKey& key, gendb::BytesConstView metadata_value);
+  // The key comes from the message, which must have its primary key fields set.
+  absl::Status PutMetadataValue(gendb::BytesConstView metadata_value);
+  // A patch cannot change the primary key: that is another record.
   absl::Status UpdateMetadataValue(const MetadataValueKey& key, const gendb::MessagePatch& update);
   absl::Status DeleteMetadataValue(const MetadataValueKey& key);
 
  public:
   absl::Status GetMessageA(gendb::tests::primitive::KeyEnum key, MessageA& message_a) const;
-  absl::Status PutMessageA(gendb::tests::primitive::KeyEnum key, gendb::BytesConstView message_a);
+  // The key comes from the message, which must have its primary key fields set.
+  absl::Status PutMessageA(gendb::BytesConstView message_a);
+  // A patch cannot change the primary key: that is another record.
   absl::Status UpdateMessageA(gendb::tests::primitive::KeyEnum key,
                               const gendb::MessagePatch& update);
   absl::Status DeleteMessageA(gendb::tests::primitive::KeyEnum key);

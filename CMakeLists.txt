@@ -45,7 +45,10 @@ add_library(gendb_lib
     lib/gendb/engine_replication.cpp
     lib/gendb/file_io.h
     lib/gendb/file_io.cpp
+    lib/gendb/file_system.h
+    lib/gendb/file_system.cpp
     lib/gendb/log_format.h
+    lib/gendb/observer.h
     lib/gendb/ordered_index.h
     lib/gendb/record_table.h
     lib/gendb/replication.h

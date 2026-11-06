@@ -50,8 +50,8 @@ TEST_F(PersistentDbTest, StateAndIndicesSurviveReopen) {
     AccountBuilder builder;
     builder.set_account_id(1).set_name("Heidi").set_age(30);
     builder.AddStringField(1000, "from a newer schema");
-    ASSERT_TRUE(writer.PutAccount(1, builder.Build()).ok());
-    ASSERT_TRUE(writer.PutAccount(2, AccountBuilder().set_account_id(2).set_age(30).Build()).ok());
+    ASSERT_TRUE(writer.PutAccount(builder.Build()).ok());
+    ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(2).set_age(30).Build()).ok());
     ASSERT_TRUE(writer.Commit().ok());
     ASSERT_TRUE(writer.UpdateAccount(1, AccountPatchBuilder().set_name("Heidi Klum").Build()).ok());
     ASSERT_TRUE(writer.DeleteAccount(2).ok());
@@ -93,8 +93,8 @@ TEST_F(PersistentDbTest, EphemeralCollectionsAreNotPersisted) {
   {
     auto db = OpenDb();
     auto writer = db->CreateWriter();
-    ASSERT_TRUE(writer.PutSession(1, SessionBuilder().set_session_id(1).Build()).ok());
-    ASSERT_TRUE(writer.PutAccount(1, AccountBuilder().set_account_id(1).Build()).ok());
+    ASSERT_TRUE(writer.PutSession(SessionBuilder().set_session_id(1).Build()).ok());
+    ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(1).Build()).ok());
     ASSERT_TRUE(writer.Commit().ok());
     Session session;
     EXPECT_TRUE(db->CreateSnapshot().GetSession(1, session).ok());
@@ -119,10 +119,10 @@ TEST_F(PersistentDbTest, CrashKeepsCommittedAndDropsUncommitted) {
   if (child == 0) {
     auto db = OpenDb();
     auto writer = db->CreateWriter();
-    (void)writer.PutAccount(1, AccountBuilder().set_account_id(1).set_age(1).Build());
-    (void)writer.PutAccount(2, AccountBuilder().set_account_id(2).set_age(2).Build());
+    (void)writer.PutAccount(AccountBuilder().set_account_id(1).set_age(1).Build());
+    (void)writer.PutAccount(AccountBuilder().set_account_id(2).set_age(2).Build());
     if (!writer.Commit().ok()) _exit(1);
-    (void)writer.PutAccount(3, AccountBuilder().set_account_id(3).Build());
+    (void)writer.PutAccount(AccountBuilder().set_account_id(3).Build());
     _exit(0);  // Uncommitted account 3 dies here; no destructor runs.
   }
   int status = 0;
@@ -145,8 +145,7 @@ TEST_F(PersistentDbTest, CheckpointRemovesTheLogItSupersedes) {
     {
       auto writer = (*db)->CreateWriter();
       for (uint64_t id = 0; id < 100; ++id) {
-        ASSERT_TRUE(
-            writer.PutAccount(id, AccountBuilder().set_account_id(id).set_age(7).Build()).ok());
+        ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(id).set_age(7).Build()).ok());
         ASSERT_TRUE(writer.Commit().ok());
       }
       ASSERT_TRUE(writer.DeleteAccount(5).ok());
@@ -161,8 +160,7 @@ TEST_F(PersistentDbTest, CheckpointRemovesTheLogItSupersedes) {
 
     // Commits after the checkpoint come from the log on the next open.
     auto next = (*db)->CreateWriter();
-    ASSERT_TRUE(
-        next.PutAccount(1000, AccountBuilder().set_account_id(1000).set_age(7).Build()).ok());
+    ASSERT_TRUE(next.PutAccount(AccountBuilder().set_account_id(1000).set_age(7).Build()).ok());
     ASSERT_TRUE(next.Commit().ok());
   }
   size_t checkpoints = 0;
@@ -193,7 +191,7 @@ TEST_F(PersistentDbTest, BackgroundCheckpointRunsWhileWriting) {
   ASSERT_TRUE(db.ok()) << db.status();
   for (uint64_t id = 0; id < 5000; ++id) {
     auto writer = (*db)->CreateWriter();
-    ASSERT_TRUE(writer.PutAccount(id % 100, AccountBuilder().set_account_id(id).Build()).ok());
+    ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(id).Build()).ok());
     ASSERT_TRUE(writer.Commit().ok());
   }
   for (int i = 0; i < 1000 && (*db)->engine().Stats().checkpoint_lsn == 0; ++i) {
@@ -212,7 +210,7 @@ TEST_F(PersistentDbTest, TornTailIsCutOffAtTheLastIntactCommit) {
     auto db = OpenDb();
     for (uint64_t id = 1; id <= 3; ++id) {
       auto writer = db->CreateWriter();
-      ASSERT_TRUE(writer.PutAccount(id, AccountBuilder().set_account_id(id).Build()).ok());
+      ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(id).Build()).ok());
       ASSERT_TRUE(writer.Commit().ok());
     }
   }
@@ -225,7 +223,8 @@ TEST_F(PersistentDbTest, TornTailIsCutOffAtTheLastIntactCommit) {
     }
   }
   ASSERT_FALSE(newest.empty());
-  std::filesystem::resize_file(newest, std::filesystem::file_size(newest) - 3);
+  // Past the sync mark of the clean shutdown, and into the last commit.
+  std::filesystem::resize_file(newest, std::filesystem::file_size(newest) - 20);
   {
     auto db = OpenDb();
     ASSERT_NE(db, nullptr);
@@ -236,7 +235,7 @@ TEST_F(PersistentDbTest, TornTailIsCutOffAtTheLastIntactCommit) {
     EXPECT_FALSE(snapshot.GetAccount(3, account).ok());
     // The log continues cleanly from the cut.
     auto writer = db->CreateWriter();
-    ASSERT_TRUE(writer.PutAccount(4, AccountBuilder().set_account_id(4).Build()).ok());
+    ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(4).Build()).ok());
     ASSERT_TRUE(writer.Commit().ok());
   }
   auto db = OpenDb();
@@ -258,7 +257,7 @@ TEST_F(PersistentDbTest, UpdatesAreLoggedAsPatchesWhenThatIsSmaller) {
   const auto put = [&] {
     auto writer = db->CreateWriter();
     ASSERT_TRUE(
-        writer.PutAccount(1, AccountBuilder().set_account_id(1).set_name(long_name).Build()).ok());
+        writer.PutAccount(AccountBuilder().set_account_id(1).set_name(long_name).Build()).ok());
     ASSERT_TRUE(writer.Commit().ok());
   };
   const uint64_t whole = LogGrowth(*db, put);
@@ -285,7 +284,7 @@ TEST_F(PersistentDbTest, UpdatesAreLoggedAsPatchesWhenThatIsSmaller) {
   const uint64_t new_record = LogGrowth(*db, [&] {
     auto writer = db->CreateWriter();
     ASSERT_TRUE(
-        writer.PutAccount(2, AccountBuilder().set_account_id(2).set_name(long_name).Build()).ok());
+        writer.PutAccount(AccountBuilder().set_account_id(2).set_name(long_name).Build()).ok());
     ASSERT_TRUE(writer.UpdateAccount(2, AccountPatchBuilder().set_age(1).Build()).ok());
     ASSERT_TRUE(writer.Commit().ok());
   });
@@ -294,7 +293,7 @@ TEST_F(PersistentDbTest, UpdatesAreLoggedAsPatchesWhenThatIsSmaller) {
   // A patch larger than the record is not worth it.
   const uint64_t rewritten = LogGrowth(*db, [&] {
     auto writer = db->CreateWriter();
-    ASSERT_TRUE(writer.PutAccount(3, AccountBuilder().set_account_id(3).Build()).ok());
+    ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(3).Build()).ok());
     ASSERT_TRUE(writer.Commit().ok());
   });
   const uint64_t larger = LogGrowth(*db, [&] {
@@ -320,8 +319,8 @@ TEST_F(PersistentDbTest, RecoveryFromPatchesGivesExactlyTheSameBytes) {
     AccountBuilder unknown;
     unknown.set_account_id(1).set_name("Ann").set_age(30).set_balance(1.f);
     unknown.AddStringField(1000, "from a newer schema");
-    ASSERT_TRUE(writer.PutAccount(1, unknown.Build()).ok());
-    ASSERT_TRUE(writer.PutAccount(2, AccountBuilder().set_account_id(2).set_age(1).Build()).ok());
+    ASSERT_TRUE(writer.PutAccount(unknown.Build()).ok());
+    ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(2).set_age(1).Build()).ok());
     ASSERT_TRUE(writer.Commit().ok());
 
     ASSERT_TRUE(
@@ -388,7 +387,7 @@ TEST_F(PersistentDbTest, LogCutAtAnyByteRecoversTheCommitsBeforeIt) {
     commit_ends.push_back(db->engine().Stats().wal_bytes);
     for (uint64_t id = 1; id <= 5; ++id) {
       auto writer = db->CreateWriter();
-      ASSERT_TRUE(writer.PutAccount(id, AccountBuilder().set_account_id(id).Build()).ok());
+      ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(id).Build()).ok());
       ASSERT_TRUE(writer.Commit().ok());
       commit_ends.push_back(db->engine().Stats().wal_bytes);
     }
@@ -423,7 +422,7 @@ TEST_F(PersistentDbTest, DamagedCheckpointIsReportedNotHidden) {
     auto db = OpenDb();
     {
       auto writer = db->CreateWriter();
-      ASSERT_TRUE(writer.PutAccount(1, AccountBuilder().set_account_id(1).Build()).ok());
+      ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(1).Build()).ok());
       ASSERT_TRUE(writer.Commit().ok());
     }
     ASSERT_TRUE(db->engine().Checkpoint().ok());
@@ -470,7 +469,7 @@ TEST_F(PersistentDbTest, KillAtAnyMomentKeepsEveryAcknowledgedCommit) {
         auto writer = (*db)->CreateWriter();
         for (uint64_t id : {uint64_t{1}, uint64_t{2}}) {
           (void)writer.PutAccount(
-              id, AccountBuilder().set_account_id(id).set_age(next).set_name(padding).Build());
+              AccountBuilder().set_account_id(id).set_age(next).set_name(padding).Build());
         }
         if (!writer.Commit().ok()) _exit(2);
         if (write(fds[1], &next, sizeof(next)) != sizeof(next)) _exit(3);
@@ -507,7 +506,7 @@ TEST_F(PersistentDbTest, DamageBeforeTheTailIsReportedNotHidden) {
     ASSERT_TRUE(db.ok());
     for (uint64_t id = 1; id <= 10; ++id) {
       auto writer = (*db)->CreateWriter();
-      ASSERT_TRUE(writer.PutAccount(id, AccountBuilder().set_account_id(id).Build()).ok());
+      ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(id).Build()).ok());
       ASSERT_TRUE(writer.Commit().ok());
     }
   }
