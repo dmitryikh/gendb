@@ -6,6 +6,7 @@ seconds="${FUZZ_SECONDS:-60}"
 build=build/docker-fuzz
 flags="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -g"
 
+conan profile detect --force >/dev/null
 conan install . --output-folder="$build" --build=missing -s build_type=Debug -o "&:with_grpc=False" >/dev/null
 cmake -S . -B "$build" -G Ninja \
   -DCMAKE_BUILD_TYPE=Debug \
