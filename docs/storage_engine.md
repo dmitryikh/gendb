@@ -130,14 +130,26 @@ which is what makes the next rule safe.
 | Torn or zeroed frame at the end of the **last** segment | The crash interrupted a write | Cut it off and continue; it was never acknowledged as durable |
 | Damage in any **other** segment, or a gap in LSNs | The disk lost acknowledged data | `DataLoss` |
 | Damage in the checkpoint | The same | `DataLoss` |
-| A collection the schema does not have | Probably a mistake | `FailedPrecondition`, unless `discard_unknown_collections` |
-
-The last row exists because a checkpoint writes only what the schema has: without it, removing a
-collection from the YAML would silently delete it soon after.
+| A collection the schema does not have | A rollback, a removal, or a newer primary | Kept as a foreign collection |
 
 Damage in the middle of the last segment looks the same as a torn tail, so it loses the commits after
 it without an error. Telling them apart reliably needs a record of the synced position, which the
 format does not hold yet.
+
+## Collections the schema does not have
+
+A database can hold durable data of a collection its schema lacks: the program was rolled back, the
+collection was removed from the YAML, a newer primary sent it, or it is now ephemeral here. Dropping
+that data silently would be the worst outcome, and refusing to open would block the rollback, so it
+is kept, as a **foreign collection**:
+
+- It has no indices, the API cannot read it, and subscribers do not hear of it.
+- It is logged, checkpointed and replicated like any other, under the name and ID it arrived with.
+- A later schema that has it finds its data, and builds indices for it on open as usual.
+- If the name is ephemeral here, its records stay apart from the local ephemeral ones.
+
+`EngineStats::foreign_collections` lists them, as they use memory and disk with nothing visibly using
+them. To drop one for good, open once with `discard_unknown_collections` and call `Checkpoint()`.
 
 ## Compaction
 
@@ -311,7 +323,9 @@ of table slots, and about 43 bytes per index entry plus its key, before allocato
    patch form if logs turn out to matter.
 4. **Before and after states for subscribers**, rather than patches, as explained above.
 5. **Backpressure rather than loss** when a queued subscriber falls behind.
-6. **Sync by default.** Safe, and about 140 times slower than no sync here.
-7. **`Guard` is gone**: `SharedLock()` became `CreateSnapshot()`, as a snapshot is equally cheap and
+6. **Keeping foreign collections** rather than refusing to open or dropping them. Safe by default, at
+   the price of memory that nothing visibly uses, which `Stats()` reports.
+7. **Sync by default.** Safe, and about 140 times slower than no sync here.
+8. **`Guard` is gone**: `SharedLock()` became `CreateSnapshot()`, as a snapshot is equally cheap and
    does not block commits. The accessor style in `db_api_codegen.md` (`db.Accounts().Get`) is not
    implemented; the flat `GetAccount` names stayed.

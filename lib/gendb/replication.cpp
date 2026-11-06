@@ -214,15 +214,17 @@ absl::Status ReplicationServer::RunSession(Connection& connection, Session& sess
   PutHistory(welcome, position.history);
   PutFixed64(welcome, after);
   welcome.push_back(snapshot.has_value() ? 1 : 0);
+  // All it needs to keep what it does not know: the records then travel like any others.
+  const size_t collections = _engine.collection_count();
   size_t durable_collections = 0;
-  for (const CollectionDef& collection : _engine._schema.collections) {
-    if (!collection.ephemeral) ++durable_collections;
+  for (size_t c = 0; c < collections; ++c) {
+    if (!_engine._collections[c]->ephemeral) ++durable_collections;
   }
   PutVarint(welcome, durable_collections);
-  for (size_t c = 0; c < _engine._collections.size(); ++c) {
-    if (_engine._schema.collections[c].ephemeral) continue;
+  for (size_t c = 0; c < collections; ++c) {
+    if (_engine._collections[c]->ephemeral) continue;
     PutFixed32(welcome, _engine._collections[c]->id);
-    PutString(welcome, _engine._schema.collections[c].name);
+    PutString(welcome, _engine._collections[c]->name);
   }
   RETURN_IF_ERROR(connection.Send(welcome));
 
@@ -266,7 +268,7 @@ absl::Status ReplicationServer::RunSession(Connection& connection, Session& sess
   auto last_sent = std::chrono::steady_clock::now();
   while (!session.stop.load(std::memory_order_acquire)) {
     if (_engine.history_generation() != generation) {
-      return absl::AbortedError("The primary's history changed");
+      return absl::AbortedError("The primary's history or collections changed");
     }
     if (session.SilentFor(_options.replica_timeout)) {
       return absl::DeadlineExceededError("The replica went silent");
@@ -412,20 +414,16 @@ absl::Status Replica::RunSession() {
   const HistoryId history = welcome.History();
   const uint64_t lsn = welcome.Fixed64();
   const bool checkpoint = welcome.Byte() != 0;
-  const uint64_t collections = welcome.Varint();
-  for (uint64_t i = 0; i < collections && welcome.ok(); ++i) {
+  std::vector<std::pair<uint32_t, std::string>> collections;
+  const uint64_t collection_count = welcome.Varint();
+  for (uint64_t i = 0; i < collection_count && welcome.ok(); ++i) {
     const uint32_t id = welcome.Fixed32();
-    const std::string_view name = welcome.String();
-    const std::optional<size_t> collection = _engine.FindCollection(id);
-    if (!collection.has_value() || _engine._schema.collections[*collection].ephemeral) {
-      return absl::FailedPreconditionError(
-          absl::StrCat("The primary has durable collection '", name,
-                       "', which is not one here. Upgrade replicas before the primary."));
-    }
+    collections.emplace_back(id, std::string(welcome.String()));
   }
   if (!welcome.ok() || type != MessageType::kWelcome) {
     return absl::InvalidArgumentError("Expected a Welcome");
   }
+  RETURN_IF_ERROR(_engine.RegisterCollections(collections));
 
   if (checkpoint) {
     RETURN_IF_ERROR(ReceiveCheckpoint(connection, {history, lsn}));

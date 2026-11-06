@@ -168,8 +168,8 @@ absl::Status Wal::OpenSegmentLocked(uint64_t first_lsn) {
   PutFixed32(header, kFormatVersion);
   PutHistory(header, _history);
   PutFixed64(header, first_lsn);
-  PutVarint(header, _options.collections.size());
-  for (const auto& [id, name] : _options.collections) {
+  PutVarint(header, _collections.size());
+  for (const auto& [id, name] : _collections) {
     PutFixed32(header, id);
     PutString(header, name);
   }
@@ -227,12 +227,29 @@ absl::Status Wal::Rotate() {
   const uint64_t written = _written_lsn.load(std::memory_order_acquire);
   // Nothing after the header yet: this is already the newest segment.
   if (_segments.back().first_lsn == written + 1) return absl::OkStatus();
+  return RollLocked();
+}
+
+absl::Status Wal::RollLocked() {
+  const uint64_t written = _written_lsn.load(std::memory_order_acquire);
   RETURN_IF_ERROR(_current->Sync());
   uint64_t synced = _synced_lsn.load(std::memory_order_relaxed);
   while (synced < written && !_synced_lsn.compare_exchange_weak(synced, written)) {
   }
   _segments.back().bytes = _current->size();
   return OpenSegmentLocked(written + 1);
+}
+
+absl::Status Wal::AddCollection(uint32_t id, std::string name) {
+  absl::Status status;
+  {
+    std::lock_guard lock(_mutex);
+    _collections.emplace_back(id, std::move(name));
+    if (_current == nullptr) return absl::OkStatus();  // The first segment will name it.
+    if (!_failure.ok()) return _failure;
+    status = RollLocked();
+  }
+  return status.ok() ? status : Fail(std::move(status));
 }
 
 absl::Status Wal::Sync() {

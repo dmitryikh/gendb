@@ -89,8 +89,10 @@ struct EngineOptions {
 
   // Follows a primary through a Replica: only ephemeral collections accept local commits.
   bool replica = false;
-  // Open fails if the database holds a collection the schema does not have, unless this is set, in
-  // which case that collection is dropped for good by the next checkpoint.
+  // Durable data of a collection the schema does not have is normally kept, out of reach, until a
+  // schema that has it opens the database; EngineStats::foreign_collections lists such collections.
+  // With this set, their data is ignored, and the next checkpoint drops it for good. Not allowed on
+  // a replica, which would then differ from its primary without knowing.
   bool discard_unknown_collections = false;
 };
 
@@ -149,6 +151,7 @@ struct EngineStats {
   size_t active_snapshots;
   size_t pending_garbage;         // Old versions and removed entries kept for active snapshots.
   absl::Status background_error;  // The latest background checkpoint or sync failure.
+  std::vector<std::string> foreign_collections;  // Held, but not in this schema.
 };
 
 class Engine {
@@ -192,11 +195,17 @@ class Engine {
   class CheckpointLoader;
   class CommitRing;
 
+  // Collections are numbered as in the schema; foreign ones, not in it, follow. They have no
+  // indices, nobody can read them through the API, and subscribers do not hear of them, but they
+  // are logged, checkpointed and replicated like any other.
   struct Collection {
     internal::RecordTable table;
     std::vector<size_t> indices;
     uint32_t id;  // In frames.
+    std::string name;
+    bool ephemeral;
   };
+  static constexpr size_t kMaxForeignCollections = 256;
   struct Garbage {
     enum Kind {
       kOlderVersion,        // ptr: a version; free what it superseded.
@@ -226,7 +235,14 @@ class Engine {
                                      uint64_t seq);
   void Reclaim(uint64_t up_to_seq) noexcept;
   void ReclaimUnpinned(uint64_t seq) noexcept;
-  std::optional<size_t> FindCollection(uint32_t id) const noexcept;
+  // The collection whose durable data has this ID: one that is ephemeral here does not count, as
+  // its records are local. Under the writer lock.
+  std::optional<size_t> FindDurableCollection(uint32_t id) const noexcept;
+  // Under the writer lock.
+  absl::StatusOr<size_t> AddForeignCollection(uint32_t id, std::string_view name);
+  size_t collection_count() const noexcept {
+    return _collection_count.load(std::memory_order_acquire);
+  }
 
   // Writer thread.
   std::unique_lock<std::mutex> AcquireWriter();
@@ -258,6 +274,9 @@ class Engine {
   uint64_t history_generation() const noexcept {
     return _history_generation.load(std::memory_order_acquire);
   }
+  // Makes sure there is somewhere to keep each of the primary's collections.
+  absl::Status RegisterCollections(
+      const std::vector<std::pair<uint32_t, std::string>>& collections);
   bool CanReadLogAfter(uint64_t lsn) const;
   uint64_t PinWal(uint64_t lsn);
   void UpdateWalPin(uint64_t pin, uint64_t lsn);
@@ -278,8 +297,10 @@ class Engine {
 
   const EngineSchema _schema;
   const EngineOptions _options;
+  // Fixed in size, so that adding a foreign collection does not move what readers are using.
   std::vector<std::unique_ptr<Collection>> _collections;
-  std::vector<std::pair<uint32_t, size_t>> _collection_ids;  // Sorted.
+  std::atomic<size_t> _collection_count{0};
+  std::vector<std::pair<uint32_t, size_t>> _durable_ids;  // Sorted. Under the writer lock.
   std::vector<std::unique_ptr<internal::OrderedIndex>> _indices;
 
   std::mutex _writer_mutex;  // Held by a Transaction for its whole life.
@@ -291,9 +312,9 @@ class Engine {
   std::string _old_index_key, _new_index_key;  // Writer only: scratch for UpdateIndexNow.
   uint32_t _install_epoch = 0;                 // Writer only.
 
-  std::atomic<uint64_t> _lsn{0};  // Written under the writer lock.
-  internal::HistoryId _history;   // Under the writer lock.
-  std::atomic<uint64_t> _history_generation{0};
+  std::atomic<uint64_t> _lsn{0};                 // Written under the writer lock.
+  internal::HistoryId _history;                  // Under the writer lock.
+  std::atomic<uint64_t> _history_generation{0};  // Changes with the history or the collections.
   std::atomic<bool> _replica;
   std::unique_ptr<CommitRing> _ring;
 
@@ -304,6 +325,7 @@ class Engine {
   std::atomic<uint64_t> _checkpoint_lsn{0};
   std::atomic<uint64_t> _checkpoint_bytes{0};
   std::atomic<uint64_t> _wal_bytes_since_checkpoint{0};
+  std::atomic<bool> _rewrite_checkpoint{false};  // Something was discarded on open.
   mutable std::mutex _wal_pins_mutex;
   std::vector<std::pair<uint64_t, uint64_t>> _wal_pins;  // Pin ID to the LSN it keeps.
   uint64_t _next_wal_pin = 1;

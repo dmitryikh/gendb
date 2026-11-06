@@ -297,17 +297,26 @@ Engine::Engine(EngineSchema schema, EngineOptions options)
       _options(std::move(options)),
       _replica(_options.replica),
       _ring(std::make_unique<CommitRing>()) {
-  for (size_t i = 0; i < _schema.collections.size(); ++i) {
-    _collections.push_back(std::make_unique<Collection>());
-    _collections[i]->id = internal::CollectionIdOf(_schema.collections[i].name);
-    _collection_ids.emplace_back(_collections[i]->id, i);
+  const size_t schema_size = _schema.collections.size();
+  _collections.resize(schema_size + kMaxForeignCollections);
+  std::vector<std::pair<uint32_t, size_t>> ids;
+  for (size_t i = 0; i < schema_size; ++i) {
+    const CollectionDef& def = _schema.collections[i];
+    _collections[i] = std::make_unique<Collection>();
+    _collections[i]->id = internal::CollectionIdOf(def.name);
+    _collections[i]->name = def.name;
+    _collections[i]->ephemeral = def.ephemeral;
+    ids.emplace_back(_collections[i]->id, i);
+    if (!def.ephemeral) _durable_ids.emplace_back(_collections[i]->id, i);
   }
-  std::sort(_collection_ids.begin(), _collection_ids.end());
-  for (size_t i = 1; i < _collection_ids.size(); ++i) {
-    if (_collection_ids[i - 1].first == _collection_ids[i].first) {
+  _collection_count.store(schema_size, std::memory_order_release);
+  std::sort(_durable_ids.begin(), _durable_ids.end());
+  std::sort(ids.begin(), ids.end());
+  for (size_t i = 1; i < ids.size(); ++i) {
+    if (ids[i - 1].first == ids[i].first) {
       std::fprintf(stderr, "gendb: collections '%s' and '%s' have the same ID: rename one\n",
-                   _schema.collections[_collection_ids[i - 1].second].name.c_str(),
-                   _schema.collections[_collection_ids[i].second].name.c_str());
+                   _schema.collections[ids[i - 1].second].name.c_str(),
+                   _schema.collections[ids[i].second].name.c_str());
       std::abort();
     }
   }
@@ -320,6 +329,9 @@ Engine::Engine(EngineSchema schema, EngineOptions options)
 
 absl::StatusOr<std::unique_ptr<Engine>> Engine::Open(EngineSchema schema, EngineOptions options) {
   if (options.path.empty()) return absl::InvalidArgumentError("EngineOptions::path is empty");
+  if (options.replica && options.discard_unknown_collections) {
+    return absl::InvalidArgumentError("A replica must keep everything its primary has");
+  }
   std::unique_ptr<Engine> engine(new Engine(std::move(schema), std::move(options)));
   RETURN_IF_ERROR(engine->Recover());
   const EngineOptions& opened = engine->_options;
@@ -348,15 +360,15 @@ class Engine::CheckpointLoader final : public internal::CheckpointHandler {
   }
 
   absl::Status OnCollection(uint32_t id, std::string_view name, uint64_t expected) override {
-    _current = _engine.FindCollection(id);
-    if (!_current.has_value() && !_engine._options.discard_unknown_collections) {
-      return absl::FailedPreconditionError(
-          absl::StrCat("The database holds collection '", name,
-                       "' that the schema does not have. Restore it, or set "
-                       "discard_unknown_collections to drop it."));
-    }
-    if (_current.has_value() && _engine._schema.collections[*_current].ephemeral) {
-      _current.reset();
+    _current = _engine.FindDurableCollection(id);
+    if (!_current.has_value()) {
+      if (_engine._options.discard_unknown_collections) {
+        _engine._rewrite_checkpoint.store(true, std::memory_order_relaxed);
+        return absl::OkStatus();
+      }
+      auto foreign = _engine.AddForeignCollection(id, name);
+      if (!foreign.ok()) return foreign.status();
+      _current = *foreign;
     }
     if (_current.has_value()) {
       const RecordTable::Slots* replaced = _engine._collections[*_current]->table.Reserve(expected);
@@ -391,8 +403,8 @@ class Engine::CheckpointLoader final : public internal::CheckpointHandler {
 
   // Removes durable records that were not in the checkpoint.
   void RemoveMissing() {
-    for (size_t c = 0; c < _engine._collections.size(); ++c) {
-      if (_engine._schema.collections[c].ephemeral) continue;
+    for (size_t c = 0; c < _engine.collection_count(); ++c) {
+      if (_engine._collections[c]->ephemeral) continue;
       const RecordTable::Slots* slots = _engine._collections[c]->table.LoadSlots();
       for (size_t i = 0; i <= slots->mask; ++i) {
         RecordNode* node = slots->slots[i].load(std::memory_order_relaxed);
@@ -416,7 +428,7 @@ class Engine::CheckpointLoader final : public internal::CheckpointHandler {
     if (version->tombstone) {
       _engine._garbage.push_back({_seq, Garbage::kTombstone, node, collection});
     }
-    if (_changes != nullptr) {
+    if (_changes != nullptr && collection < _engine._schema.collections.size()) {
       const bool had = head != nullptr && !head->tombstone;
       _changes->push_back(
           {collection, AsBytes(node->key()),
@@ -452,10 +464,8 @@ absl::Status Engine::Recover() {
   }
 
   internal::CollectionNames names;
-  for (size_t c = 0; c < _collections.size(); ++c) {
-    if (!_schema.collections[c].ephemeral) {
-      names.emplace_back(_collections[c]->id, _schema.collections[c].name);
-    }
+  for (size_t c = 0; c < collection_count(); ++c) {
+    if (!_collections[c]->ephemeral) names.emplace_back(_collections[c]->id, _collections[c]->name);
   }
   _wal = std::make_unique<Wal>(Wal::Options{path, _options.wal_segment_bytes, std::move(names)});
 
@@ -539,7 +549,7 @@ Subscription Engine::Subscribe(ChangeCallback callback, SubscribeOptions options
   subscriber->delivery = options.delivery;
   subscriber->max_queue_bytes = options.max_queue_bytes;
   if (!options.collections.empty()) {
-    subscriber->wanted.resize(_collections.size(), false);
+    subscriber->wanted.resize(_schema.collections.size(), false);
     for (size_t collection : options.collections) subscriber->wanted[collection] = true;
   }
   if (options.delivery == Delivery::kQueued) {
@@ -590,10 +600,13 @@ absl::Status Engine::ExportCheckpoint(
     const std::function<absl::Status(std::string_view)>& sink) const {
   internal::CheckpointWriter writer(sink);
   RETURN_IF_ERROR(writer.Begin(position.history, position.lsn));
-  for (size_t c = 0; c < _collections.size(); ++c) {
-    if (_schema.collections[c].ephemeral) continue;
-    RETURN_IF_ERROR(writer.BeginCollection(_collections[c]->id, _schema.collections[c].name,
-                                           _collections[c]->table.live()));
+  for (size_t c = 0; c < collection_count(); ++c) {
+    const Collection& collection = *_collections[c];
+    if (collection.ephemeral) continue;
+    // Nothing would bring back a foreign collection that has emptied.
+    if (c >= _schema.collections.size() && collection.table.live() == 0) continue;
+    RETURN_IF_ERROR(
+        writer.BeginCollection(collection.id, collection.name, collection.table.live()));
     for (ScanCursor cursor(snapshot, c); cursor.Valid(); cursor.Next()) {
       RETURN_IF_ERROR(writer.Add(cursor.key(), AsStringView(cursor.value())));
     }
@@ -612,7 +625,10 @@ absl::Status Engine::Checkpoint() {
     // The snapshot's sequence number and the LSN must describe the same commit.
     auto writer = AcquireWriterFirst();
     position = {_history, _lsn.load(std::memory_order_relaxed)};
-    if (position.lsn == _checkpoint_lsn.load(std::memory_order_relaxed)) return absl::OkStatus();
+    if (position.lsn == _checkpoint_lsn.load(std::memory_order_relaxed) &&
+        !_rewrite_checkpoint.load(std::memory_order_relaxed)) {
+      return absl::OkStatus();
+    }
     RETURN_IF_ERROR(_wal->Rotate());
     snapshot.emplace(*this);
     log_bytes = _wal_bytes_since_checkpoint.exchange(0, std::memory_order_relaxed);
@@ -644,6 +660,7 @@ absl::Status Engine::Checkpoint() {
 
   _checkpoint_bytes.store((*file)->size(), std::memory_order_relaxed);
   _checkpoint_lsn.store(position.lsn, std::memory_order_relaxed);
+  _rewrite_checkpoint.store(false, std::memory_order_relaxed);
   RemoveCheckpointsBelow(position.lsn);
   return PurgeWal();
 }
@@ -731,6 +748,9 @@ EngineStats Engine::Stats() const {
   stats.wal_bytes = _wal == nullptr ? 0 : _wal->total_bytes();
   stats.active_snapshots = active;
   stats.pending_garbage = _garbage_size.load(std::memory_order_relaxed);
+  for (size_t c = _schema.collections.size(); c < collection_count(); ++c) {
+    stats.foreign_collections.push_back(_collections[c]->name);
+  }
   {
     std::lock_guard lock(_background_mutex);
     stats.background_error = _background_error;
@@ -738,11 +758,49 @@ EngineStats Engine::Stats() const {
   return stats;
 }
 
-std::optional<size_t> Engine::FindCollection(uint32_t id) const noexcept {
-  const auto it = std::lower_bound(_collection_ids.begin(), _collection_ids.end(),
+std::optional<size_t> Engine::FindDurableCollection(uint32_t id) const noexcept {
+  const auto it = std::lower_bound(_durable_ids.begin(), _durable_ids.end(),
                                    std::pair<uint32_t, size_t>(id, 0));
-  if (it == _collection_ids.end() || it->first != id) return std::nullopt;
+  if (it == _durable_ids.end() || it->first != id) return std::nullopt;
   return it->second;
+}
+
+absl::StatusOr<size_t> Engine::AddForeignCollection(uint32_t id, std::string_view name) {
+  const size_t index = collection_count();
+  if (index == _collections.size()) {
+    return absl::ResourceExhaustedError("Too many collections that the schema does not have");
+  }
+  auto collection = std::make_unique<Collection>();
+  collection->id = id;
+  collection->name = std::string(name);
+  collection->ephemeral = false;
+  _collections[index] = std::move(collection);
+  _durable_ids.insert(std::lower_bound(_durable_ids.begin(), _durable_ids.end(),
+                                       std::pair<uint32_t, size_t>(id, index)),
+                      {id, index});
+  _collection_count.store(index + 1, std::memory_order_release);
+  // Sessions served from here told their replicas the old list: they must start over.
+  _history_generation.fetch_add(1, std::memory_order_acq_rel);
+  _ring->Wake();
+  if (_wal != nullptr) RETURN_IF_ERROR(_wal->AddCollection(id, std::string(name)));
+  return index;
+}
+
+absl::Status Engine::RegisterCollections(
+    const std::vector<std::pair<uint32_t, std::string>>& collections) {
+  auto writer = AcquireWriterFirst();
+  for (const auto& [id, name] : collections) {
+    const std::optional<size_t> known = FindDurableCollection(id);
+    if (!known.has_value()) {
+      auto foreign = AddForeignCollection(id, name);
+      if (!foreign.ok()) return foreign.status();
+    } else if (_collections[*known]->name != name) {
+      return absl::FailedPreconditionError(
+          absl::StrCat("Collections '", name, "' on the primary and '", _collections[*known]->name,
+                       "' here have the same ID: rename one"));
+    }
+  }
+  return absl::OkStatus();
 }
 
 absl::Status Engine::ApplyCommitFrame(Transaction& txn, const Frame& frame) {
@@ -750,18 +808,22 @@ absl::Status Engine::ApplyCommitFrame(Transaction& txn, const Frame& frame) {
   for (uint32_t i = 0; i < commit.count; ++i) {
     const internal::CommitEntry entry = commit.Next();
     if (!commit.ok()) return absl::DataLossError("Malformed commit");
-    const std::optional<size_t> collection = FindCollection(entry.collection_id);
+    std::optional<size_t> collection = FindDurableCollection(entry.collection_id);
     if (!collection.has_value()) {
-      if (_options.discard_unknown_collections) continue;
-      txn.Rollback();
-      return absl::FailedPreconditionError(
-          absl::StrCat("The database holds collection '",
-                       _wal != nullptr ? _wal->NameOf(entry.collection_id)
-                                       : absl::StrCat("#", entry.collection_id),
-                       "' that the schema does not have. Restore it, or set "
-                       "discard_unknown_collections to drop it."));
+      if (_options.discard_unknown_collections) {
+        _rewrite_checkpoint.store(true, std::memory_order_relaxed);
+        continue;
+      }
+      auto foreign = AddForeignCollection(entry.collection_id,
+                                          _wal != nullptr ? _wal->NameOf(entry.collection_id)
+                                                          : absl::StrCat("#", entry.collection_id));
+      if (!foreign.ok()) {
+        txn.Rollback();
+        return foreign.status();
+      }
+      collection = *foreign;
+      txn._pending.resize(collection_count());
     }
-    if (_schema.collections[*collection].ephemeral) continue;
     if (entry.deleted) {
       if (!txn.Delete(*collection, AsBytes(entry.key)).ok()) {
         txn.Rollback();
@@ -898,6 +960,15 @@ absl::Status Engine::ApplyReplicated(std::string_view frames) {
     CommitDecoder commit(frame.body);
     if (!commit.ok() || commit.lsn != next) {
       return absl::DataLossError(absl::StrCat("Expected commit ", next, " from the primary"));
+    }
+    for (uint32_t i = 0; i < commit.count; ++i) {
+      const internal::CommitEntry entry = commit.Next();
+      if (!commit.ok()) return absl::DataLossError("Malformed commit from the primary");
+      // Named at the start of a session, so this primary's list grew since: a new session will
+      // bring the name.
+      if (!FindDurableCollection(entry.collection_id).has_value()) {
+        return absl::AbortedError("The primary has a collection it has not named yet");
+      }
     }
     ++next;
     rest.remove_prefix(frame.raw.size());
@@ -1128,7 +1199,7 @@ void IndexCursor::Next() {
 Transaction::Transaction(Engine& engine)
     : _engine(&engine),
       _lock(engine.AcquireWriter()),
-      _pending(engine._collections.size()),
+      _pending(engine.collection_count()),
       _index_deltas(engine._indices.size()) {}
 
 Transaction::~Transaction() {
@@ -1253,7 +1324,7 @@ std::pair<bool, bool> Transaction::ResolveWrites() noexcept {
       }
     }
     any = true;
-    logged = logged || !_engine->_schema.collections[write.collection].ephemeral;
+    logged = logged || !_engine->_collections[write.collection]->ephemeral;
   }
   return {any, logged};
 }
@@ -1282,7 +1353,7 @@ absl::Status Transaction::Commit(CommitOptions options) {
       const size_t begin = internal::BeginCommit(buffer, lsn);
       uint32_t count = 0;
       for (const PendingWrite& write : _writes) {
-        if (write.version == nullptr || engine._schema.collections[write.collection].ephemeral) {
+        if (write.version == nullptr || engine._collections[write.collection]->ephemeral) {
           continue;
         }
         internal::AddCommitEntry(buffer, engine._collections[write.collection]->id,
@@ -1335,7 +1406,7 @@ void Transaction::Publish(bool logged, uint64_t lsn, std::string_view frame) {
     if (version->tombstone) {
       engine._garbage.push_back({seq, Engine::Garbage::kTombstone, node, write.collection});
     }
-    if (notify) {
+    if (notify && write.collection < engine._schema.collections.size()) {
       // Both stay alive until the reclamation below.
       changes.push_back(
           {write.collection, AsBytes(node->key()),

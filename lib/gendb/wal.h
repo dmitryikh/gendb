@@ -40,7 +40,8 @@ class Wal {
     std::optional<HistoryId> history;  // Of the newest segment, if any.
   };
 
-  explicit Wal(Options options) : _options(std::move(options)) {}
+  explicit Wal(Options options)
+      : _options(std::move(options)), _collections(_options.collections) {}
 
   // Calls `apply` with each intact commit after `after_lsn`, oldest first, and cuts a torn tail.
   absl::StatusOr<Recovered> Recover(uint64_t after_lsn,
@@ -53,6 +54,9 @@ class Wal {
   absl::Status Append(std::string_view frames, uint64_t last_lsn, bool sync);
   // Starts a new segment for the commits after the last appended one.
   absl::Status Rotate();
+  // Names a collection in the headers from now on, starting with a new segment, so that any commit
+  // that follows is in a segment that names it.
+  absl::Status AddCollection(uint32_t id, std::string name);
   // Makes every appended commit durable.
   absl::Status Sync();
   // Removes segments that hold only commits at or below `lsn`, keeping the newest `retain_bytes`
@@ -77,6 +81,7 @@ class Wal {
   };
 
   absl::Status OpenSegmentLocked(uint64_t first_lsn);
+  absl::Status RollLocked();
   absl::Status Fail(absl::Status status);
 
   const Options _options;
@@ -84,6 +89,7 @@ class Wal {
   CollectionNames _seen_collections;
 
   mutable std::mutex _mutex;
+  CollectionNames _collections;
   std::shared_ptr<AppendFile> _current;
   std::vector<Segment> _segments;  // Oldest first; the last one is _current.
   absl::Status _failure;

@@ -3,6 +3,8 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <array>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <deque>
@@ -421,6 +423,167 @@ TEST_F(ReplicationTest, ReadersSeeWholeCommitsWhileFollowing) {
   done = true;
   reader.join();
   EXPECT_FALSE(torn.load());
+}
+
+// Two versions of one program, by raw collections, as what matters is what each schema has.
+const std::array<uint8_t, 1> kKey1{1}, kKey2{2}, kKey3{3}, kKey4{4};
+const std::array<uint8_t, 1> kValue{42};
+
+gendb::EngineSchema OldSchema() {
+  gendb::EngineSchema schema;
+  schema.collections.push_back({"users"});
+  return schema;
+}
+
+// "orders" is new, with an index on the value.
+gendb::EngineSchema NewSchema() {
+  gendb::EngineSchema schema;
+  schema.collections.push_back({"users"});
+  schema.collections.push_back({"orders"});
+  schema.indices.push_back(
+      {"orders_by_value", 1, [](gendb::BytesConstView message, std::string& out) {
+         out.append(reinterpret_cast<const char*>(message.data()), message.size());
+         return true;
+       }});
+  return schema;
+}
+
+constexpr size_t kUsers = 0;
+constexpr size_t kOrders = 1;
+
+void PutRaw(gendb::Engine& engine, size_t collection, gendb::BytesConstView key) {
+  gendb::Transaction txn(engine);
+  txn.Put(collection, key, kValue);
+  ASSERT_TRUE(txn.Commit().ok());
+}
+
+// The primary is upgraded first: the old replica keeps a collection it does not know, across a
+// local checkpoint and restarts, and its upgrade finds the data there, indexed, with no resync.
+TEST_F(ReplicationTest, PrimaryCanBeUpgradedBeforeItsReplicas) {
+  gendb::Engine primary(NewSchema());
+  LoopbackServer server(primary);
+  PutRaw(primary, kUsers, kKey1);
+  PutRaw(primary, kOrders, kKey1);  // Reaches the replica in a checkpoint.
+
+  const gendb::EngineOptions options{.path = Path("replica"), .replica = true};
+  {
+    auto old_binary = gendb::Engine::Open(OldSchema(), options);
+    ASSERT_TRUE(old_binary.ok()) << old_binary.status();
+    gendb::Replica replica(**old_binary, server.connector());
+    ASSERT_TRUE(replica.WaitForLsn(2, kPatience)) << replica.Status().last_error;
+    PutRaw(primary, kOrders, kKey2);  // Reaches it in the log.
+    ASSERT_TRUE(replica.WaitForLsn(3, kPatience)) << replica.Status().last_error;
+    EXPECT_THAT((*old_binary)->Stats().foreign_collections, ::testing::ElementsAre("orders"));
+    EXPECT_EQ(replica.Status().checkpoints_installed, 1u);
+    ASSERT_TRUE((*old_binary)->Checkpoint().ok());
+    PutRaw(primary, kOrders, kKey3);
+    ASSERT_TRUE(replica.WaitForLsn(4, kPatience)) << replica.Status().last_error;
+  }
+  {
+    auto restarted = gendb::Engine::Open(OldSchema(), options);
+    ASSERT_TRUE(restarted.ok()) << restarted.status();
+    EXPECT_EQ((*restarted)->Stats().lsn, 4u);
+    EXPECT_THAT((*restarted)->Stats().foreign_collections, ::testing::ElementsAre("orders"));
+    gendb::Replica replica(**restarted, server.connector());
+    ASSERT_TRUE(replica.WaitForLsn(4, kPatience)) << replica.Status().last_error;
+    EXPECT_EQ(replica.Status().checkpoints_installed, 0u);
+  }
+
+  auto upgraded = gendb::Engine::Open(NewSchema(), options);
+  ASSERT_TRUE(upgraded.ok()) << upgraded.status();
+  EXPECT_TRUE((*upgraded)->Stats().foreign_collections.empty());
+  gendb::Replica replica(**upgraded, server.connector());
+  PutRaw(primary, kOrders, kKey4);
+  ASSERT_TRUE(replica.WaitForLsn(5, kPatience)) << replica.Status().last_error;
+  EXPECT_EQ(replica.Status().checkpoints_installed, 0u);
+
+  gendb::EngineSnapshot snapshot(**upgraded);
+  for (const auto& key : {kKey1, kKey2, kKey3, kKey4}) {
+    EXPECT_TRUE(snapshot.Get(kOrders, key).has_value());
+  }
+  size_t indexed = 0;
+  for (gendb::IndexCursor it(snapshot, 0, "", ""); it.Valid(); it.Next()) ++indexed;
+  EXPECT_EQ(indexed, 4u);
+}
+
+// An old replica can even take over: what it kept goes on to the next replica.
+TEST_F(ReplicationTest, PromotedOldReplicaPassesOnWhatItDoesNotKnow) {
+  gendb::Engine primary(NewSchema());
+  gendb::Engine old_binary(OldSchema());
+  {
+    LoopbackServer server(primary);
+    PutRaw(primary, kOrders, kKey1);
+    gendb::Replica replica(old_binary, server.connector());
+    ASSERT_TRUE(replica.WaitForLsn(1, kPatience)) << replica.Status().last_error;
+    replica.Stop();
+  }
+  ASSERT_TRUE(old_binary.PromoteToPrimary().ok());
+  PutRaw(old_binary, kUsers, kKey2);
+
+  LoopbackServer server(old_binary);
+  gendb::Engine next(NewSchema());
+  gendb::Replica replica(next, server.connector());
+  ASSERT_TRUE(replica.WaitForLsn(2, kPatience)) << replica.Status().last_error;
+  gendb::EngineSnapshot snapshot(next);
+  EXPECT_TRUE(snapshot.Get(kOrders, kKey1).has_value());
+  EXPECT_TRUE(snapshot.Get(kUsers, kKey2).has_value());
+}
+
+// A replica can feed another, and learns of a collection after that one has connected.
+TEST_F(ReplicationTest, CollectionLearnedMidwayReachesReplicasDownstream) {
+  gendb::Engine middle(OldSchema());
+  LoopbackServer middle_server(middle);
+  gendb::Engine leaf(OldSchema());
+  gendb::Replica leaf_replica(leaf, middle_server.connector(),
+                              {.min_backoff = std::chrono::milliseconds(1)});
+
+  gendb::Engine primary(NewSchema());
+  LoopbackServer server(primary);
+  PutRaw(primary, kOrders, kKey1);
+  gendb::Replica middle_replica(middle, server.connector());
+  ASSERT_TRUE(middle_replica.WaitForLsn(1, kPatience)) << middle_replica.Status().last_error;
+  PutRaw(primary, kOrders, kKey2);
+  ASSERT_TRUE(leaf_replica.WaitForLsn(2, kPatience)) << leaf_replica.Status().last_error;
+  EXPECT_THAT(leaf.Stats().foreign_collections, ::testing::ElementsAre("orders"));
+  leaf_replica.Stop();
+  middle_replica.Stop();
+}
+
+// Durable on the primary, ephemeral here: the local records and the primary's do not mix, and
+// subscribers hear only of what this schema can read.
+TEST_F(ReplicationTest, ForeignDataStaysApartFromAnEphemeralCollectionOfTheSameName) {
+  gendb::EngineSchema here;
+  here.collections.push_back({"users"});
+  here.collections.push_back({"orders", /*ephemeral=*/true});
+  gendb::Engine replica_engine(here);
+  const std::array<uint8_t, 1> local{7};
+  {
+    gendb::Transaction txn(replica_engine);
+    txn.Put(kOrders, kKey1, local);
+    ASSERT_TRUE(txn.Commit().ok());
+  }
+  std::vector<size_t> heard;
+  auto subscription = replica_engine.Subscribe(
+      [&heard](const gendb::CommitEvent& event) {
+        for (const gendb::Change& change : event.changes) heard.push_back(change.collection);
+      },
+      {.delivery = gendb::Delivery::kInline});
+
+  gendb::Engine primary(NewSchema());
+  LoopbackServer server(primary);
+  gendb::Replica replica(replica_engine, server.connector());
+  PutRaw(primary, kOrders, kKey1);
+  PutRaw(primary, kUsers, kKey1);
+  ASSERT_TRUE(replica.WaitForLsn(2, kPatience)) << replica.Status().last_error;
+  replica.Stop();
+
+  EXPECT_THAT(replica_engine.Stats().foreign_collections, ::testing::ElementsAre("orders"));
+  gendb::EngineSnapshot snapshot(replica_engine);
+  const auto value = snapshot.Get(kOrders, kKey1);
+  ASSERT_TRUE(value.has_value());
+  EXPECT_EQ((*value)[0], 7);
+  EXPECT_THAT(heard, ::testing::Each(kUsers));
+  EXPECT_FALSE(heard.empty());
 }
 
 // A busy writer retakes the writer mutex at once, which must not lock out maintenance.

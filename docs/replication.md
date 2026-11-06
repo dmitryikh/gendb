@@ -77,7 +77,7 @@ gRPC is optional: `conan install -o "&:with_grpc=False"` builds everything else 
 ```text
  replica                                  primary
    Hello (history, LSN)  ------------->
-                         <-------------   Welcome (position, mode, collections)
+                         <-------------   Welcome (position, mode, collection IDs and names)
                          <-------------   checkpoint bytes        if it cannot continue its log
    Ack                   ------------->
                          <-------------   commit frames, or a heartbeat when idle, forever
@@ -143,14 +143,19 @@ A memory-only primary starts a new history on each start, so its replicas follow
 
 ## Schema changes
 
-Each side has its own schema and is compiled separately. Messages are forward and backward
-compatible, so fields can differ freely. For collections:
+Each side has its own schema and is compiled separately, and **they can be upgraded in any order**.
+Messages are forward and backward compatible, so fields can differ freely. For collections:
 
-| Change | Requirement |
+| Change | What happens |
 | --- | --- |
-| Add a collection | Upgrade replicas first. A replica without it refuses the session and reports why in `Status().last_error`, rather than losing that data unnoticed. |
-| Remove a collection | Upgrade the primary first. |
+| The primary has a collection the replica does not | The primary names its collections when a session starts. The replica keeps the unknown one as a [foreign collection](storage_engine.md#collections-the-schema-does-not-have): stored, logged and passed on, but not readable. Upgrading the replica makes it readable, indices included, with no resync. |
+| The replica has a collection the primary does not | It stays empty until the primary is upgraded. |
+| Removed from the primary's schema | The primary keeps it as foreign, so replicas keep receiving it in checkpoints, until discarded on the primary. A later checkpoint then removes it from replicas. |
+| Durable on the primary, ephemeral on the replica | The primary's records are kept as foreign, apart from the local ones. |
 | Add or change indices | Independent: each side computes its own from the records. |
+
+Only the ID and the name travel. Indices need no metadata, as each side derives its own from its code
+when it knows the collection.
 
 ## Performance
 
@@ -189,7 +194,7 @@ transport with no network, 100,000 accounts of about 100 bytes:
 ## Decisions to confirm
 
 1. **Physical replication of the log**, rather than logical change events. Simple and fast, and the
-   replica's log matches the primary's. It is also why collections must be added replicas first.
+   replica's log matches the primary's.
 2. **Transport as a blocking `Connection`**, rather than an asynchronous interface. Very little to
    implement, at the price of a thread per replica. A primary with hundreds of replicas would want
    otherwise.

@@ -629,6 +629,35 @@ TEST(DbTest, PutOverwriteMovesIndexEntry) {
   EXPECT_TRUE(writer.GetAccountByAgeEqual(2).Valid());
 }
 
+// A loop that applies changes sees the effect of its earlier iterations, before any commit.
+TEST(DbTest, WriterSeesItsOwnChangesAcrossALoopBeforeCommit) {
+  Db db;
+  auto writer = db.CreateWriter();
+  ASSERT_TRUE(writer.PutAccount(1, AccountBuilder().set_account_id(1).set_age(0).Build()).ok());
+  for (int32_t i = 1; i <= 3; ++i) {
+    Account account;
+    ASSERT_TRUE(writer.GetAccount(1, account).ok());
+    EXPECT_EQ(account.age(), i - 1);
+    ASSERT_TRUE(writer.UpdateAccount(1, AccountPatchBuilder().set_age(i).Build()).ok());
+  }
+  ASSERT_TRUE(writer.PutAccount(2, AccountBuilder().set_account_id(2).set_age(3).Build()).ok());
+  ASSERT_TRUE(writer.DeleteAccount(2).ok());
+  ASSERT_TRUE(writer.PutAccount(3, AccountBuilder().set_account_id(3).set_age(3).Build()).ok());
+
+  Account account;
+  EXPECT_FALSE(writer.GetAccount(2, account).ok());
+  std::vector<uint64_t> by_age;
+  for (auto it = writer.GetAccountByAgeEqual(3); it.Valid(); it.Next()) {
+    by_age.push_back(it.Value().account_id());
+  }
+  EXPECT_THAT(by_age, ::testing::UnorderedElementsAre(1u, 3u));
+
+  // Nobody else sees any of it yet.
+  EXPECT_FALSE(db.CreateSnapshot().GetAccount(1, account).ok());
+  ASSERT_TRUE(writer.Commit().ok());
+  EXPECT_TRUE(db.CreateSnapshot().GetAccount(1, account).ok());
+}
+
 TEST(DbTest, ScanSeesEveryRecordOfTheSnapshot) {
   Db db;
   {
@@ -1157,31 +1186,61 @@ TEST_F(PersistentDbTest, OneProcessAtATime) {
   EXPECT_EQ(second.status().code(), absl::StatusCode::kFailedPrecondition);
 }
 
-// A database that holds a collection the schema lost does not silently drop it.
-TEST_F(PersistentDbTest, UnknownCollectionNeedsExplicitDiscard) {
-  gendb::EngineSchema schema;
-  schema.collections.push_back({"kept"});
-  schema.collections.push_back({"removed_later"});
+// A database that holds a collection the schema lost keeps it, as when rolling back a deployment.
+TEST_F(PersistentDbTest, CollectionMissingFromTheSchemaIsKeptUntilDiscarded) {
+  gendb::EngineSchema full;
+  full.collections.push_back({"kept"});
+  full.collections.push_back({"removed_later"});
+  gendb::EngineSchema reduced;
+  reduced.collections.push_back({"kept"});
   const std::array<uint8_t, 1> key{1};
   const std::array<uint8_t, 1> value{2};
+  const auto has_record = [&key](gendb::Engine& engine) {
+    return gendb::EngineSnapshot(engine).Get(1, key).has_value();
+  };
   {
-    auto engine = gendb::Engine::Open(schema, {.path = _path});
+    auto engine = gendb::Engine::Open(full, {.path = _path});
     ASSERT_TRUE(engine.ok());
     gendb::Transaction txn(**engine);
     txn.Put(0, key, value);
     txn.Put(1, key, value);
     ASSERT_TRUE(txn.Commit().ok());
   }
-  schema.collections.pop_back();
-  auto refused = gendb::Engine::Open(schema, {.path = _path});
-  EXPECT_EQ(refused.status().code(), absl::StatusCode::kFailedPrecondition);
-  EXPECT_THAT(refused.status().message(), ::testing::HasSubstr("removed_later"));
+  // It survives in the log, then in a checkpoint, and with commits on top of it.
+  for (bool checkpoint : {false, true}) {
+    auto engine = gendb::Engine::Open(reduced, {.path = _path});
+    ASSERT_TRUE(engine.ok()) << engine.status();
+    EXPECT_THAT((*engine)->Stats().foreign_collections, ::testing::ElementsAre("removed_later"));
+    {
+      gendb::Transaction txn(**engine);
+      txn.Put(0, key, value);
+      ASSERT_TRUE(txn.Commit().ok());
+    }
+    if (checkpoint) ASSERT_TRUE((*engine)->Checkpoint().ok());
+  }
+  {
+    auto engine = gendb::Engine::Open(full, {.path = _path});
+    ASSERT_TRUE(engine.ok()) << engine.status();
+    EXPECT_TRUE((*engine)->Stats().foreign_collections.empty());
+    EXPECT_TRUE(has_record(**engine));
+  }
 
-  auto engine = gendb::Engine::Open(schema, {.path = _path, .discard_unknown_collections = true});
+  // Dropping it takes a decision, and a checkpoint, with no new commits needed.
+  EXPECT_EQ(gendb::Engine::Open(
+                reduced, {.path = _path, .replica = true, .discard_unknown_collections = true})
+                .status()
+                .code(),
+            absl::StatusCode::kInvalidArgument);
+  {
+    auto engine =
+        gendb::Engine::Open(reduced, {.path = _path, .discard_unknown_collections = true});
+    ASSERT_TRUE(engine.ok()) << engine.status();
+    EXPECT_TRUE((*engine)->Stats().foreign_collections.empty());
+    ASSERT_TRUE((*engine)->Checkpoint().ok());
+  }
+  auto engine = gendb::Engine::Open(full, {.path = _path, .wal_retain_bytes = 0});
   ASSERT_TRUE(engine.ok()) << engine.status();
-  ASSERT_TRUE((*engine)->Checkpoint().ok());
-  engine->reset();
-  EXPECT_TRUE(gendb::Engine::Open(schema, {.path = _path}).ok());
+  EXPECT_FALSE(has_record(**engine));
 }
 
 class ChangeSubscriptionTest : public ::testing::Test {
