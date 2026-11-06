@@ -106,6 +106,21 @@ yet.
 **A new segment** starts at `wal_segment_bytes`. The old one is fsynced before the new one exists,
 which is what makes the next rule safe.
 
+**Reserved space.** A durable commit that finds no room left writes `wal_reserve_bytes` of zeros after
+the end of the segment and syncs them, and commits then overwrite those. A sync that has no new file
+size to record is several times faster, and it is most of what a durable commit costs: on the machine this
+was measured on, 155 µs against 40 µs for the sync alone, which took small durable commits from about 5,900 to
+about 15,800 a second. SQLite gets the same by reusing its WAL file. Reusing segments would avoid the zeros, but
+leave old commits with valid checksums after the end of the log, for recovery to tell apart. So:
+
+- The zeros are not part of the log. Recovery reads them as its end, and they do not count as torn.
+- Closing the log, and ending a segment, cut them off, so that they use no disk in the long run. If a crash
+  takes that cut away, zeros at the end of an older segment are still only that: were any commits gone, the
+  next segment would show a gap in LSNs.
+- Commits that are not durable do not reserve, as they do not wait for a sync.
+- Reading the log while it is written can run into zeros or part of a commit that it read ahead of the writer,
+  so before calling anything damage, it reads again.
+
 ## Recovery
 
 1. Remove leftover `*.tmp` files.

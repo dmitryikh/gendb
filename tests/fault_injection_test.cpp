@@ -6,6 +6,7 @@
 #include <chrono>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -13,6 +14,7 @@
 #include "account.gendb.h"
 #include "database.h"
 #include "gendb/replication.h"
+#include "gendb/wal.h"
 #include "lib/loopback_transport.h"
 #include "lib/memory_file_system.h"
 
@@ -161,39 +163,44 @@ TEST(FaultInjectionTest, PowerLossAtEveryOperationKeepsThePromises) {
 // was never promised is the tail of a crash, however much intact data follows it.
 TEST(FaultInjectionTest, PowerLossInALongSegmentCutsOnlyWhatWasNeverPromised) {
   constexpr int kCommits = 240;  // Over the sync mark interval several times.
-  const auto options = [](const std::shared_ptr<MemoryFileSystem>& file_system) {
-    DbOptions db_options = Options(file_system);
-    db_options.wal_segment_bytes = uint64_t{1} << 30;
-    return db_options;
-  };
-  uint64_t total_operations;
-  {
-    auto file_system = std::make_shared<MemoryFileSystem>();
-    auto db = Db::Open(options(file_system));
-    ASSERT_TRUE(db.ok()) << db.status();
-    Workload workload;
-    workload.checkpoint_every = 0;
-    workload.Run(**db, kCommits);
-    total_operations = file_system->operations();
-  }
-  for (uint64_t at = 0; at <= total_operations; at += 3) {
-    for (uint32_t seed = 0; seed < 3; ++seed) {
+  // With no reservation, one that this all fits in, and one that keeps running out.
+  for (const uint64_t reserve : {uint64_t{0}, uint64_t{1} << 20, uint64_t{128}}) {
+    SCOPED_TRACE(absl::StrCat("Reserving ", reserve));
+    const auto options = [reserve](const std::shared_ptr<MemoryFileSystem>& file_system) {
+      DbOptions db_options = Options(file_system);
+      db_options.wal_segment_bytes = uint64_t{1} << 30;
+      db_options.wal_reserve_bytes = reserve;
+      return db_options;
+    };
+    uint64_t total_operations;
+    {
       auto file_system = std::make_shared<MemoryFileSystem>();
-      file_system->CrashAfter(at);
-      Workload workload;
-      workload.checkpoint_every = 0;
-      {
-        auto db = Db::Open(options(file_system));
-        if (db.ok()) workload.Run(**db, kCommits);
-      }
-      file_system->PowerLoss(Loss::kPartOfUnsynced, static_cast<uint32_t>(at) * 7 + seed);
-      SCOPED_TRACE(absl::StrCat("Crash at operation ", at, ", seed ", seed));
       auto db = Db::Open(options(file_system));
       ASSERT_TRUE(db.ok()) << db.status();
-      const uint64_t lsn = (*db)->engine().Stats().lsn;
-      ASSERT_GE(lsn, workload.acknowledged_durable);
-      ASSERT_LT(lsn, workload.states.size());
-      ASSERT_EQ(ReadState(**db), workload.states[lsn]);
+      Workload workload;
+      workload.checkpoint_every = 0;
+      workload.Run(**db, kCommits);
+      total_operations = file_system->operations();
+    }
+    for (uint64_t at = 0; at <= total_operations; at += 3) {
+      for (uint32_t seed = 0; seed < 3; ++seed) {
+        auto file_system = std::make_shared<MemoryFileSystem>();
+        file_system->CrashAfter(at);
+        Workload workload;
+        workload.checkpoint_every = 0;
+        {
+          auto db = Db::Open(options(file_system));
+          if (db.ok()) workload.Run(**db, kCommits);
+        }
+        file_system->PowerLoss(Loss::kPartOfUnsynced, static_cast<uint32_t>(at) * 7 + seed);
+        SCOPED_TRACE(absl::StrCat("Crash at operation ", at, ", seed ", seed));
+        auto db = Db::Open(options(file_system));
+        ASSERT_TRUE(db.ok()) << db.status();
+        const uint64_t lsn = (*db)->engine().Stats().lsn;
+        ASSERT_GE(lsn, workload.acknowledged_durable);
+        ASSERT_LT(lsn, workload.states.size());
+        ASSERT_EQ(ReadState(**db), workload.states[lsn]);
+      }
     }
   }
 }
@@ -397,10 +404,26 @@ TEST(FaultInjectionTest, DamageInTheLastSegmentIsToldApartFromATornTail) {
     }
     file_system->PowerLoss(Loss::kAllUnsynced);
     const std::string segment = LastSegment(*file_system);
-    file_system->FlipByte(segment, file_system->Contents(segment).size() - 5);
+    // Before the reserved zeros that follow it.
+    file_system->FlipByte(segment, file_system->Contents(segment).find_last_not_of('\0') - 5);
     auto db = Db::Open(options(file_system));
     ASSERT_TRUE(db.ok()) << db.status();
     EXPECT_EQ((*db)->engine().Stats().lsn, 199u);
+  }
+  {  // A crash, then damage in the reserved zeros, where it costs no commit.
+    auto file_system = std::make_shared<MemoryFileSystem>();
+    {
+      auto db = Db::Open(options(file_system));
+      ASSERT_TRUE(db.ok());
+      fill(**db);
+      file_system->CrashAfter(0);
+    }
+    file_system->PowerLoss(Loss::kAllUnsynced);
+    const std::string segment = LastSegment(*file_system);
+    file_system->FlipByte(segment, file_system->Contents(segment).size() - 5);
+    auto db = Db::Open(options(file_system));
+    ASSERT_TRUE(db.ok()) << db.status();
+    EXPECT_EQ((*db)->engine().Stats().lsn, 200u);
   }
 }
 
@@ -580,3 +603,208 @@ TEST(ObserverTest, SeesCommitsCheckpointsRecoveryAndProblems) {
 }
 
 }  // namespace
+
+// A segment ends in zeros that durable commits reserved, which the workloads above cross all the
+// time with a reservation this small.
+class ReservedLogTest : public ::testing::Test {
+ protected:
+  void SetUp() override { _file_system = std::make_shared<MemoryFileSystem>(); }
+
+  DbOptions ReservingOptions(uint64_t reserve = 1024) {
+    DbOptions options = Options(_file_system);
+    options.wal_segment_bytes = uint64_t{1} << 30;
+    options.wal_reserve_bytes = reserve;
+    return options;
+  }
+  std::string Segment() const {
+    std::string last;
+    for (const std::string& path : _file_system->Paths()) {
+      if (path.find("wal-") != std::string::npos) last = path;
+    }
+    return last;
+  }
+  uint64_t FileSize(const std::string& path) { return *_file_system->FileSize(path); }
+
+  std::shared_ptr<MemoryFileSystem> _file_system;
+};
+
+TEST_F(ReservedLogTest, DurableCommitsOverwriteZerosAndClosingCutsThemOff) {
+  auto db = Db::Open(ReservingOptions());
+  ASSERT_TRUE(db.ok()) << db.status();
+  {
+    auto writer = (*db)->CreateWriter();
+    ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(1).Build()).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+  }
+  const std::string segment = Segment();
+  const uint64_t with_reservation = FileSize(segment);
+  // What the engine counts is the log, not the zeros.
+  EXPECT_LT((*db)->engine().Stats().wal_bytes, with_reservation);
+  EXPECT_GE(with_reservation, 1024u);
+  const uint64_t operations = _file_system->operations();
+  {
+    auto writer = (*db)->CreateWriter();
+    ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(2).Build()).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+  }
+  // The file is the same size, and all it took was to write and sync.
+  EXPECT_EQ(FileSize(segment), with_reservation);
+  EXPECT_EQ(_file_system->operations(), operations + 2);
+  db->reset();
+  EXPECT_LT(FileSize(segment), with_reservation);
+  // Nothing was lost by that, nor counted as torn.
+  auto again = Db::Open(ReservingOptions());
+  ASSERT_TRUE(again.ok()) << again.status();
+  Account account;
+  EXPECT_TRUE((*again)->CreateSnapshot().GetAccount(2, account).ok());
+}
+
+TEST_F(ReservedLogTest, CommitsThatAreNotDurableDoNotReserve) {
+  DbOptions options = ReservingOptions();
+  options.sync_commits = false;
+  auto db = Db::Open(options);
+  ASSERT_TRUE(db.ok()) << db.status();
+  auto writer = (*db)->CreateWriter();
+  ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(1).Build()).ok());
+  ASSERT_TRUE(writer.Commit().ok());
+  EXPECT_EQ(FileSize(Segment()), (*db)->engine().Stats().wal_bytes);
+}
+
+TEST_F(ReservedLogTest, ACrashWithZerosLeftTearsNothing) {
+  class Recording final : public gendb::EngineObserver {
+   public:
+    void OnRecovery(const gendb::RecoveryInfo& info) override { torn = info.torn_bytes_cut; }
+    uint64_t torn = 99;
+  };
+  {
+    auto db = Db::Open(ReservingOptions());
+    ASSERT_TRUE(db.ok()) << db.status();
+    {
+      auto writer = (*db)->CreateWriter();
+      ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(1).set_age(7).Build()).ok());
+      ASSERT_TRUE(writer.Commit().ok());
+    }
+    _file_system->CrashAfter(0);
+  }
+  _file_system->PowerLoss(Loss::kAllUnsynced);
+  DbOptions options = ReservingOptions();
+  auto observer = std::make_shared<Recording>();
+  options.observer = observer;
+  auto db = Db::Open(options);
+  ASSERT_TRUE(db.ok()) << db.status();
+  EXPECT_EQ(observer->torn, 0u);
+  Account account;
+  ASSERT_TRUE((*db)->CreateSnapshot().GetAccount(1, account).ok());
+  EXPECT_EQ(account.age(), 7);
+}
+
+// A cut at the end of a segment that a crash took away leaves zeros there. They are no damage,
+// while commits that are gone still are, however much they look the same.
+TEST_F(ReservedLogTest, ZerosAtTheEndOfAnOlderSegmentAreToldApartFromLostCommits) {
+  const auto commit = [](Db& db, uint64_t id) {
+    auto writer = db.CreateWriter();
+    ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(id).Build()).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+  };
+  std::string older;
+  uint64_t after_first_commit = 0;
+  {
+    auto db = Db::Open(ReservingOptions());
+    ASSERT_TRUE(db.ok()) << db.status();
+    commit(**db, 1);
+    after_first_commit = (*db)->engine().Stats().wal_bytes;
+    commit(**db, 2);
+    older = Segment();
+  }
+  // Opening again starts another segment, leaving the first as an older one.
+  {
+    auto db = Db::Open(ReservingOptions());
+    ASSERT_TRUE(db.ok()) << db.status();
+    commit(**db, 3);
+  }
+  ASSERT_NE(Segment(), older);
+  const std::string zeros(4096, '\0');
+  _file_system->AppendBytes(older, zeros);
+  {
+    auto db = Db::Open(ReservingOptions());
+    ASSERT_TRUE(db.ok()) << db.status();
+    EXPECT_EQ((*db)->engine().Stats().lsn, 3u);
+  }
+  ASSERT_TRUE(_file_system->TruncateAndSync(older, after_first_commit).ok());
+  _file_system->AppendBytes(older, zeros);
+  const auto lost = Db::Open(ReservingOptions());
+  ASSERT_FALSE(lost.ok());
+  EXPECT_TRUE(absl::IsDataLoss(lost.status())) << lost.status();
+}
+
+// Reading ahead of the writer finds zeros that are commits by the time it gets to them.
+TEST_F(ReservedLogTest, ACursorKeepsUpWithCommitsOverZeros) {
+  using namespace gendb::internal;
+  Wal wal(Wal::Options{_file_system, "/log", uint64_t{1} << 30, 4096, {}});
+  ASSERT_TRUE(wal.StartSegment(HistoryId{}, 1).ok());
+  const auto frame = [](uint64_t lsn) {
+    std::string out;
+    const size_t begin = BeginCommit(out, lsn);
+    EndFrame(out, begin);
+    return out;
+  };
+  WalCursor cursor(wal);
+  uint64_t position = 0;
+  std::string read;
+  for (uint64_t lsn = 1; lsn <= 200; ++lsn) {
+    const std::string written = frame(lsn);
+    ASSERT_TRUE(wal.Append(written, lsn, /*sync=*/true).ok());
+    read.clear();
+    auto more = cursor.Read(&position, lsn, 1 << 20, &read);
+    ASSERT_TRUE(more.ok()) << more.status();
+    ASSERT_TRUE(*more);
+    ASSERT_EQ(position, lsn);
+    ASSERT_EQ(read, written);
+  }
+  // With nothing new, it stops at the zeros, and they are no damage.
+  read.clear();
+  auto none = cursor.Read(&position, 201, 1 << 20, &read);
+  ASSERT_TRUE(none.ok()) << none.status();
+  EXPECT_EQ(position, 200u);
+  EXPECT_TRUE(read.empty());
+  // Real damage still is.
+  const std::string segment = "/log/wal-00000000000000000001.log";
+  _file_system->FlipByte(segment, 300);
+  uint64_t from_start = 0;
+  WalCursor another(wal);
+  read.clear();
+  auto damaged = another.Read(&from_start, 200, 1 << 20, &read);
+  EXPECT_TRUE(absl::IsDataLoss(damaged.status())) << damaged.status();
+}
+
+// Catching up on a subscription reads the file that commits are going into.
+TEST_F(ReservedLogTest, ASubscriptionCatchesUpThroughZeros) {
+  auto db = Db::Open(ReservingOptions());
+  ASSERT_TRUE(db.ok()) << db.status();
+  const auto commit = [&](uint64_t id) {
+    auto writer = (*db)->CreateWriter();
+    ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(id).Build()).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+  };
+  gendb::ChangePosition position{};
+  {
+    gendb::tests::ChangeHandlers handlers;
+    handlers.on_commit = [&](const gendb::ChangePosition& p) { position = p; };
+    auto subscription = (*db)->Subscribe(handlers);
+    commit(1);
+    subscription.WaitUntilDelivered();
+  }
+  for (uint64_t id = 2; id <= 40; ++id) commit(id);
+  std::set<uint64_t> seen;
+  gendb::tests::ChangeHandlers handlers;
+  handlers.on_account = [&](const gendb::tests::AccountChange& change) {
+    seen.insert(change.after().account_id());
+  };
+  auto caught_up = (*db)->SubscribeFrom(position, handlers);
+  ASSERT_TRUE(caught_up.ok()) << caught_up.status();
+  commit(41);
+  caught_up->WaitUntilDelivered();
+  EXPECT_EQ(seen.size(), 40u);
+  EXPECT_TRUE(seen.contains(2));
+  EXPECT_TRUE(seen.contains(41));
+}
