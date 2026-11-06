@@ -113,6 +113,10 @@ add_test(NAME gendb_tests COMMAND gendb_tests)
 add_subdirectory(tests)
 add_subdirectory(benchmarks)
 add_subdirectory(examples)
+option(GENDB_BUILD_FUZZERS "Build the libFuzzer targets; needs clang" OFF)
+if(GENDB_BUILD_FUZZERS)
+    add_subdirectory(fuzz)
+endif()
 
 find_program(CLANG_FORMAT_EXE NAMES clang-format)
 
