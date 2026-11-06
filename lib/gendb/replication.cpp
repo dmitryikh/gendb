@@ -13,15 +13,17 @@
 // The session, on top of Connection:
 //
 //   replica                         primary
-//   Hello (history, LSN)  -------->
-//                         <--------  Welcome (position, mode, collections) or Error
+//   Hello (protocols, features, history, LSN)  -------->
+//                         <--------  Welcome (protocol, position, mode, collections) or Error
 //                         <--------  CheckpointData*   if the replica cannot continue its log
 //   Ack                   -------->
 //                         <--------  LogData* or Heartbeat, forever
 //   Ack                   -------->
 //
 // CheckpointData and LogData carry a byte stream of frames, cut anywhere: a frame can span messages
-// and be larger than a message. Replicas keep the primary's frames byte for byte.
+// and be larger than a message. Replicas keep the primary's frames byte for byte. LogData and
+// Heartbeat also carry the digest of the primary's state at some commit, which the replica compares
+// with its own on reaching it.
 namespace gendb {
 namespace {
 
@@ -36,8 +38,6 @@ using internal::PutHistory;
 using internal::PutString;
 using internal::PutVarint;
 
-// Commit frames travel as they are, so this changes with what a frame can hold.
-constexpr uint32_t kProtocolVersion = 2;
 constexpr size_t kDataBytesPerMessage = size_t{1} << 20;
 constexpr auto kPollInterval = std::chrono::milliseconds(100);
 
@@ -58,18 +58,60 @@ std::string NewMessage(MessageType type) {
 }
 
 // [type] [primary LSN] [piece of the stream]
-absl::Status SendData(Connection& connection, MessageType type, uint64_t primary_lsn,
-                      std::string_view bytes, std::string& scratch) {
+absl::Status SendCheckpointData(Connection& connection, uint64_t primary_lsn,
+                                std::string_view bytes, std::string& scratch) {
   while (!bytes.empty()) {
     const std::string_view piece = bytes.substr(0, kDataBytesPerMessage);
     scratch.clear();
-    scratch.push_back(static_cast<char>(type));
+    scratch.push_back(static_cast<char>(MessageType::kCheckpointData));
     PutFixed64(scratch, primary_lsn);
     scratch.append(piece);
     RETURN_IF_ERROR(connection.Send(scratch));
     bytes.remove_prefix(piece.size());
   }
   return absl::OkStatus();
+}
+
+// [type] [primary LSN] [digest LSN] [digest] [piece of the stream]. Only the last piece has a
+// digest, as the state it describes comes with the whole batch.
+absl::Status SendLogData(Connection& connection, uint64_t primary_lsn, std::string_view bytes,
+                         uint64_t digest_lsn, uint64_t digest, std::string& scratch) {
+  while (!bytes.empty()) {
+    const std::string_view piece = bytes.substr(0, kDataBytesPerMessage);
+    const bool last = piece.size() == bytes.size();
+    scratch.clear();
+    scratch.push_back(static_cast<char>(MessageType::kLogData));
+    PutFixed64(scratch, primary_lsn);
+    PutFixed64(scratch, last ? digest_lsn : 0);
+    PutFixed64(scratch, last ? digest : 0);
+    scratch.append(piece);
+    RETURN_IF_ERROR(connection.Send(scratch));
+    bytes.remove_prefix(piece.size());
+  }
+  return absl::OkStatus();
+}
+
+absl::Status SendError(Connection& connection, std::string_view text) {
+  std::string message = NewMessage(MessageType::kError);
+  PutString(message, text);
+  return connection.Send(message);
+}
+
+// The name of a feature that `frames` need and `features` lacks; empty if none.
+std::string_view MissingFeature(std::string_view frames, uint32_t features) {
+  if ((features & kLogFeaturePatches) != 0) return {};
+  while (!frames.empty()) {
+    Frame frame;
+    if (internal::ParseFrame(frames, &frame) != ParseStatus::kOk) return {};
+    internal::CommitDecoder commit(frame.body);
+    for (uint32_t i = 0; i < commit.count; ++i) {
+      const internal::CommitEntry entry = commit.Next();
+      if (!commit.ok()) return {};
+      if (entry.op == internal::CommitOp::kPatch) return "patches";
+    }
+    frames.remove_prefix(frame.raw.size());
+  }
+  return {};
 }
 
 absl::Status SendAck(Connection& connection, uint64_t lsn) {
@@ -101,6 +143,7 @@ struct ReplicationServer::Session {
   std::atomic<uint64_t> sent_lsn{0};
   std::atomic<uint64_t> acked_lsn{0};
   std::atomic<bool> receiving_checkpoint{false};
+  std::atomic<uint32_t> protocol{0};
   std::atomic<bool> stop{false};
   std::atomic<std::chrono::steady_clock::rep> last_heard{0};
 
@@ -140,7 +183,8 @@ std::vector<ConnectedReplica> ReplicationServer::Replicas() const {
   for (const Session* session : _sessions) {
     replicas.push_back({session->id, session->sent_lsn.load(std::memory_order_relaxed),
                         session->acked_lsn.load(std::memory_order_relaxed),
-                        session->receiving_checkpoint.load(std::memory_order_relaxed)});
+                        session->receiving_checkpoint.load(std::memory_order_relaxed),
+                        session->protocol.load(std::memory_order_relaxed)});
   }
   return replicas;
 }
@@ -172,6 +216,14 @@ absl::Status ReplicationServer::Serve(Connection& connection) {
   return status;
 }
 
+// After sending an error: closing right away could discard it, and a replica that reads it hangs up
+// by itself, which ends the session.
+void ReplicationServer::WaitForHangUp(const Session& session) {
+  for (int i = 0; i < 500 && !session.stop.load(std::memory_order_acquire); ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+}
+
 absl::Status ReplicationServer::RunSession(Connection& connection, Session& session) {
   std::string message;
   RETURN_IF_ERROR(connection.Receive(&message));
@@ -179,19 +231,34 @@ absl::Status ReplicationServer::RunSession(Connection& connection, Session& sess
 
   Decoder hello(message);
   const auto type = static_cast<MessageType>(hello.Byte());
-  const uint32_t version = hello.Fixed32();
+  const uint32_t replica_oldest = hello.Fixed32();
+  const uint32_t replica_newest = hello.Fixed32();
+  const uint32_t replica_features = hello.Fixed32();
   const HistoryId replica_history = hello.History();
   const uint64_t replica_lsn = hello.Fixed64();
   const bool want_checkpoint = hello.Byte() != 0;
   if (!hello.ok() || type != MessageType::kHello) {
     return absl::InvalidArgumentError("Expected a Hello");
   }
-  if (version != kProtocolVersion) {
-    std::string error = NewMessage(MessageType::kError);
-    PutString(error, absl::StrCat("The primary speaks protocol ", kProtocolVersion));
-    (void)connection.Send(error);
-    return absl::FailedPreconditionError("Unsupported replication protocol");
+  const uint32_t protocol = std::min(replica_newest, _options.newest_protocol);
+  if (protocol < std::max(replica_oldest, _options.oldest_protocol)) {
+    const std::string error = absl::StrCat(
+        "No common replication protocol: the primary speaks ", _options.oldest_protocol, " to ",
+        _options.newest_protocol, ", the replica ", replica_oldest, " to ", replica_newest);
+    (void)SendError(connection, error);
+    // No thread is reading yet, so this one waits to hear that the replica has hung up.
+    std::thread reader([&connection, &session] {
+      std::string ignored;
+      while (connection.Receive(&ignored).ok()) {
+      }
+      session.stop.store(true, std::memory_order_release);
+    });
+    WaitForHangUp(session);
+    connection.Close();
+    reader.join();
+    return absl::FailedPreconditionError(error);
   }
+  session.protocol.store(protocol, std::memory_order_relaxed);
 
   // Under the writer lock, the snapshot, the LSN and the log position are one point in history.
   Engine::LogPosition position;
@@ -216,6 +283,7 @@ absl::Status ReplicationServer::RunSession(Connection& connection, Session& sess
   session.receiving_checkpoint.store(snapshot.has_value(), std::memory_order_relaxed);
 
   std::string welcome = NewMessage(MessageType::kWelcome);
+  PutFixed32(welcome, protocol);
   PutHistory(welcome, position.history);
   PutFixed64(welcome, after);
   welcome.push_back(snapshot.has_value() ? 1 : 0);
@@ -262,7 +330,7 @@ absl::Status ReplicationServer::RunSession(Connection& connection, Session& sess
           if (session.stop.load(std::memory_order_acquire)) {
             return absl::CancelledError("The session ended");
           }
-          return SendData(connection, MessageType::kCheckpointData, position.lsn, frames, scratch);
+          return SendCheckpointData(connection, position.lsn, frames, scratch);
         }));
     snapshot.reset();
     session.receiving_checkpoint.store(false, std::memory_order_relaxed);
@@ -279,18 +347,34 @@ absl::Status ReplicationServer::RunSession(Connection& connection, Session& sess
       return absl::DeadlineExceededError("The replica went silent");
     }
     batch.clear();
-    auto read = _engine.ReadLog(&after, kDataBytesPerMessage, &batch, &cursor);
+    Engine::DigestAt digest;
+    auto read = _engine.ReadLog(&after, kDataBytesPerMessage, &batch, &cursor, &digest);
     if (!read.ok()) return read.status();
     const uint64_t primary_lsn = _engine._lsn.load(std::memory_order_acquire);
     if (!batch.empty()) {
-      RETURN_IF_ERROR(SendData(connection, MessageType::kLogData, primary_lsn, batch, scratch));
+      if (const std::string_view missing = MissingFeature(batch, replica_features);
+          !missing.empty()) {
+        const std::string error = absl::StrCat("The log holds ", missing,
+                                               ", which this replica cannot read: upgrade it, or "
+                                               "turn off EngineOptions::log_patches");
+        (void)SendError(connection, error);
+        WaitForHangUp(session);
+        return absl::FailedPreconditionError(error);
+      }
+      // The ring gives a digest for what it held; a read from the log files, none.
+      if (digest.lsn != after) digest = {};
+      RETURN_IF_ERROR(
+          SendLogData(connection, primary_lsn, batch, digest.lsn, digest.digest, scratch));
       session.sent_lsn.store(after, std::memory_order_relaxed);
       last_sent = std::chrono::steady_clock::now();
       continue;
     }
     if (std::chrono::steady_clock::now() - last_sent >= _options.heartbeat_interval) {
+      const Engine::DigestAt digest = _engine.LatestDigest();
       std::string heartbeat = NewMessage(MessageType::kHeartbeat);
       PutFixed64(heartbeat, primary_lsn);
+      PutFixed64(heartbeat, digest.lsn);
+      PutFixed64(heartbeat, digest.digest);
       RETURN_IF_ERROR(connection.Send(heartbeat));
       last_sent = std::chrono::steady_clock::now();
     }
@@ -329,6 +413,9 @@ ReplicaStatus Replica::Status() const {
           _primary_lsn,
           _connections,
           _checkpoints_installed,
+          _protocol,
+          _verified_lsn,
+          _divergences,
           _last_error};
 }
 
@@ -384,6 +471,7 @@ absl::Status Replica::RunSession() {
     std::lock_guard lock(_mutex);
     ++_connections;
   }
+  _engine.TrackStateDigest();
   auto connected = _connector();
   if (!connected.ok()) return connected.status();
   Connection& connection = **connected;
@@ -400,7 +488,9 @@ absl::Status Replica::RunSession() {
 
   const Engine::LogPosition local = _engine.Position();
   std::string hello = NewMessage(MessageType::kHello);
-  PutFixed32(hello, kProtocolVersion);
+  PutFixed32(hello, _options.oldest_protocol);
+  PutFixed32(hello, _options.newest_protocol);
+  PutFixed32(hello, _options.log_features);
   PutHistory(hello, local.history);
   PutFixed64(hello, local.lsn);
   {
@@ -417,6 +507,7 @@ absl::Status Replica::RunSession() {
   if (type == MessageType::kError) {
     return absl::FailedPreconditionError(welcome.String());
   }
+  const uint32_t protocol = welcome.Fixed32();
   const HistoryId history = welcome.History();
   const uint64_t lsn = welcome.Fixed64();
   const bool checkpoint = welcome.Byte() != 0;
@@ -428,6 +519,15 @@ absl::Status Replica::RunSession() {
   }
   if (!welcome.ok() || type != MessageType::kWelcome) {
     return absl::InvalidArgumentError("Expected a Welcome");
+  }
+  if (protocol < _options.oldest_protocol || protocol > _options.newest_protocol) {
+    return absl::FailedPreconditionError(
+        absl::StrCat("The primary chose replication protocol ", protocol, ", which is not one of ",
+                     _options.oldest_protocol, " to ", _options.newest_protocol));
+  }
+  {
+    std::lock_guard lock(_mutex);
+    _protocol = protocol;
   }
   RETURN_IF_ERROR(_engine.RegisterCollections(collections));
 
@@ -486,6 +586,19 @@ absl::Status Replica::ReceiveCheckpoint(Connection& connection,
   return absl::OkStatus();
 }
 
+absl::Status Replica::CheckDigest(uint64_t lsn, uint64_t digest) {
+  if (lsn == 0 || lsn != _engine._lsn.load(std::memory_order_acquire)) return absl::OkStatus();
+  std::lock_guard lock(_mutex);
+  if (digest == _engine._state_digest.load(std::memory_order_relaxed)) {
+    _verified_lsn = lsn;
+    return absl::OkStatus();
+  }
+  ++_divergences;
+  _force_checkpoint = true;
+  return absl::DataLossError(
+      absl::StrCat("This replica's state differs from the primary's at commit ", lsn));
+}
+
 absl::Status Replica::Stream(Connection& connection) {
   SetState(ReplicaState::kStreaming);
   // Tell the primary where we are, which frees it to trim its log.
@@ -497,7 +610,10 @@ absl::Status Replica::Stream(Connection& connection) {
     RETURN_IF_ERROR(connection.Receive(&message));
     Decoder decoder(message);
     const auto type = static_cast<MessageType>(decoder.Byte());
+    if (type == MessageType::kError) return absl::FailedPreconditionError(decoder.String());
     const uint64_t primary_lsn = decoder.Fixed64();
+    const uint64_t digest_lsn = decoder.Fixed64();
+    const uint64_t digest = decoder.Fixed64();
     if (!decoder.ok() || (type != MessageType::kLogData && type != MessageType::kHeartbeat)) {
       return absl::InvalidArgumentError("Expected log data");
     }
@@ -516,6 +632,7 @@ absl::Status Replica::Stream(Connection& connection) {
         buffer.erase(0, complete);
       }
     }
+    RETURN_IF_ERROR(CheckDigest(digest_lsn, digest));
     {
       std::lock_guard lock(_mutex);
       _last_heard = std::chrono::steady_clock::now();

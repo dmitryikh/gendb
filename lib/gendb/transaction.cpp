@@ -126,9 +126,9 @@ void Transaction::PutUnchecked(size_t collection, BytesConstView key, BytesConst
   SetPending(collection, HashKey(key_view), key_view, Version::Copy(value));
 }
 
-bool Transaction::IsLogged(size_t collection) const noexcept {
-  return (_engine->_wal != nullptr || _engine->_ring->enabled()) &&
-         !_engine->_collections[collection]->ephemeral;
+bool Transaction::LogsPatches(size_t collection) const noexcept {
+  return _engine->_options.log_patches && !_engine->_collections[collection]->ephemeral &&
+         (_engine->_wal != nullptr || _engine->_ring->enabled());
 }
 
 absl::Status Transaction::Update(size_t collection, BytesConstView key, const MessagePatch& patch) {
@@ -139,7 +139,7 @@ absl::Status Transaction::Update(size_t collection, BytesConstView key, const Me
   Version* next = nullptr;
   std::string encoded;
   PendingWrite* pending = FindPending(collection, key_view);
-  if (!IsLogged(collection) || (pending != nullptr && pending->patch.empty())) {
+  if (!LogsPatches(collection) || (pending != nullptr && pending->patch.empty())) {
     // Nothing to log, or the record is new in this transaction and is logged whole.
     next = PatchedVersion(*current, patch);
   } else if (pending == nullptr) {
@@ -300,6 +300,8 @@ void Transaction::Publish(bool logged, uint64_t lsn, std::string_view frame) {
   std::vector<Change> changes;
   const bool notify = !engine._subscribers.empty();
   if (notify) changes.reserve(_writes.size());
+  const bool track_digest = engine._digest_tracked.load(std::memory_order_relaxed);
+  uint64_t digest = track_digest ? engine._state_digest.load(std::memory_order_relaxed) : 0;
 
   // Readers may run throughout, but ignore seq until it is published below.
   for (PendingWrite& write : _writes) {
@@ -316,6 +318,13 @@ void Transaction::Publish(bool logged, uint64_t lsn, std::string_view frame) {
     }
     if (version->tombstone) {
       engine._garbage.push_back({seq, Engine::Garbage::kTombstone, node, write.collection});
+    }
+    if (track_digest && !engine._collections[write.collection]->ephemeral) {
+      const uint32_t id = engine._collections[write.collection]->id;
+      if (older != nullptr && !older->tombstone) {
+        digest -= internal::RecordDigest(id, write.key, older->bytes());
+      }
+      if (!version->tombstone) digest += internal::RecordDigest(id, write.key, version->bytes());
     }
     if (notify && write.collection < engine._schema.collections.size()) {
       // Both stay alive until the reclamation below.
@@ -338,8 +347,9 @@ void Transaction::Publish(bool logged, uint64_t lsn, std::string_view frame) {
     }
     _index_deltas[i].clear();
   }
+  if (track_digest) engine._state_digest.store(digest, std::memory_order_relaxed);
   if (logged) {
-    if (engine._ring->enabled()) engine._ring->Push(lsn, frame);
+    if (engine._ring->enabled()) engine._ring->Push(lsn, frame, digest);
     engine._lsn.store(lsn, std::memory_order_release);
   }
   engine._committed_seq.store(seq, std::memory_order_seq_cst);

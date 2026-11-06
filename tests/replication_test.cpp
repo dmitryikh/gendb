@@ -416,6 +416,130 @@ TEST_F(ReplicationTest, DivergedReplicaIsCaughtByThePatchChecksumAndHealed) {
   EXPECT_EQ(account.balance(), 2.f);
 }
 
+// A record that is never patched has no checksum of its own to reveal a difference: only the digest
+// of the whole state does.
+TEST_F(ReplicationTest, DigestCatchesDifferencesThatNoPatchWouldTouch) {
+  {
+    auto db = Db::Open({.path = Path("primary")});
+    ASSERT_TRUE(db.ok());
+    Put(**db, 1, 1);
+  }
+  std::filesystem::copy(Path("primary"), Path("replica"), std::filesystem::copy_options::recursive);
+
+  auto primary = Db::Open({.path = Path("primary")});
+  ASSERT_TRUE(primary.ok());
+  Put(**primary, 1, 100);
+  {
+    auto diverged = Db::Open({.path = Path("replica")});
+    ASSERT_TRUE(diverged.ok());
+    Put(**diverged, 1, 200);
+  }
+  auto replica_db = Db::Open({.path = Path("replica"), .replica = true});
+  ASSERT_TRUE(replica_db.ok());
+  LoopbackServer server((*primary)->engine());
+  gendb::Replica replica((*replica_db)->engine(), server.connector(),
+                         {.min_backoff = std::chrono::milliseconds(1)});
+  Put(**primary, 2, 2);  // Another record, and whole: nothing about it can tell.
+
+  Account account;
+  for (int i = 0; i < 5000; ++i) {
+    if ((*replica_db)->CreateSnapshot().GetAccount(1, account).ok() && account.age() == 100) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  ASSERT_TRUE((*replica_db)->CreateSnapshot().GetAccount(1, account).ok());
+  EXPECT_EQ(account.age(), 100);
+  EXPECT_EQ(replica.Status().divergences, 1u);
+  EXPECT_EQ(replica.Status().checkpoints_installed, 1u);
+}
+
+TEST_F(ReplicationTest, HealthyReplicaIsVerifiedAsItFollows) {
+  Db primary;
+  LoopbackServer server(primary.engine(), {.heartbeat_interval = std::chrono::milliseconds(5)});
+  Put(primary, 1);  // Reaches it in a checkpoint.
+  Db replica_db;
+  gendb::Replica replica(replica_db.engine(), server.connector());
+  ASSERT_TRUE(replica.WaitForLsn(1, kPatience)) << replica.Status().last_error;
+  {
+    auto writer = primary.CreateWriter();
+    ASSERT_TRUE(writer.UpdateAccount(1, AccountPatchBuilder().set_age(5).Build()).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+    ASSERT_TRUE(writer.PutAccount(AccountBuilder().set_account_id(2).Build()).ok());
+    ASSERT_TRUE(writer.DeleteAccount(1).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+  }
+  ASSERT_TRUE(replica.WaitForLsn(3, kPatience)) << replica.Status().last_error;
+  for (int i = 0; i < 5000 && replica.Status().verified_lsn != 3; ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  EXPECT_EQ(replica.Status().verified_lsn, 3u);
+  EXPECT_EQ(replica.Status().divergences, 0u);
+  EXPECT_EQ(replica.Status().protocol, gendb::kReplicationProtocolVersion);
+}
+
+TEST_F(ReplicationTest, SidesWithNoCommonProtocolRefuseAndSaySo) {
+  Db primary;
+  Put(primary, 1);
+  LoopbackServer server(primary.engine());
+  Db replica_db;
+  const uint32_t newer = gendb::kReplicationProtocolVersion + 1;
+  gendb::Replica replica(replica_db.engine(), server.connector(),
+                         {.min_backoff = std::chrono::milliseconds(1),
+                          .oldest_protocol = newer,
+                          .newest_protocol = newer});
+  for (int i = 0; i < 5000 && replica.Status().last_error.ok(); ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  EXPECT_EQ(replica.Status().last_error.code(), absl::StatusCode::kFailedPrecondition);
+  EXPECT_THAT(replica.Status().last_error.message(), ::testing::HasSubstr("protocol"));
+  EXPECT_EQ(replica_db.engine().Stats().lsn, 0u);
+}
+
+// Sides of different versions use the newest they share.
+TEST_F(ReplicationTest, SidesAgreeOnTheNewestCommonProtocol) {
+  Db primary;
+  LoopbackServer server(primary.engine());
+  Db replica_db;
+  gendb::Replica replica(replica_db.engine(), server.connector(),
+                         {.newest_protocol = gendb::kReplicationProtocolVersion + 5});
+  Put(primary, 1);
+  ASSERT_TRUE(replica.WaitForLsn(1, kPatience)) << replica.Status().last_error;
+  EXPECT_EQ(replica.Status().protocol, gendb::kReplicationProtocolVersion);
+  ASSERT_EQ(server.server().Replicas().size(), 1u);
+  EXPECT_EQ(server.server().Replicas()[0].protocol, gendb::kReplicationProtocolVersion);
+}
+
+// How a new kind of log entry gets into a running system: replicas that cannot read it are told so,
+// and the primary can hold it back until they are upgraded.
+TEST_F(ReplicationTest, AReplicaThatCannotReadPatchesIsToldAndCanBeAccommodated) {
+  const auto scenario = [&](bool log_patches, const std::string& name) -> gendb::ReplicaStatus {
+    auto primary = Db::Open({.path = Path(name), .log_patches = log_patches});
+    EXPECT_TRUE(primary.ok());
+    Put(**primary, 1);
+    LoopbackServer server((*primary)->engine());
+    Db replica_db;
+    gendb::Replica replica(replica_db.engine(), server.connector(),
+                           {.min_backoff = std::chrono::milliseconds(1), .log_features = 0});
+    EXPECT_TRUE(replica.WaitForLsn(1, kPatience)) << replica.Status().last_error;
+    {
+      auto writer = (*primary)->CreateWriter();
+      EXPECT_TRUE(writer.UpdateAccount(1, AccountPatchBuilder().set_age(9).Build()).ok());
+      EXPECT_TRUE(writer.Commit().ok());
+    }
+    for (int i = 0; i < 2000 && replica.Status().applied_lsn < 2 &&
+                    replica.Status().last_error.code() != absl::StatusCode::kFailedPrecondition;
+         ++i) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return replica.Status();
+  };
+  const gendb::ReplicaStatus refused = scenario(/*log_patches=*/true, "with");
+  EXPECT_EQ(refused.applied_lsn, 1u);
+  EXPECT_THAT(refused.last_error.message(), ::testing::HasSubstr("patches"));
+
+  const gendb::ReplicaStatus served = scenario(/*log_patches=*/false, "without");
+  EXPECT_EQ(served.applied_lsn, 2u);
+}
+
 // Two versions of one program, by raw collections, as what matters is what each schema has.
 const std::array<uint8_t, 1> kKey1{1}, kKey2{2}, kKey3{3}, kKey4{4};
 const std::array<uint8_t, 1> kValue{42};

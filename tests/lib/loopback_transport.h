@@ -25,16 +25,24 @@ class Pipe {
   }
   absl::Status Pop(std::string* message) {
     std::unique_lock lock(_mutex);
-    _cv.wait(lock, [this] { return _closed || !_messages.empty(); });
-    if (_closed) return absl::UnavailableError("closed");
+    _cv.wait(lock, [this] { return _reader_gone || _writer_gone || !_messages.empty(); });
+    if (_reader_gone || _messages.empty()) return absl::UnavailableError("closed");
     *message = std::move(_messages.front());
     _messages.pop_front();
     return absl::OkStatus();
   }
-  void Close() {
+  // What was sent before the writer left can still be read, as on a socket.
+  void WriterLeaves() {
     {
       std::lock_guard lock(_mutex);
-      _closed = true;
+      _writer_gone = true;
+    }
+    _cv.notify_all();
+  }
+  void ReaderLeaves() {
+    {
+      std::lock_guard lock(_mutex);
+      _reader_gone = true;
     }
     _cv.notify_all();
   }
@@ -43,7 +51,8 @@ class Pipe {
   std::mutex _mutex;
   std::condition_variable _cv;
   std::deque<std::string> _messages;
-  bool _closed = false;
+  bool _writer_gone = false;
+  bool _reader_gone = false;
 };
 
 class PipeConnection final : public gendb::Connection {
@@ -58,8 +67,8 @@ class PipeConnection final : public gendb::Connection {
   }
   absl::Status Receive(std::string* message) override { return _in->Pop(message); }
   void Close() override {
-    _in->Close();
-    _out->Close();
+    _in->ReaderLeaves();
+    _out->WriterLeaves();
   }
 
  private:

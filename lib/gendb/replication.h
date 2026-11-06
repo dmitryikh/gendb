@@ -24,6 +24,18 @@ namespace gendb {
 // The largest message Send is asked to carry.
 inline constexpr size_t kMaxReplicationMessageBytes = (size_t{1} << 20) + 64;
 
+// The session protocol's versions this code can speak. Each side says its range when connecting,
+// and they use the highest they share, or refuse with both ranges in the error.
+inline constexpr uint32_t kReplicationProtocolVersion = 3;
+inline constexpr uint32_t kOldestReplicationProtocol = 3;
+
+// What a replica can read in commit frames, beyond plain records. A session stops with an error
+// naming the feature when a frame needs one that the replica lacks.
+enum LogFeature : uint32_t {
+  kLogFeaturePatches = 1 << 0,
+};
+inline constexpr uint32_t kAllLogFeatures = kLogFeaturePatches;
+
 // One reliable, ordered connection that keeps message boundaries. All it takes to run replication
 // over some transport is to implement this, and to call ReplicationServer::Serve for each accepted
 // connection on the primary, and to give Replica a function that connects on the replica.
@@ -36,7 +48,8 @@ class Connection {
   virtual absl::Status Send(std::string_view message) = 0;
   // Replaces `message` with the next one.
   virtual absl::Status Receive(std::string* message) = 0;
-  // Callable from any thread and more than once. Makes blocked and later calls fail promptly.
+  // Callable from any thread and more than once. Makes blocked and later calls fail promptly. May
+  // discard what was sent and not yet delivered.
   virtual void Close() = 0;
 };
 
@@ -51,6 +64,8 @@ struct ReplicationServerOptions {
   std::chrono::milliseconds heartbeat_interval{1000};
   // A replica silent for this long is disconnected.
   std::chrono::milliseconds replica_timeout{30000};
+  uint32_t oldest_protocol = kOldestReplicationProtocol;
+  uint32_t newest_protocol = kReplicationProtocolVersion;
 };
 
 struct ConnectedReplica {
@@ -58,6 +73,7 @@ struct ConnectedReplica {
   uint64_t sent_lsn;
   uint64_t acked_lsn;  // Applied by the replica.
   bool receiving_checkpoint;
+  uint32_t protocol;  // As agreed.
 };
 
 // The primary's side. It adds nothing to commits until constructed, and then one copy of each
@@ -81,6 +97,7 @@ class ReplicationServer {
   struct Session;
 
   absl::Status RunSession(Connection& connection, Session& session);
+  static void WaitForHangUp(const Session& session);
 
   Engine& _engine;
   const ReplicationServerOptions _options;
@@ -97,6 +114,9 @@ struct ReplicaOptions {
   // Without a message for this long, the connection is considered dead. Keep it above the primary's
   // heartbeat interval.
   std::chrono::milliseconds idle_timeout{10000};
+  uint32_t oldest_protocol = kOldestReplicationProtocol;
+  uint32_t newest_protocol = kReplicationProtocolVersion;
+  uint32_t log_features = kAllLogFeatures;
 };
 
 enum class ReplicaState { kConnecting, kReceivingCheckpoint, kStreaming, kStopped };
@@ -107,6 +127,11 @@ struct ReplicaStatus {
   uint64_t primary_lsn;  // As last heard.
   uint64_t connections;  // Sessions started, successful or not.
   uint64_t checkpoints_installed;
+  uint32_t protocol;  // As agreed in the latest session; zero before any.
+  // The latest commit at which this replica's whole state was found to equal the primary's.
+  uint64_t verified_lsn;
+  // Times it was found not to, each of which made it fetch a new checkpoint.
+  uint64_t divergences;
   absl::Status last_error;
 };
 
@@ -136,6 +161,8 @@ class Replica {
   absl::Status RunSession();
   absl::Status ReceiveCheckpoint(Connection& connection, const Engine::LogPosition& position);
   absl::Status Stream(Connection& connection);
+  // After applying everything up to `lsn`, compares with the primary's state then.
+  absl::Status CheckDigest(uint64_t lsn, uint64_t digest);
   void Heard();
   void SetState(ReplicaState state);
 
@@ -152,6 +179,9 @@ class Replica {
   uint64_t _primary_lsn = 0;
   uint64_t _connections = 0;
   uint64_t _checkpoints_installed = 0;
+  uint32_t _protocol = 0;
+  uint64_t _verified_lsn = 0;
+  uint64_t _divergences = 0;
   absl::Status _last_error;
   bool _made_progress = false;
   bool _force_checkpoint = false;

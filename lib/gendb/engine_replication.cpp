@@ -11,6 +11,9 @@
 namespace gendb {
 
 using internal::HistoryId;
+using internal::RecordNode;
+using internal::RecordTable;
+using internal::Version;
 using internal::WalCursor;
 
 absl::Status Engine::PromoteToPrimary() {
@@ -41,8 +44,40 @@ absl::Status Engine::RegisterCollections(
 }
 
 void Engine::EnableCommitRing(size_t capacity_bytes) {
+  TrackStateDigest();
   auto writer = AcquireWriterFirst();
-  _ring->Enable(capacity_bytes, _lsn.load(std::memory_order_relaxed));
+  _ring->Enable(capacity_bytes, _lsn.load(std::memory_order_relaxed),
+                _state_digest.load(std::memory_order_relaxed));
+}
+
+uint64_t Engine::ComputeStateDigest() const {
+  uint64_t digest = 0;
+  for (size_t c = 0; c < collection_count(); ++c) {
+    const Collection& collection = *_collections[c];
+    if (collection.ephemeral) continue;
+    const RecordTable::Slots* slots = collection.table.LoadSlots();
+    for (size_t i = 0; i <= slots->mask; ++i) {
+      const RecordNode* node = slots->slots[i].load(std::memory_order_relaxed);
+      if (node == nullptr || node == RecordTable::Erased()) continue;
+      const Version* head = node->head.load(std::memory_order_relaxed);
+      if (head != nullptr && !head->tombstone) {
+        digest += internal::RecordDigest(collection.id, node->key(), head->bytes());
+      }
+    }
+  }
+  return digest;
+}
+
+void Engine::TrackStateDigest() {
+  if (_digest_tracked.load(std::memory_order_acquire)) return;
+  auto writer = AcquireWriterFirst();
+  if (_digest_tracked.load(std::memory_order_relaxed)) return;
+  _state_digest.store(ComputeStateDigest(), std::memory_order_relaxed);
+  _digest_tracked.store(true, std::memory_order_release);
+}
+
+Engine::DigestAt Engine::LatestDigest() const {
+  return _ring->latest_digest();
 }
 
 Engine::LogPosition Engine::Position() {
@@ -74,7 +109,7 @@ void Engine::UnpinWal(uint64_t pin) {
 }
 
 absl::StatusOr<bool> Engine::ReadLog(uint64_t* position, size_t max_bytes, std::string* out,
-                                     std::unique_ptr<WalCursor>* cursor) {
+                                     std::unique_ptr<WalCursor>* cursor, DigestAt* digest) {
   const uint64_t latest = _ring->latest();
   if (latest <= *position) return false;
   uint64_t limit = latest;
@@ -85,7 +120,8 @@ absl::StatusOr<bool> Engine::ReadLog(uint64_t* position, size_t max_bytes, std::
     limit = std::min(latest, _wal->synced_lsn());
     if (limit <= *position) return false;
   }
-  if (_ring->Read(position, limit, max_bytes, out)) return true;
+  // From the log files there is no digest for the commits, which comes back with the ring.
+  if (_ring->Read(position, limit, max_bytes, out, digest)) return true;
   if (_wal != nullptr) {
     if (*cursor == nullptr) *cursor = std::make_unique<WalCursor>(*_wal);
     auto read = (*cursor)->Read(position, limit, max_bytes, out);

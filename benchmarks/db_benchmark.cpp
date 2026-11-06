@@ -2,11 +2,8 @@
 #include <benchmark/benchmark.h>
 
 #include <chrono>
-#include <condition_variable>
-#include <deque>
 #include <filesystem>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -14,6 +11,7 @@
 #include "account.fbs.h"
 #include "database.h"
 #include "gendb/replication.h"
+#include "lib/loopback_transport.h"
 
 namespace {
 
@@ -290,86 +288,10 @@ void Recover(benchmark::State& state) {
 }
 BENCHMARK(Recover)->ArgName("from_checkpoint")->Arg(0)->Arg(1)->Unit(benchmark::kMillisecond);
 
-// An in-process transport, so that these measure replication and not a network.
-class Pipe {
- public:
-  void Push(std::string message) {
-    {
-      std::lock_guard lock(_mutex);
-      _messages.push_back(std::move(message));
-    }
-    _cv.notify_one();
-  }
-  absl::Status Pop(std::string* message) {
-    std::unique_lock lock(_mutex);
-    _cv.wait(lock, [this] { return _closed || !_messages.empty(); });
-    if (_closed) return absl::UnavailableError("closed");
-    *message = std::move(_messages.front());
-    _messages.pop_front();
-    return absl::OkStatus();
-  }
-  void Close() {
-    {
-      std::lock_guard lock(_mutex);
-      _closed = true;
-    }
-    _cv.notify_all();
-  }
-
- private:
-  std::mutex _mutex;
-  std::condition_variable _cv;
-  std::deque<std::string> _messages;
-  bool _closed = false;
-};
-
-class PipeConnection final : public gendb::Connection {
- public:
-  PipeConnection(std::shared_ptr<Pipe> in, std::shared_ptr<Pipe> out)
-      : _in(std::move(in)), _out(std::move(out)) {}
-  absl::Status Send(std::string_view message) override {
-    _out->Push(std::string(message));
-    return absl::OkStatus();
-  }
-  absl::Status Receive(std::string* message) override { return _in->Pop(message); }
-  void Close() override {
-    _in->Close();
-    _out->Close();
-  }
-
- private:
-  std::shared_ptr<Pipe> _in, _out;
-};
-
-// Serves one replica at a time, as a test double for a real server.
-class PipeServer {
- public:
-  explicit PipeServer(gendb::Engine& engine) : _server(engine) {}
-  ~PipeServer() {
-    _server.Shutdown();
-    for (auto& thread : _threads) thread.join();
-  }
-  gendb::Connector connector() {
-    return [this]() -> absl::StatusOr<std::unique_ptr<gendb::Connection>> {
-      auto to_server = std::make_shared<Pipe>();
-      auto to_client = std::make_shared<Pipe>();
-      _threads.emplace_back([this, to_server, to_client] {
-        PipeConnection connection(to_server, to_client);
-        (void)_server.Serve(connection);
-      });
-      return std::unique_ptr<gendb::Connection>(new PipeConnection(to_client, to_server));
-    };
-  }
-
- private:
-  gendb::ReplicationServer _server;
-  std::vector<std::thread> _threads;
-};
-
 // A new memory-only replica, from connecting to holding all 100,000 records with indices.
 void ReplicaSeed(benchmark::State& state) {
   Db& primary = SharedDb();
-  PipeServer server(primary.engine());
+  gendb::testing::LoopbackServer server(primary.engine());
   // Fill does one commit, so the primary's LSN does not say how much data it has.
   const uint64_t lsn = primary.engine().Stats().lsn;
   for (auto _ : state) {
@@ -388,7 +310,7 @@ BENCHMARK(ReplicaSeed)->Unit(benchmark::kMillisecond)->UseRealTime();
 void ReplicaFollow(benchmark::State& state) {
   Db primary;
   Fill(primary);
-  PipeServer server(primary.engine());
+  gendb::testing::LoopbackServer server(primary.engine());
   Db replica_db;
   gendb::Replica replica(replica_db.engine(), server.connector());
   const auto patience = std::chrono::seconds(60);

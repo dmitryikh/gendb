@@ -99,6 +99,10 @@ struct EngineOptions {
   // Threads to build indices with when opening; zero means the hardware's, up to 8.
   unsigned recovery_threads = 0;
 
+  // Log an Update as its patch when that is smaller. Replicas must be able to read patches: to
+  // introduce them into a running system, upgrade everything with this off, then turn it on.
+  bool log_patches = true;
+
   // Follows a primary through a Replica: only ephemeral collections accept local commits.
   bool replica = false;
   // Durable data of a collection the schema does not have is normally kept, out of reach, until a
@@ -281,6 +285,11 @@ class Engine {
     internal::HistoryId history;
     uint64_t lsn;
   };
+  // The digest of the durable state after commit `lsn`; an `lsn` of zero means none.
+  struct DigestAt {
+    uint64_t lsn = 0;
+    uint64_t digest = 0;
+  };
 
   Engine(EngineSchema schema, EngineOptions options);
   absl::Status Recover();
@@ -355,7 +364,11 @@ class Engine {
   // Copies commits after `*position`, if any and synced, and advances it. OutOfRange if the next
   // commit is no longer available.
   absl::StatusOr<bool> ReadLog(uint64_t* position, size_t max_bytes, std::string* out,
-                               std::unique_ptr<internal::WalCursor>* cursor);
+                               std::unique_ptr<internal::WalCursor>* cursor, DigestAt* digest);
+  DigestAt LatestDigest() const;
+  // Starts keeping the digest of the durable state, which replication compares across machines.
+  void TrackStateDigest();
+  uint64_t ComputeStateDigest() const;
   void WaitForLog(uint64_t after, std::chrono::milliseconds timeout) const;
   void WakeLogWaiters() const;
   void BecomeReplica() noexcept { _replica.store(true, std::memory_order_release); }
@@ -387,6 +400,10 @@ class Engine {
   internal::HistoryId _history;                  // Under the writer lock.
   std::atomic<uint64_t> _history_generation{0};  // Changes with the history or the collections.
   std::atomic<bool> _replica;
+  // The sum of RecordDigest over all durable records, once something needs it. Under the writer
+  // lock, but for reads by the thread applying a primary's commits.
+  std::atomic<bool> _digest_tracked{false};
+  std::atomic<uint64_t> _state_digest{0};
   // A checkpoint failed to load halfway: memory holds records no commit may publish.
   std::atomic<bool> _broken{false};
   const std::shared_ptr<FileSystem> _file_system;
@@ -613,8 +630,8 @@ class Transaction {
   // Replaying a log does not check unique indices: the primary did, and its schema decides.
   void PutUnchecked(size_t collection, BytesConstView key, BytesConstView value);
   absl::Status CheckUnique(size_t collection, std::string_view key, BytesConstView value) const;
-  // Whether the log would hold this collection's changes.
-  bool IsLogged(size_t collection) const noexcept;
+  // Whether the log would hold this collection's updates as patches.
+  bool LogsPatches(size_t collection) const noexcept;
   // Replays a logged patch, and checks that it gives the record the primary had.
   absl::Status ApplyLoggedPatch(size_t collection, std::string_view key, const MessagePatch& patch,
                                 uint32_t result_crc);

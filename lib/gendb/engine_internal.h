@@ -53,4 +53,16 @@ inline Version* PatchedVersion(BytesConstView current, const MessagePatch& patch
   }
 }
 
+// A record's part in the digest of a database's state: the same on any machine, unlike absl::Hash.
+inline uint64_t RecordDigest(uint32_t collection_id, std::string_view key,
+                             BytesConstView value) noexcept {
+  uint64_t h = (uint64_t{static_cast<uint32_t>(absl::ComputeCrc32c(key))} << 32 | CrcOf(value)) ^
+               (uint64_t{collection_id} * 0x9e3779b97f4a7c15);
+  h ^= h >> 33;
+  h *= 0xff51afd7ed558ccd;
+  h ^= h >> 33;
+  h *= 0xc4ceb9fe1a85ec53;
+  return h ^ (h >> 33);
+}
+
 }  // namespace gendb::internal

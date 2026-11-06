@@ -433,7 +433,11 @@ absl::Status Engine::InstallCheckpoint(CheckpointStage& stage, const LogPosition
 
   _history = position.history;
   _history_generation.fetch_add(1, std::memory_order_acq_rel);
-  _ring->Reset(position.lsn);
+  if (_digest_tracked.load(std::memory_order_relaxed)) {
+    // Not the head versions' old values: the new versions are linked, though not yet visible.
+    _state_digest.store(ComputeStateDigest(), std::memory_order_relaxed);
+  }
+  _ring->Reset(position.lsn, _state_digest.load(std::memory_order_relaxed));
   _lsn.store(position.lsn, std::memory_order_release);
   _committed_seq.store(seq, std::memory_order_seq_cst);
   Notify(seq, changes);
