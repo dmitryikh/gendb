@@ -33,10 +33,8 @@ enum class FrameType : uint8_t {
 };
 
 inline constexpr size_t kFrameHeaderSize = 8;
-// What this code writes, and the range it reads. Version 3 changed how strings encode in keys, so
-// older files cannot be read.
-inline constexpr uint32_t kFormatVersion = 3;
-inline constexpr uint32_t kOldestFormatVersion = 3;
+// Files of any other version are refused. There is no migration: nothing depends on old files yet.
+inline constexpr uint32_t kFormatVersion = 1;
 
 // Identifies one linear history of commits: the same ID and LSN mean the same database state.
 struct HistoryId {

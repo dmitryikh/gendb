@@ -127,7 +127,7 @@ void Transaction::PutUnchecked(size_t collection, BytesConstView key, BytesConst
 }
 
 bool Transaction::LogsPatches(size_t collection) const noexcept {
-  return _engine->_options.log_patches && !_engine->_collections[collection]->ephemeral &&
+  return !_engine->_collections[collection]->ephemeral &&
          (_engine->_wal != nullptr || _engine->_ring->enabled());
 }
 

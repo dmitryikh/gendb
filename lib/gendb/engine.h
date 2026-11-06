@@ -99,10 +99,6 @@ struct EngineOptions {
   // Threads to build indices with when opening; zero means the hardware's, up to 8.
   unsigned recovery_threads = 0;
 
-  // Log an Update as its patch when that is smaller. Replicas must be able to read patches: to
-  // introduce them into a running system, upgrade everything with this off, then turn it on.
-  bool log_patches = true;
-
   // Follows a primary through a Replica: only ephemeral collections accept local commits.
   bool replica = false;
   // Durable data of a collection the schema does not have is normally kept, out of reach, until a

@@ -97,8 +97,11 @@ checkpoint. Records logged whole need no such check, as they do not depend on ea
 
 This makes **the bytes a patch produces part of the on-disk format**: `Rebuild` and
 `ApplyPatchInplace` must keep giving the same result for logs already written, and
-`ResultBytesArePartOfTheLogFormat` pins them. A change to them has to bump `kFormatVersion` and keep
-old logs replayable, for instance by taking a checkpoint with the old code first.
+`ResultBytesArePartOfTheLogFormat` pins them, and changing them on purpose means bumping
+`kFormatVersion`.
+
+Files of another format version are refused, with no migration: the project has no users to migrate
+yet.
 
 **A new segment** starts at `wal_segment_bytes`. The old one is fsynced before the new one exists,
 which is what makes the next rule safe.

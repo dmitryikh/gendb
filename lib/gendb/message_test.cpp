@@ -689,8 +689,7 @@ TEST(MessagePatchEncodingTest, RejectsMalformedInput) {
 }
 
 // The log holds patches with a checksum of their result, so the bytes these produce are part of the
-// on-disk format: if this fails, old logs no longer replay. Bump kFormatVersion and make recovery
-// handle the old result, rather than updating these numbers.
+// on-disk format. If they change on purpose, bump kFormatVersion and update these numbers.
 TEST(MessagePatchEncodingTest, ResultBytesArePartOfTheLogFormat) {
   MessageBuilder builder;
   builder.AddField<int32_t>(1, 1);

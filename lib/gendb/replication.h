@@ -26,15 +26,8 @@ inline constexpr size_t kMaxReplicationMessageBytes = (size_t{1} << 20) + 64;
 
 // The session protocol's versions this code can speak. Each side says its range when connecting,
 // and they use the highest they share, or refuse with both ranges in the error.
-inline constexpr uint32_t kReplicationProtocolVersion = 3;
-inline constexpr uint32_t kOldestReplicationProtocol = 3;
-
-// What a replica can read in commit frames, beyond plain records. A session stops with an error
-// naming the feature when a frame needs one that the replica lacks.
-enum LogFeature : uint32_t {
-  kLogFeaturePatches = 1 << 0,
-};
-inline constexpr uint32_t kAllLogFeatures = kLogFeaturePatches;
+inline constexpr uint32_t kReplicationProtocolVersion = 1;
+inline constexpr uint32_t kOldestReplicationProtocol = 1;
 
 // One reliable, ordered connection that keeps message boundaries. All it takes to run replication
 // over some transport is to implement this, and to call ReplicationServer::Serve for each accepted
@@ -116,7 +109,6 @@ struct ReplicaOptions {
   std::chrono::milliseconds idle_timeout{10000};
   uint32_t oldest_protocol = kOldestReplicationProtocol;
   uint32_t newest_protocol = kReplicationProtocolVersion;
-  uint32_t log_features = kAllLogFeatures;
 };
 
 enum class ReplicaState { kConnecting, kReceivingCheckpoint, kStreaming, kStopped };

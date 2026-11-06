@@ -123,7 +123,6 @@ void FuzzServer(fuzz::Pieces& input) {
     std::string hello(1, kHello);
     internal::PutFixed32(hello, input.Byte());
     internal::PutFixed32(hello, input.Byte());
-    internal::PutFixed32(hello, input.Byte());
     internal::PutHistory(hello, internal::HistoryId{1, 2});
     internal::PutFixed64(hello, input.Byte());
     hello.push_back(static_cast<char>(input.Byte() % 2));

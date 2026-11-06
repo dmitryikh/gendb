@@ -76,7 +76,7 @@ gRPC is optional: `conan install -o "&:with_grpc=False"` builds everything else 
 
 ```text
  replica                                  primary
-   Hello (history, LSN)  ------------->
+   Hello (protocols, history, LSN)  -->
                          <-------------   Welcome (position, mode, collection IDs and names)
                          <-------------   checkpoint bytes        if it cannot continue its log
    Ack                   ------------->
@@ -175,18 +175,11 @@ Messages are forward and backward compatible, so fields can differ freely. For c
 Only the ID and the name travel. Indices need no metadata, as each side derives its own from its code
 when it knows the collection.
 
-## Upgrading the software
+## Protocol versions
 
 Each side states the range of protocol versions it speaks when connecting, and they use the newest they
-share. With none in common they refuse, and both ranges are in `Status().last_error`. Keeping a range
-of more than one version in a release lets either side be upgraded first, and
-`oldest_protocol`/`newest_protocol` in the options can hold a side back.
-
-Log entries are handled the same way. A replica says which it can read, and one that meets an entry it
-cannot read is told so, rather than misreading it. So a new kind of entry gets into a running system in
-two steps: upgrade everything with it off, then turn it on on the primary, as `log_patches` allows for
-patches. A change to `kFormatVersion` itself, as of how keys are encoded, cannot be read by older
-code; since version 3, older files are refused.
+share. With none in common they refuse, and both ranges are in `Status().last_error`. There is one
+version so far, and `oldest_protocol`/`newest_protocol` in the options can narrow a side's range.
 
 ## Performance
 

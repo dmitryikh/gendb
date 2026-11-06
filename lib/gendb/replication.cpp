@@ -13,7 +13,7 @@
 // The session, on top of Connection:
 //
 //   replica                         primary
-//   Hello (protocols, features, history, LSN)  -------->
+//   Hello (protocols, history, LSN)  -------->
 //                         <--------  Welcome (protocol, position, mode, collections) or Error
 //                         <--------  CheckpointData*   if the replica cannot continue its log
 //   Ack                   -------->
@@ -95,23 +95,6 @@ absl::Status SendError(Connection& connection, std::string_view text) {
   std::string message = NewMessage(MessageType::kError);
   PutString(message, text);
   return connection.Send(message);
-}
-
-// The name of a feature that `frames` need and `features` lacks; empty if none.
-std::string_view MissingFeature(std::string_view frames, uint32_t features) {
-  if ((features & kLogFeaturePatches) != 0) return {};
-  while (!frames.empty()) {
-    Frame frame;
-    if (internal::ParseFrame(frames, &frame) != ParseStatus::kOk) return {};
-    internal::CommitDecoder commit(frame.body);
-    for (uint32_t i = 0; i < commit.count; ++i) {
-      const internal::CommitEntry entry = commit.Next();
-      if (!commit.ok()) return {};
-      if (entry.op == internal::CommitOp::kPatch) return "patches";
-    }
-    frames.remove_prefix(frame.raw.size());
-  }
-  return {};
 }
 
 absl::Status SendAck(Connection& connection, uint64_t lsn) {
@@ -233,7 +216,6 @@ absl::Status ReplicationServer::RunSession(Connection& connection, Session& sess
   const auto type = static_cast<MessageType>(hello.Byte());
   const uint32_t replica_oldest = hello.Fixed32();
   const uint32_t replica_newest = hello.Fixed32();
-  const uint32_t replica_features = hello.Fixed32();
   const HistoryId replica_history = hello.History();
   const uint64_t replica_lsn = hello.Fixed64();
   const bool want_checkpoint = hello.Byte() != 0;
@@ -352,15 +334,6 @@ absl::Status ReplicationServer::RunSession(Connection& connection, Session& sess
     if (!read.ok()) return read.status();
     const uint64_t primary_lsn = _engine._lsn.load(std::memory_order_acquire);
     if (!batch.empty()) {
-      if (const std::string_view missing = MissingFeature(batch, replica_features);
-          !missing.empty()) {
-        const std::string error = absl::StrCat("The log holds ", missing,
-                                               ", which this replica cannot read: upgrade it, or "
-                                               "turn off EngineOptions::log_patches");
-        (void)SendError(connection, error);
-        WaitForHangUp(session);
-        return absl::FailedPreconditionError(error);
-      }
       // The ring gives a digest for what it held; a read from the log files, none.
       if (digest.lsn != after) digest = {};
       RETURN_IF_ERROR(
@@ -490,7 +463,6 @@ absl::Status Replica::RunSession() {
   std::string hello = NewMessage(MessageType::kHello);
   PutFixed32(hello, _options.oldest_protocol);
   PutFixed32(hello, _options.newest_protocol);
-  PutFixed32(hello, _options.log_features);
   PutHistory(hello, local.history);
   PutFixed64(hello, local.lsn);
   {

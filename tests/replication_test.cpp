@@ -508,38 +508,6 @@ TEST_F(ReplicationTest, SidesAgreeOnTheNewestCommonProtocol) {
   EXPECT_EQ(server.server().Replicas()[0].protocol, gendb::kReplicationProtocolVersion);
 }
 
-// How a new kind of log entry gets into a running system: replicas that cannot read it are told so,
-// and the primary can hold it back until they are upgraded.
-TEST_F(ReplicationTest, AReplicaThatCannotReadPatchesIsToldAndCanBeAccommodated) {
-  const auto scenario = [&](bool log_patches, const std::string& name) -> gendb::ReplicaStatus {
-    auto primary = Db::Open({.path = Path(name), .log_patches = log_patches});
-    EXPECT_TRUE(primary.ok());
-    Put(**primary, 1);
-    LoopbackServer server((*primary)->engine());
-    Db replica_db;
-    gendb::Replica replica(replica_db.engine(), server.connector(),
-                           {.min_backoff = std::chrono::milliseconds(1), .log_features = 0});
-    EXPECT_TRUE(replica.WaitForLsn(1, kPatience)) << replica.Status().last_error;
-    {
-      auto writer = (*primary)->CreateWriter();
-      EXPECT_TRUE(writer.UpdateAccount(1, AccountPatchBuilder().set_age(9).Build()).ok());
-      EXPECT_TRUE(writer.Commit().ok());
-    }
-    for (int i = 0; i < 2000 && replica.Status().applied_lsn < 2 &&
-                    replica.Status().last_error.code() != absl::StatusCode::kFailedPrecondition;
-         ++i) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-    return replica.Status();
-  };
-  const gendb::ReplicaStatus refused = scenario(/*log_patches=*/true, "with");
-  EXPECT_EQ(refused.applied_lsn, 1u);
-  EXPECT_THAT(refused.last_error.message(), ::testing::HasSubstr("patches"));
-
-  const gendb::ReplicaStatus served = scenario(/*log_patches=*/false, "without");
-  EXPECT_EQ(served.applied_lsn, 2u);
-}
-
 // Two versions of one program, by raw collections, as what matters is what each schema has.
 const std::array<uint8_t, 1> kKey1{1}, kKey2{2}, kKey3{3}, kKey4{4};
 const std::array<uint8_t, 1> kValue{42};
