@@ -135,3 +135,25 @@ def test_compares_the_working_tree_with_where_the_branch_started(tmp_path):
     (tmp_path / "a.gendb").write_text("message A { 1 id: int32; }")
     (tmp_path / "db.yaml").write_text("types: {schema_files: [a.gendb]}\nsequences: []\n")
     assert any("was removed" in e for e in check_against_git(tmp_path, "main").errors)
+
+
+def test_a_field_cannot_become_repeated_or_stop_being():
+    old = "message Item { 1 a: int32; 2 b: repeated int32; 3 c: Other; } message Other { }"
+    new = "message Item { 1 a: repeated int32; 2 b: int32; 3 c: repeated Other; } message Other { }"
+    errors = problems(new, old)
+    assert len(errors) == 3
+    assert all("repeated" in error for error in errors)
+
+
+def test_a_field_cannot_change_which_message_it_holds():
+    old = "message Item { 1 a: Other; } message Other { } message Third { }"
+    new = "message Item { 1 a: Third; } message Other { } message Third { }"
+    assert "changed type" in problems(new, old)[0]
+
+
+def test_nested_messages_and_lists_can_be_added_and_grow():
+    old = "message Item { 1 a: Other; } message Other { 1 x: int32; }"
+    new = """message Item { 1 a: Other; 2 b: repeated Other; 3 c: repeated string; }
+             message Other { 1 x: int32; 2 y: repeated int32; }"""
+    assert problems(new, old) == []
+

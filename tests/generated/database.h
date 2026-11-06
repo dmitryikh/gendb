@@ -19,6 +19,7 @@
 #include "gendb/key_codec.h"
 #include "gendb/message.h"
 #include "metadata.gendb.h"
+#include "order.gendb.h"
 #include "position.gendb.h"
 #include "session.gendb.h"
 
@@ -44,6 +45,7 @@ enum CollectionId {
   PositionCollId = 2,
   ConfigCollId = 3,
   SessionCollId = 4,
+  OrderCollId = 5,
 };
 
 // Collection keys getters.
@@ -99,6 +101,15 @@ inline std::array<uint8_t, 8> ToSessionKey(uint64_t session_id) {
 
 inline std::array<uint8_t, 8> ToSessionKey(Session session) {
   return ToSessionKey(session.session_id());
+}
+inline std::array<uint8_t, 8> ToOrderKey(uint64_t order_id) {
+  std::array<uint8_t, 8> key_raw;
+  gendb::internal::key_codec::EncodeTupleToView<std::tuple<uint64_t>>({order_id}, key_raw);
+  return key_raw;
+}
+
+inline std::array<uint8_t, 8> ToOrderKey(Order order) {
+  return ToOrderKey(order.order_id());
 }
 
 enum IndexId {
@@ -252,6 +263,57 @@ class SessionChange {
   Session _after;
 };
 
+class OrderChange {
+ public:
+  explicit OrderChange(const gendb::Change& change)
+      : _change(&change),
+        _before(change.before.value_or(gendb::BytesConstView{})),
+        _after(change.after.value_or(gendb::BytesConstView{})) {}
+
+  gendb::ChangeKind kind() const { return _change->kind(); }
+  gendb::BytesConstView key() const { return _change->key; }
+  const Order& before() const { return _before; }
+  const Order& after() const { return _after; }
+  bool order_id_changed() const {
+    return _before.has_order_id() != _after.has_order_id() ||
+           _before.order_id() != _after.order_id();
+  }
+  bool note_changed() const {
+    return _before.has_note() != _after.has_note() || _before.note() != _after.note();
+  }
+  bool status_changed() const {
+    return _before.has_status() != _after.has_status() || _before.status() != _after.status();
+  }
+  bool customer_changed() const {
+    return _before.has_customer() != _after.has_customer() ||
+           _before.customer() != _after.customer();
+  }
+  bool lines_changed() const {
+    return _before.has_lines() != _after.has_lines() || _before.lines() != _after.lines();
+  }
+  bool tags_changed() const {
+    return _before.has_tags() != _after.has_tags() || _before.tags() != _after.tags();
+  }
+  bool prices_changed() const {
+    return _before.has_prices() != _after.has_prices() || _before.prices() != _after.prices();
+  }
+  bool quantities_changed() const {
+    return _before.has_quantities() != _after.has_quantities() ||
+           _before.quantities() != _after.quantities();
+  }
+  bool flags_changed() const {
+    return _before.has_flags() != _after.has_flags() || _before.flags() != _after.flags();
+  }
+  bool history_changed() const {
+    return _before.has_history() != _after.has_history() || _before.history() != _after.history();
+  }
+
+ private:
+  const gendb::Change* _change;
+  Order _before;
+  Order _after;
+};
+
 // Set the handlers of the collections to follow. All run on one thread, in commit order, so changes
 // to different collections keep their order.
 struct ChangeHandlers {
@@ -259,6 +321,7 @@ struct ChangeHandlers {
   std::function<void(const PositionChange&)> on_position;
   std::function<void(const ConfigChange&)> on_config;
   std::function<void(const SessionChange&)> on_session;
+  std::function<void(const OrderChange&)> on_order;
   // After the changes of each commit that had any, for acting on a commit as a whole. Store the
   // position to resume from later with SubscribeFrom.
   std::function<void(const gendb::ChangePosition& position)> on_commit;
@@ -303,6 +366,8 @@ class Snapshot {
   gendb::ScanIterator<Config> ScanConfig() const;
   absl::Status GetSession(uint64_t session_id, Session& session) const;
   gendb::ScanIterator<Session> ScanSession() const;
+  absl::Status GetOrder(uint64_t order_id, Order& order) const;
+  gendb::ScanIterator<Order> ScanOrder() const;
   // Entries with these values, ordered by what remains of the index and the primary key.
   gendb::IndexIterator<Account> GetAccountByAgeEqual(int32_t age,
                                                      gendb::ScanOptions options = {}) const;
@@ -395,6 +460,14 @@ class ScopedWrite {
   absl::Status DeleteSession(uint64_t session_id);
   // Includes this transaction's changes. Writing or committing during the scan ends its validity.
   gendb::ScanIterator<Session> ScanSession() const;
+  absl::Status GetOrder(uint64_t order_id, Order& order) const;
+  // The key comes from the message, which must have its primary key fields set.
+  absl::Status PutOrder(gendb::BytesConstView order);
+  // A patch cannot change the primary key: that is another record.
+  absl::Status UpdateOrder(uint64_t order_id, const gendb::MessagePatch& update);
+  absl::Status DeleteOrder(uint64_t order_id);
+  // Includes this transaction's changes. Writing or committing during the scan ends its validity.
+  gendb::ScanIterator<Order> ScanOrder() const;
 
  public:
   // Entries with these values, ordered by what remains of the index and the primary key.

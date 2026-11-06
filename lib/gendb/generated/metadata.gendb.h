@@ -3,10 +3,12 @@
 #pragma once
 #include <array>
 #include <cstdint>
+#include <initializer_list>
 #include <span>
 #include <string_view>
 #include <utility>
 
+#include "gendb/list.h"
 #include "gendb/message.h"
 #include "gendb/reflection.h"
 
@@ -24,7 +26,12 @@ inline constexpr std::array<gendb::EnumValueInfo, 2> kMetadataTypeValues = {
 };
 }  // namespace gendb
 
-// Message classes
+// Message classes, which can refer to each other in any order, and to themselves
+namespace gendb {
+class MetadataValue;
+class MetadataValueBuilder;
+}  // namespace gendb
+
 namespace gendb {
 // Zero-copy view of a serialized MetadataValue. Does not own the bytes. A getter returns the
 // field's default if it is not set, which has_x() tells apart from being set to that value.
@@ -43,23 +50,31 @@ class MetadataValue {
   static constexpr std::array<gendb::FieldInfo, 6> kFieldsInfo = {
       gendb::FieldInfo{"type", Type, gendb::FieldInfo::ENUM, gendb::FieldInfo::UINT32,
                        "gendb::MetadataType",
-                       std::span<const gendb::EnumValueInfo>(kMetadataTypeValues)},
+                       std::span<const gendb::EnumValueInfo>(kMetadataTypeValues), false},
       gendb::FieldInfo{"id", Id, gendb::FieldInfo::SCALAR, gendb::FieldInfo::UINT32, "",
-                       std::span<const gendb::EnumValueInfo>()},
+                       std::span<const gendb::EnumValueInfo>(), false},
       gendb::FieldInfo{"int_value", IntValue, gendb::FieldInfo::SCALAR, gendb::FieldInfo::INT32, "",
-                       std::span<const gendb::EnumValueInfo>()},
+                       std::span<const gendb::EnumValueInfo>(), false},
       gendb::FieldInfo{"string_value", StringValue, gendb::FieldInfo::STRING,
-                       gendb::FieldInfo::NOT_SCALAR, "", std::span<const gendb::EnumValueInfo>()},
+                       gendb::FieldInfo::NOT_SCALAR, "", std::span<const gendb::EnumValueInfo>(),
+                       false},
       gendb::FieldInfo{"float_value", FloatValue, gendb::FieldInfo::SCALAR, gendb::FieldInfo::FLOAT,
-                       "", std::span<const gendb::EnumValueInfo>()},
+                       "", std::span<const gendb::EnumValueInfo>(), false},
       gendb::FieldInfo{"uint_value", UintValue, gendb::FieldInfo::SCALAR, gendb::FieldInfo::UINT64,
-                       "", std::span<const gendb::EnumValueInfo>()},
+                       "", std::span<const gendb::EnumValueInfo>(), false},
   };
 
   MetadataValue() = default;
   // The bytes must outlive the view. Malformed bytes read as an empty message; check untrusted
   // input with gendb::MessageView::Verify first.
   MetadataValue(std::span<const uint8_t> bytes) : _view(gendb::MessageView::OpenOrEmpty(bytes)) {}
+
+  // Whether these are the canonical bytes of such a message, down through its nested messages and
+  // lists. Linear in the size, and no deeper than `depth`. Fields this program does not know are
+  // checked only from the outside. Call it first on bytes from outside the process.
+  static bool Verify(std::span<const uint8_t> bytes, int depth = gendb::kMaxMessageDepth);
+  // Byte for byte, which the canonical encoding makes the same as field by field.
+  bool operator==(const MetadataValue& other) const { return _view == other._view; }
 
   bool has_type() const { return _view.Has<Type, gendb::KindOf<uint32_t>>(); }
   gendb::MetadataType type() const {
@@ -86,6 +101,7 @@ class MetadataValue {
 };
 
 // Builds a serialized MetadataValue. Strings are borrowed: they must stay alive until Build().
+// Nested messages and repeated fields are serialized or copied when set, so they can go right away.
 class MetadataValueBuilder : public gendb::MessageBuilder {
  public:
   MetadataValueBuilder() = default;
@@ -144,7 +160,8 @@ class MetadataValueBuilder : public gendb::MessageBuilder {
   }
 };
 
-// Builds a partial update of MetadataValue. Owns its string values.
+// Builds a partial update of MetadataValue. Owns its string values. A nested message or a list is
+// replaced as a whole, which keeps what the log holds a flat list of fields.
 class MetadataValuePatchBuilder {
  public:
   MetadataValuePatchBuilder() = default;
@@ -203,4 +220,12 @@ class MetadataValuePatchBuilder {
  private:
   gendb::MessagePatch _patch;
 };
+}  // namespace gendb
+
+// What needs every message class to be complete.
+namespace gendb {
+inline bool MetadataValue::Verify(std::span<const uint8_t> bytes, int depth) {
+  if (depth <= 0 || !gendb::MessageView::Verify(bytes)) return false;
+  return true;
+}
 }  // namespace gendb

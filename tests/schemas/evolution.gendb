@@ -18,3 +18,26 @@ message AccountV2 {
   6 score: double;
   7 vip: bool;
 }
+
+// A nested message grows like any other, under a parent that stays the same.
+message ContactV1 {
+  1 email: string;
+}
+
+message ContactV2 {
+  1 email: string;
+  2 phone: string;
+  3 labels: repeated string;
+}
+
+message MemberV1 {
+  1 id: uint64;
+  2 contact: ContactV1;
+  3 others: repeated ContactV1;
+}
+
+message MemberV2 {
+  1 id: uint64;
+  2 contact: ContactV2;
+  3 others: repeated ContactV2;
+}

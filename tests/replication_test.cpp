@@ -28,7 +28,12 @@ using gendb::tests::Account;
 using gendb::tests::AccountBuilder;
 using gendb::tests::AccountChange;
 using gendb::tests::AccountPatchBuilder;
+using gendb::tests::CustomerBuilder;
 using gendb::tests::Db;
+using gendb::tests::Order;
+using gendb::tests::OrderBuilder;
+using gendb::tests::OrderLineBuilder;
+using gendb::tests::OrderPatchBuilder;
 using gendb::tests::Session;
 using gendb::tests::SessionBuilder;
 
@@ -60,6 +65,45 @@ class ReplicationTest : public ::testing::Test {
 
   std::filesystem::path _dir;
 };
+
+TEST_F(ReplicationTest, NestedMessagesAndListsReachAReplica) {
+  Db primary;
+  LoopbackServer server(primary.engine());
+  OrderBuilder first;
+  first.set_order_id(1).set_customer(CustomerBuilder().set_name("Ann")).set_prices({1, 2});
+  {
+    auto writer = primary.CreateWriter();
+    ASSERT_TRUE(writer.PutOrder(first.Build()).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+  }
+  Db replica_db;
+  gendb::Replica replica(replica_db.engine(), server.connector());
+  ASSERT_TRUE(replica.WaitForLsn(1, kPatience)) << replica.Status().last_error;
+  {
+    auto writer = primary.CreateWriter();
+    ASSERT_TRUE(writer
+                    .UpdateOrder(1, OrderPatchBuilder()
+                                        .set_customer(CustomerBuilder().set_name("Bob"))
+                                        .set_tags({"t"})
+                                        .Build())
+                    .ok());
+    OrderBuilder second;
+    second.set_order_id(2).add_lines(OrderLineBuilder().set_sku("s"));
+    ASSERT_TRUE(writer.PutOrder(second.Build()).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+  }
+  ASSERT_TRUE(replica.WaitForLsn(2, kPatience));
+
+  auto snapshot = replica_db.CreateSnapshot();
+  Order order;
+  ASSERT_TRUE(snapshot.GetOrder(1, order).ok());
+  EXPECT_EQ(order.customer().name(), "Bob");
+  EXPECT_EQ(order.tags()[0], "t");
+  EXPECT_EQ(order.prices()[1], 2);
+  ASSERT_TRUE(snapshot.GetOrder(2, order).ok());
+  EXPECT_EQ(order.lines()[0].sku(), "s");
+  EXPECT_EQ(replica.Status().divergences, 0u);
+}
 
 TEST_F(ReplicationTest, SeedsFromCheckpointThenFollowsTheLog) {
   Db primary;

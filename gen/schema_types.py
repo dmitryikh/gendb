@@ -24,6 +24,8 @@ class Field:
     default: Optional[str] = None # C++ expression for a getter's value when unset; may be empty
     has_default: bool = False # the schema states a default
     deprecated: bool = False # keeps its ID reserved; no generated accessors
+    repeated: bool = False # a list of `type`; cpp_type is then that of an element
+    list_type: Optional[str] = None # if repeated, the C++ type that reads it
 
 @dataclass
 class Enum:

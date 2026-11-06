@@ -9,6 +9,7 @@
 #include "config.gendb.h"
 #include "gendb/status.h"
 #include "metadata.gendb.h"
+#include "order.gendb.h"
 #include "position.gendb.h"
 #include "session.gendb.h"
 
@@ -23,6 +24,7 @@ gendb::EngineSchema MakeSchema() {
   schema.collections.push_back({"positions", /*ephemeral=*/false});
   schema.collections.push_back({"configs", /*ephemeral=*/false});
   schema.collections.push_back({"sessions", /*ephemeral=*/true});
+  schema.collections.push_back({"orders", /*ephemeral=*/false});
   schema.indices.push_back({"account_by_age", AccountCollId,
                             [](gendb::BytesConstView bytes, std::string& out) {
                               const Account message{bytes};
@@ -95,11 +97,13 @@ std::vector<size_t> FollowedCollections(const ChangeHandlers& handlers) {
   if (handlers.on_position) collections.push_back(PositionCollId);
   if (handlers.on_config) collections.push_back(ConfigCollId);
   if (handlers.on_session) collections.push_back(SessionCollId);
+  if (handlers.on_order) collections.push_back(OrderCollId);
   if (collections.empty()) {
     collections.push_back(AccountCollId);
     collections.push_back(PositionCollId);
     collections.push_back(ConfigCollId);
     collections.push_back(SessionCollId);
+    collections.push_back(OrderCollId);
   }
   return collections;
 }
@@ -119,6 +123,9 @@ gendb::ChangeCallback ToCallback(ChangeHandlers handlers) {
           break;
         case SessionCollId:
           if (handlers.on_session) handlers.on_session(SessionChange(change));
+          break;
+        case OrderCollId:
+          if (handlers.on_order) handlers.on_order(OrderChange(change));
           break;
         default:
           break;
@@ -334,6 +341,43 @@ absl::Status ScopedWrite::UpdateSession(uint64_t session_id, const gendb::Messag
 
 absl::Status ScopedWrite::DeleteSession(uint64_t session_id) {
   return _txn.Delete(SessionCollId, ToSessionKey(session_id));
+}
+
+absl::Status Snapshot::GetOrder(uint64_t order_id, Order& order) const {
+  return ToMessage(_snapshot.Get(OrderCollId, ToOrderKey(order_id)), order);
+}
+
+gendb::ScanIterator<Order> Snapshot::ScanOrder() const {
+  return gendb::ScanIterator<Order>(gendb::ScanCursor(_snapshot, OrderCollId));
+}
+
+absl::Status ScopedWrite::GetOrder(uint64_t order_id, Order& order) const {
+  return ToMessage(_txn.Get(OrderCollId, ToOrderKey(order_id)), order);
+}
+
+gendb::ScanIterator<Order> ScopedWrite::ScanOrder() const {
+  return gendb::ScanIterator<Order>(gendb::ScanCursor(_txn, OrderCollId));
+}
+
+absl::Status ScopedWrite::PutOrder(gendb::BytesConstView order) {
+  // Malformed bytes would read as an empty message here, but they would also be stored and sent on.
+  if (!gendb::MessageView::Verify(order))
+    return absl::InvalidArgumentError("Order: not a valid message");
+  const Order message{order};
+  if (!message.has_order_id())
+    return absl::InvalidArgumentError("Order: the primary key field order_id is not set");
+  return _txn.Put(OrderCollId, ToOrderKey(message), order);
+}
+
+absl::Status ScopedWrite::UpdateOrder(uint64_t order_id, const gendb::MessagePatch& update) {
+  if (update.Modifies(Order::OrderId))
+    return absl::InvalidArgumentError(
+        "Order: a patch cannot change the primary key field order_id");
+  return _txn.Update(OrderCollId, ToOrderKey(order_id), update);
+}
+
+absl::Status ScopedWrite::DeleteOrder(uint64_t order_id) {
+  return _txn.Delete(OrderCollId, ToOrderKey(order_id));
 }
 
 gendb::IndexIterator<Account> Snapshot::GetAccountByAgeEqual(int32_t age,

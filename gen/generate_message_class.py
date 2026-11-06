@@ -47,6 +47,9 @@ def render_schema(template, schema_file: Path) -> str:
             "namespace": naming.to_cpp_namespace(namespace),
             "fields": [f for f in msg.fields if not f.deprecated],
             "deprecated_fields": [f for f in msg.fields if f.deprecated],
+            # Those whose bytes have a structure of their own.
+            "verified_fields": [f for f in msg.fields if not f.deprecated
+                                and (f.repeated or f.field_kind == FieldKind.MESSAGE)],
         })
 
     enums = {}

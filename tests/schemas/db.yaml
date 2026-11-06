@@ -4,6 +4,7 @@ types:
     - tests/schemas/position.gendb
     - tests/schemas/config.gendb
     - tests/schemas/session.gendb
+    - tests/schemas/order.gendb
   include_prefix: ""  # Optional prefix path for generated includes
 
 options:
@@ -31,6 +32,11 @@ collections:
     ephemeral: true
     primary_key:
       - session_id
+
+  - name: orders
+    type: gendb.tests.Order
+    primary_key:
+      - order_id
 
 sequences:
   - name: account_id_sequence

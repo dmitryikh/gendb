@@ -29,14 +29,14 @@ from schema_parser import (BASE_TYPES, INT_RANGES, EnumeratorRef, ParsedEnum, Pa
 NAMES = """
     a b id key value data type name size kind count index item items x y z has_x has_y has_id set_x clear_x
     x_changed builder patch before after message bytes buffer view_x field_x fields_info k_values
-    a_b ab a_bc ab_c s8 s4 var bit
+    a_b ab a_bc ab_c s8 s4 var bit add_x set_y list other depth f repeated
 """.split()
 TYPE_NAMES = "Item Other Config Data Value Thing Color Level Kind State Change Builder Keys ItemList".split()
 ENUMERATORS = "kUnknown kFirst kSecond Red RED None a_b x kX None2 VALUE".split()
 NAMESPACES = ["", "app", "app.core", "a_b.c1"]
 # What mutation splices in.
 TOKENS = """
-    message enum namespace deprecated true false { } : ; = . - 0 1 2 3 -1 0x 0xff 1e5 1.5 1e999 "" "x" "\\x00"
+    message enum namespace deprecated repeated true false { } : ; = . - 0 1 2 3 -1 0x 0xff 1e5 1.5 1e999 "" "x" "\\x00"
     "\\ // \n int32 uint64 string bool float double class field 99999999999999999999 2147483648
 """.split(" ")
 STRING_BYTES = [b"", b"x", b'"', b"\\", b"\n", b"\t", b"\0", b"\xff", b"??=", "имя".encode(), b"\0" * 3, b"%s",
@@ -68,12 +68,17 @@ def random_schema(rng) -> ParsedSchema:
         schema.enums.append(ParsedEnum(name, rng.choice(sorted(INT_RANGES)),
                                        [ParsedEnumerator(v, i) for i, v in enumerate(values)]))
     enums = {e.name: e for e in schema.enums}
-    for name in names[len(schema.enums):]:
+    message_names = names[len(schema.enums):]
+    for name in message_names:
         message = ParsedMessage(name)
         for i, field_name in enumerate(rng.sample(NAMES, rng.randint(0, 10))):
-            type_name = rng.choice(sorted(BASE_TYPES) + sorted(enums))
-            message.fields.append(ParsedField(i + 1, field_name, type_name, random_default(rng, type_name, enums),
-                                              rng.random() < 0.15))
+            # Any message of the file, whether declared yet or not, this one included.
+            type_name = rng.choice(sorted(BASE_TYPES) + sorted(enums) + message_names)
+            repeated = rng.random() < 0.25
+            default = None
+            if not repeated and type_name not in message_names:
+                default = random_default(rng, type_name, enums)
+            message.fields.append(ParsedField(i + 1, field_name, type_name, default, rng.random() < 0.15, repeated))
         schema.messages.append(message)
     return schema
 
@@ -117,7 +122,10 @@ def write_schema(schema: ParsedSchema, rng=None) -> str:
     for message in schema.messages:
         parts += ["message", gap(), message.name, gap(), "{", gap()]
         for f in message.fields:
-            parts += [str(f.number), gap(), f.name, gap(), ":", gap(), f.type, gap()]
+            parts += [str(f.number), gap(), f.name, gap(), ":", gap()]
+            if f.repeated:
+                parts += ["repeated", gap()]
+            parts += [f.type, gap()]
             if f.default is not None:
                 parts += ["=", gap(), write_default(f.default), gap()]
             if f.deprecated:
@@ -185,8 +193,11 @@ def break_it(rng, schema: ParsedSchema) -> ParsedSchema:
         return None
     message = rng.choice(candidates)
     f = rng.choice(message.fields)
-    kind = rng.randrange(5)
-    if kind == 0:
+    kind = rng.randrange(6)
+    if kind == 5:
+        f.repeated = not f.repeated
+        f.default = None
+    elif kind == 0:
         message.fields.pop()
     elif kind == 1:
         f.name = "renamed_field"
@@ -216,7 +227,8 @@ def one_round(rng, template, directory: Path, generate: bool):
     assert [m.name for m in parsed.messages] == [m.name for m in schema.messages]
     for ours, theirs in zip(parsed.messages, schema.messages):
         for a, b in zip(ours.fields, theirs.fields):
-            assert (a.number, a.name, a.type, a.deprecated) == (b.number, b.name, b.type, b.deprecated), source
+            assert (a.number, a.name, a.type, a.deprecated, a.repeated) == (
+                b.number, b.name, b.type, b.deprecated, b.repeated), source
             assert same(a.default, b.default), (a.default, b.default, source)
 
     # Evolution: growth passes, and breakage is noticed.

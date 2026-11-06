@@ -3,10 +3,12 @@
 #pragma once
 #include <array>
 #include <cstdint>
+#include <initializer_list>
 #include <span>
 #include <string_view>
 #include <utility>
 
+#include "gendb/list.h"
 #include "gendb/message.h"
 #include "gendb/reflection.h"
 
@@ -26,7 +28,16 @@ inline constexpr std::array<gendb::EnumValueInfo, 3> kDirectionValues = {
 };
 }  // namespace gendb::tests
 
-// Message classes
+// Message classes, which can refer to each other in any order, and to themselves
+namespace gendb::tests {
+class Position;
+class PositionBuilder;
+}  // namespace gendb::tests
+namespace gendb::tests {
+class ClosedPosition;
+class ClosedPositionBuilder;
+}  // namespace gendb::tests
+
 namespace gendb::tests {
 // Zero-copy view of a serialized Position. Does not own the bytes. A getter returns the
 // field's default if it is not set, which has_x() tells apart from being set to that value.
@@ -44,24 +55,32 @@ class Position {
   // Field reflection metadata using common FieldInfo struct
   static constexpr std::array<gendb::FieldInfo, 6> kFieldsInfo = {
       gendb::FieldInfo{"position_id", PositionId, gendb::FieldInfo::SCALAR, gendb::FieldInfo::INT32,
-                       "", std::span<const gendb::EnumValueInfo>()},
+                       "", std::span<const gendb::EnumValueInfo>(), false},
       gendb::FieldInfo{"account_id", AccountId, gendb::FieldInfo::SCALAR, gendb::FieldInfo::INT32,
-                       "", std::span<const gendb::EnumValueInfo>()},
+                       "", std::span<const gendb::EnumValueInfo>(), false},
       gendb::FieldInfo{"volume", Volume, gendb::FieldInfo::SCALAR, gendb::FieldInfo::INT32, "",
-                       std::span<const gendb::EnumValueInfo>()},
+                       std::span<const gendb::EnumValueInfo>(), false},
       gendb::FieldInfo{"instrument", Instrument, gendb::FieldInfo::STRING,
-                       gendb::FieldInfo::NOT_SCALAR, "", std::span<const gendb::EnumValueInfo>()},
+                       gendb::FieldInfo::NOT_SCALAR, "", std::span<const gendb::EnumValueInfo>(),
+                       false},
       gendb::FieldInfo{"open_price", OpenPrice, gendb::FieldInfo::SCALAR, gendb::FieldInfo::FLOAT,
-                       "", std::span<const gendb::EnumValueInfo>()},
+                       "", std::span<const gendb::EnumValueInfo>(), false},
       gendb::FieldInfo{"direction", Direction, gendb::FieldInfo::ENUM, gendb::FieldInfo::UINT32,
                        "gendb::tests::Direction",
-                       std::span<const gendb::EnumValueInfo>(kDirectionValues)},
+                       std::span<const gendb::EnumValueInfo>(kDirectionValues), false},
   };
 
   Position() = default;
   // The bytes must outlive the view. Malformed bytes read as an empty message; check untrusted
   // input with gendb::MessageView::Verify first.
   Position(std::span<const uint8_t> bytes) : _view(gendb::MessageView::OpenOrEmpty(bytes)) {}
+
+  // Whether these are the canonical bytes of such a message, down through its nested messages and
+  // lists. Linear in the size, and no deeper than `depth`. Fields this program does not know are
+  // checked only from the outside. Call it first on bytes from outside the process.
+  static bool Verify(std::span<const uint8_t> bytes, int depth = gendb::kMaxMessageDepth);
+  // Byte for byte, which the canonical encoding makes the same as field by field.
+  bool operator==(const Position& other) const { return _view == other._view; }
 
   bool has_position_id() const { return _view.Has<PositionId, gendb::KindOf<int32_t>>(); }
   int32_t position_id() const { return _view.Get<PositionId, int32_t>(0); }
@@ -88,6 +107,7 @@ class Position {
 };
 
 // Builds a serialized Position. Strings are borrowed: they must stay alive until Build().
+// Nested messages and repeated fields are serialized or copied when set, so they can go right away.
 class PositionBuilder : public gendb::MessageBuilder {
  public:
   PositionBuilder() = default;
@@ -146,7 +166,8 @@ class PositionBuilder : public gendb::MessageBuilder {
   }
 };
 
-// Builds a partial update of Position. Owns its string values.
+// Builds a partial update of Position. Owns its string values. A nested message or a list is
+// replaced as a whole, which keeps what the log holds a flat list of fields.
 class PositionPatchBuilder {
  public:
   PositionPatchBuilder() = default;
@@ -222,21 +243,29 @@ class ClosedPosition {
   // Field reflection metadata using common FieldInfo struct
   static constexpr std::array<gendb::FieldInfo, 5> kFieldsInfo = {
       gendb::FieldInfo{"position_id", PositionId, gendb::FieldInfo::SCALAR, gendb::FieldInfo::INT32,
-                       "", std::span<const gendb::EnumValueInfo>()},
+                       "", std::span<const gendb::EnumValueInfo>(), false},
       gendb::FieldInfo{"account_id", AccountId, gendb::FieldInfo::SCALAR, gendb::FieldInfo::INT32,
-                       "", std::span<const gendb::EnumValueInfo>()},
+                       "", std::span<const gendb::EnumValueInfo>(), false},
       gendb::FieldInfo{"volume", Volume, gendb::FieldInfo::SCALAR, gendb::FieldInfo::INT32, "",
-                       std::span<const gendb::EnumValueInfo>()},
+                       std::span<const gendb::EnumValueInfo>(), false},
       gendb::FieldInfo{"instrument", Instrument, gendb::FieldInfo::STRING,
-                       gendb::FieldInfo::NOT_SCALAR, "", std::span<const gendb::EnumValueInfo>()},
+                       gendb::FieldInfo::NOT_SCALAR, "", std::span<const gendb::EnumValueInfo>(),
+                       false},
       gendb::FieldInfo{"profit", Profit, gendb::FieldInfo::SCALAR, gendb::FieldInfo::FLOAT, "",
-                       std::span<const gendb::EnumValueInfo>()},
+                       std::span<const gendb::EnumValueInfo>(), false},
   };
 
   ClosedPosition() = default;
   // The bytes must outlive the view. Malformed bytes read as an empty message; check untrusted
   // input with gendb::MessageView::Verify first.
   ClosedPosition(std::span<const uint8_t> bytes) : _view(gendb::MessageView::OpenOrEmpty(bytes)) {}
+
+  // Whether these are the canonical bytes of such a message, down through its nested messages and
+  // lists. Linear in the size, and no deeper than `depth`. Fields this program does not know are
+  // checked only from the outside. Call it first on bytes from outside the process.
+  static bool Verify(std::span<const uint8_t> bytes, int depth = gendb::kMaxMessageDepth);
+  // Byte for byte, which the canonical encoding makes the same as field by field.
+  bool operator==(const ClosedPosition& other) const { return _view == other._view; }
 
   bool has_position_id() const { return _view.Has<PositionId, gendb::KindOf<int32_t>>(); }
   int32_t position_id() const { return _view.Get<PositionId, int32_t>(0); }
@@ -259,6 +288,7 @@ class ClosedPosition {
 };
 
 // Builds a serialized ClosedPosition. Strings are borrowed: they must stay alive until Build().
+// Nested messages and repeated fields are serialized or copied when set, so they can go right away.
 class ClosedPositionBuilder : public gendb::MessageBuilder {
  public:
   ClosedPositionBuilder() = default;
@@ -309,7 +339,8 @@ class ClosedPositionBuilder : public gendb::MessageBuilder {
   }
 };
 
-// Builds a partial update of ClosedPosition. Owns its string values.
+// Builds a partial update of ClosedPosition. Owns its string values. A nested message or a list is
+// replaced as a whole, which keeps what the log holds a flat list of fields.
 class ClosedPositionPatchBuilder {
  public:
   ClosedPositionPatchBuilder() = default;
@@ -360,4 +391,18 @@ class ClosedPositionPatchBuilder {
  private:
   gendb::MessagePatch _patch;
 };
+}  // namespace gendb::tests
+
+// What needs every message class to be complete.
+namespace gendb::tests {
+inline bool Position::Verify(std::span<const uint8_t> bytes, int depth) {
+  if (depth <= 0 || !gendb::MessageView::Verify(bytes)) return false;
+  return true;
+}
+}  // namespace gendb::tests
+namespace gendb::tests {
+inline bool ClosedPosition::Verify(std::span<const uint8_t> bytes, int depth) {
+  if (depth <= 0 || !gendb::MessageView::Verify(bytes)) return false;
+  return true;
+}
 }  // namespace gendb::tests

@@ -3,16 +3,23 @@
 #pragma once
 #include <array>
 #include <cstdint>
+#include <initializer_list>
 #include <span>
 #include <string_view>
 #include <utility>
 
+#include "gendb/list.h"
 #include "gendb/message.h"
 #include "gendb/reflection.h"
 
 // Enum definitions
 
-// Message classes
+// Message classes, which can refer to each other in any order, and to themselves
+namespace gendb::tests {
+class Session;
+class SessionBuilder;
+}  // namespace gendb::tests
+
 namespace gendb::tests {
 // Zero-copy view of a serialized Session. Does not own the bytes. A getter returns the
 // field's default if it is not set, which has_x() tells apart from being set to that value.
@@ -26,15 +33,22 @@ class Session {
   // Field reflection metadata using common FieldInfo struct
   static constexpr std::array<gendb::FieldInfo, 2> kFieldsInfo = {
       gendb::FieldInfo{"session_id", SessionId, gendb::FieldInfo::SCALAR, gendb::FieldInfo::UINT64,
-                       "", std::span<const gendb::EnumValueInfo>()},
+                       "", std::span<const gendb::EnumValueInfo>(), false},
       gendb::FieldInfo{"token", Token, gendb::FieldInfo::STRING, gendb::FieldInfo::NOT_SCALAR, "",
-                       std::span<const gendb::EnumValueInfo>()},
+                       std::span<const gendb::EnumValueInfo>(), false},
   };
 
   Session() = default;
   // The bytes must outlive the view. Malformed bytes read as an empty message; check untrusted
   // input with gendb::MessageView::Verify first.
   Session(std::span<const uint8_t> bytes) : _view(gendb::MessageView::OpenOrEmpty(bytes)) {}
+
+  // Whether these are the canonical bytes of such a message, down through its nested messages and
+  // lists. Linear in the size, and no deeper than `depth`. Fields this program does not know are
+  // checked only from the outside. Call it first on bytes from outside the process.
+  static bool Verify(std::span<const uint8_t> bytes, int depth = gendb::kMaxMessageDepth);
+  // Byte for byte, which the canonical encoding makes the same as field by field.
+  bool operator==(const Session& other) const { return _view == other._view; }
 
   bool has_session_id() const { return _view.Has<SessionId, gendb::KindOf<uint64_t>>(); }
   uint64_t session_id() const { return _view.Get<SessionId, uint64_t>(0ULL); }
@@ -51,6 +65,7 @@ class Session {
 };
 
 // Builds a serialized Session. Strings are borrowed: they must stay alive until Build().
+// Nested messages and repeated fields are serialized or copied when set, so they can go right away.
 class SessionBuilder : public gendb::MessageBuilder {
  public:
   SessionBuilder() = default;
@@ -77,7 +92,8 @@ class SessionBuilder : public gendb::MessageBuilder {
   }
 };
 
-// Builds a partial update of Session. Owns its string values.
+// Builds a partial update of Session. Owns its string values. A nested message or a list is
+// replaced as a whole, which keeps what the log holds a flat list of fields.
 class SessionPatchBuilder {
  public:
   SessionPatchBuilder() = default;
@@ -104,4 +120,12 @@ class SessionPatchBuilder {
  private:
   gendb::MessagePatch _patch;
 };
+}  // namespace gendb::tests
+
+// What needs every message class to be complete.
+namespace gendb::tests {
+inline bool Session::Verify(std::span<const uint8_t> bytes, int depth) {
+  if (depth <= 0 || !gendb::MessageView::Verify(bytes)) return false;
+  return true;
+}
 }  // namespace gendb::tests

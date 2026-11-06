@@ -14,7 +14,7 @@ struct EnumValueInfo {
 
 // Struct used for field reflection in generated message classes
 struct FieldInfo {
-  enum Type { SCALAR, STRING, ENUM };
+  enum Type { SCALAR, STRING, ENUM, MESSAGE };
   enum ScalarType {
     BOOL,
     INT8,
@@ -37,6 +37,8 @@ struct FieldInfo {
   ScalarType scalar_type;
   std::string_view enum_name;
   std::span<const EnumValueInfo> enum_values;
+  // A list of this type.
+  bool repeated = false;
 };
 
 }  // namespace gendb

@@ -1,5 +1,6 @@
 #include "gendb/message.h"
 
+#include "gendb/list.h"
 #include "gendb/log_format.h"
 
 namespace gendb {
@@ -170,14 +171,161 @@ void MessageBuilder::AddRaw(const Field& field) {
   Append(e);
 }
 
+// One repeated field as it is being added to.
+struct MessageBuilder::OwnedList {
+  FieldId id;
+  // Of fixed-size elements, in `packed`, whose bytes are what the field holds. Zero for strings or
+  // messages, in `var`, for which `encoded` is what the field holds, made once it is needed.
+  uint32_t element_size;
+  Bytes packed;
+  ListBuilder var;
+  Bytes encoded;
+};
+
+struct MessageBuilder::Owned {
+  OwnedList* Find(FieldId id) noexcept {
+    for (OwnedList& list : lists) {
+      if (list.id == id) return &list;
+    }
+    return nullptr;
+  }
+
+  std::vector<OwnedList> lists;
+  // Each stays where it is when more are added, as entries point into it.
+  std::vector<Bytes> copies;
+};
+
+void MessageBuilder::OwnedDeleter::operator()(Owned* owned) const noexcept {
+  delete owned;
+}
+
+MessageBuilder::Owned& MessageBuilder::EnsureOwned() {
+  if (_owned == nullptr) _owned.reset(new Owned());
+  return *_owned;
+}
+
 void MessageBuilder::ClearField(FieldId id) {
   for (size_t i = _entries.size(); i-- > 0;) {
     if (_entries[i].id == id) _entries.erase_at(i);
   }
+  if (_owned != nullptr) {
+    std::erase_if(_owned->lists, [id](const OwnedList& list) { return list.id == id; });
+  }
   _finalized = false;
 }
 
+namespace {
+// What a view holds as a message of its own. A view of nothing, as of bytes that were malformed,
+// reads as an empty message, so that is what it is stored as.
+std::span<const uint8_t> MessageBytes(const MessageView& message) noexcept {
+  static constexpr std::array<uint8_t, kHeaderSize> kEmpty = {kMessageVersion};
+  return message.Buffer().empty() ? std::span<const uint8_t>(kEmpty) : message.Buffer();
+}
+}  // namespace
+
+void MessageBuilder::CopyBytesField(FieldId id, std::span<const uint8_t> value) {
+  CheckId(id);
+  // First, as `value` may be from what this clears.
+  Bytes& copy = EnsureOwned().copies.emplace_back(value.begin(), value.end());
+  ClearField(id);
+  AddBytesField(id, copy);
+}
+
+void MessageBuilder::AddMessageField(FieldId id, const MessageView& message) {
+  CopyBytesField(id, MessageBytes(message));
+}
+
+void MessageBuilder::AddMessageField(FieldId id, MessageBuilder& message) {
+  CheckId(id);
+  Bytes& copy = EnsureOwned().copies.emplace_back(message.SerializedSize());
+  message.SerializeTo(copy);
+  ClearField(id);
+  AddBytesField(id, copy);
+}
+
+namespace {
+// The last value given for a field, which a list of it goes on from.
+std::optional<std::span<const uint8_t>> PresentBytes(const detail::EntryVector<64>& entries,
+                                                     FieldId id) {
+  for (size_t i = entries.size(); i-- > 0;) {
+    const detail::Entry& e = entries[i];
+    if (e.id != id) continue;
+    if (e.kind != Kind::Var) throw std::invalid_argument("not a repeated field");
+    return std::span<const uint8_t>(e.len ? e.data : nullptr, e.len);
+  }
+  return std::nullopt;
+}
+}  // namespace
+
+void MessageBuilder::AppendPacked(FieldId id, const void* data, uint32_t element_size,
+                                  size_t size) {
+  CheckId(id);
+  Owned& owned = EnsureOwned();
+  OwnedList* list = owned.Find(id);
+  if (list == nullptr) {
+    OwnedList created{id, element_size, {}, {}, {}};
+    if (const auto present = PresentBytes(_entries, id)) {
+      if (present->size() % element_size != 0) {
+        throw std::invalid_argument("not a list of this type");
+      }
+      created.packed.assign(present->begin(), present->end());
+    }
+    list = &owned.lists.emplace_back(std::move(created));
+  } else if (list->element_size != element_size) {
+    throw std::invalid_argument("not a list of this type");
+  }
+  if (list->packed.size() + size > std::numeric_limits<uint32_t>::max()) {
+    throw std::length_error("message field too large");
+  }
+  const auto* bytes = static_cast<const uint8_t*>(data);
+  if (size != 0) list->packed.insert(list->packed.end(), bytes, bytes + size);
+  _finalized = false;
+}
+
+MessageBuilder::OwnedList& MessageBuilder::VarListOf(FieldId id) {
+  CheckId(id);
+  Owned& owned = EnsureOwned();
+  _finalized = false;
+  if (OwnedList* list = owned.Find(id)) {
+    if (list->element_size != 0) throw std::invalid_argument("not a list of this type");
+    return *list;
+  }
+  OwnedList created{id, 0, {}, {}, {}};
+  if (const auto present = PresentBytes(_entries, id)) {
+    if (!VarList::Verify(*present)) throw std::invalid_argument("not a list of this type");
+    const VarList existing(*present);
+    for (size_t i = 0; i < existing.size(); ++i) created.var.AddBytes(existing[i]);
+  }
+  return owned.lists.emplace_back(std::move(created));
+}
+
+void MessageBuilder::SetEmptyList(FieldId id) {
+  CheckId(id);
+  ClearField(id);
+  VarListOf(id);
+}
+
+void MessageBuilder::AddRepeatedBytes(FieldId id, std::span<const uint8_t> value) {
+  VarListOf(id).var.AddBytes(value);
+}
+
+void MessageBuilder::AddRepeatedMessage(FieldId id, MessageBuilder& message) {
+  VarListOf(id).var.AddMessage(message);
+}
+
+void MessageBuilder::AddRepeatedMessage(FieldId id, const MessageView& message) {
+  AddRepeatedBytes(id, MessageBytes(message));
+}
+
 void MessageBuilder::Finalize() {
+  if (_owned != nullptr) {
+    // Each list's current bytes. Entries from an earlier Finalize may point at what has moved
+    // since, but later entries win below, without those being read.
+    for (OwnedList& list : _owned->lists) {
+      if (list.element_size == 0) list.encoded = list.var.Build();
+      AddBytesField(list.id, list.element_size == 0 ? list.encoded : list.packed);
+    }
+  }
   if (!_sorted) {
     // Stable insertion sort: entries are few and usually almost sorted.
     detail::Entry* e = _entries.data();
@@ -296,6 +444,129 @@ size_t MessageBuilder::SerializeTo(std::span<uint8_t> out) {
     }
   }
   return _total;
+}
+
+namespace {
+// A list's header: its count, and the width of offsets into a payload of this size.
+uint64_t ListHeader(size_t count, size_t payload_size) {
+  return uint64_t(count) * 4 + detail::WidthCode(payload_size);
+}
+
+size_t VarintSize(uint64_t value) {
+  size_t size = 1;
+  for (value >>= 7; value != 0; value >>= 7) ++size;
+  return size;
+}
+}  // namespace
+
+VarList::VarList(std::span<const uint8_t> bytes) noexcept {
+  if (bytes.empty()) return;
+  uint64_t header = 0;
+  size_t at = 0;
+  for (uint32_t shift = 0;; shift += 7) {
+    if (at >= bytes.size() || shift > 35) return;
+    const uint8_t byte = bytes[at++];
+    header |= uint64_t(byte & 0x7f) << shift;
+    if ((byte & 0x80) == 0) break;
+  }
+  const uint64_t count = header >> 2;
+  const uint32_t code = header & 3;
+  if (code == 3 || count == 0 || count > std::numeric_limits<uint32_t>::max()) return;
+  const uint32_t width = 1u << code;
+  if (count * width > bytes.size() - at) return;
+  const size_t fixed = at + size_t(count) * width;
+  const size_t payload_size = bytes.size() - fixed;
+  // As with a message, the last offset frames it, so truncation and trailing bytes show.
+  if (detail::LoadWidth(bytes.data() + fixed - width, width) != payload_size) return;
+  _bytes = bytes;
+  _ends = bytes.data() + at;
+  _payload = bytes.data() + fixed;
+  _count = static_cast<uint32_t>(count);
+  _payload_size = static_cast<uint32_t>(payload_size);
+  _width = static_cast<uint8_t>(width);
+}
+
+bool VarList::Verify(std::span<const uint8_t> bytes) noexcept {
+  if (bytes.empty()) return true;
+  const VarList list(bytes);
+  if (list.empty()) return false;
+  // One list has one form: the shortest header, and the smallest width that holds the offsets.
+  const uint64_t header = ListHeader(list._count, list._payload_size);
+  if (list._width != (1u << (header & 3))) return false;
+  if (static_cast<size_t>(list._ends - bytes.data()) != VarintSize(header)) return false;
+  uint32_t previous = 0;
+  for (size_t i = 0; i < list.size(); ++i) {
+    const uint32_t end = list.End(i);
+    if (end < previous) return false;
+    previous = end;
+  }
+  return true;
+}
+
+ListBuilder& ListBuilder::AddBytes(std::span<const uint8_t> element) {
+  if (_payload.size() + element.size() > std::numeric_limits<uint32_t>::max()) {
+    throw std::length_error("message field too large");
+  }
+  _payload.insert(_payload.end(), element.begin(), element.end());
+  _ends.push_back(static_cast<uint32_t>(_payload.size()));
+  return *this;
+}
+
+ListBuilder& ListBuilder::AddMessage(MessageBuilder& element) {
+  const size_t size = element.SerializedSize();
+  const size_t at = _payload.size();
+  if (at + size > std::numeric_limits<uint32_t>::max()) {
+    throw std::length_error("message field too large");
+  }
+  _payload.resize(at + size);
+  element.SerializeTo(std::span<uint8_t>(_payload).subspan(at));
+  _ends.push_back(static_cast<uint32_t>(_payload.size()));
+  return *this;
+}
+
+ListBuilder& ListBuilder::AddMessage(const MessageView& element) {
+  return AddBytes(MessageBytes(element));
+}
+
+size_t ListBuilder::SerializedSize() const {
+  if (_ends.empty()) return 0;
+  const uint64_t header = ListHeader(_ends.size(), _payload.size());
+  const uint64_t size =
+      VarintSize(header) + uint64_t(_ends.size()) * (1u << (header & 3)) + _payload.size();
+  if (size > std::numeric_limits<uint32_t>::max()) throw std::length_error("message too large");
+  return static_cast<size_t>(size);
+}
+
+void ListBuilder::SerializeTo(std::span<uint8_t> out) const {
+  if (out.size() < SerializedSize()) throw std::length_error("list output buffer too small");
+  if (_ends.empty()) return;
+  uint64_t header = ListHeader(_ends.size(), _payload.size());
+  const uint32_t width = 1u << (header & 3);
+  uint8_t* p = out.data();
+  while (header >= 0x80) {
+    *p++ = static_cast<uint8_t>(header | 0x80);
+    header >>= 7;
+  }
+  *p++ = static_cast<uint8_t>(header);
+  for (const uint32_t end : _ends) {
+    detail::StoreWidth(p, width, end);
+    p += width;
+  }
+  if (!_payload.empty()) std::memcpy(p, _payload.data(), _payload.size());
+}
+
+Bytes PackList(std::span<const std::string_view> values) {
+  ListBuilder list;
+  for (const std::string_view value : values) list.AddString(value);
+  return list.Build();
+}
+
+void MessagePatch::CopyMessage(FieldId id, MessageBuilder& message) {
+  CopyBytes(id, message.Build());
+}
+
+void MessagePatch::CopyMessage(FieldId id, const MessageView& message) {
+  CopyBytes(id, MessageBytes(message));
 }
 
 void MessagePatch::AppendEncoded(std::string& out) const {

@@ -12,6 +12,9 @@
       2 instrument: string = "EURUSD";
       3 direction: Direction = kBuy;
       4 old_volume: int32 deprecated;
+      5 owner: Trader;
+      6 fills: repeated Fill;
+      7 tags: repeated string;
     }
 
 A field states its number, and numbers go up by one from 1 in the order written. So the only place
@@ -22,7 +25,9 @@ What syntax cannot see is what a file used to say, such as a field whose type ch
 schema_evolution.py compares versions.
 
 A default is what a getter returns for a field that is not set. It is not stored, and it does not make
-the field set: has_x() stays false.
+the field set: has_x() stays false. Messages and repeated fields have none.
+
+A field can hold a message declared anywhere in its file, its own included, or be `repeated`.
 """
 import math
 import re
@@ -59,7 +64,7 @@ CPP_MACROS = frozenset("""
     DOMAIN RAND_MAX INFINITY NAN BUFSIZ
 """.split())
 # Field names whose generated members would clash with what every message class has.
-RESERVED_FIELD_NAMES = frozenset({"field", "view", "has_field", "field_count"})
+RESERVED_FIELD_NAMES = frozenset({"field", "view", "has_field", "field_count", "verify"})
 # Generated next to a message `X`, so a message of such a name could clash with them.
 GENERATED_MESSAGE_SUFFIXES = ("PatchBuilder", "Builder", "Change", "Key")
 
@@ -105,6 +110,7 @@ class ParsedField:
     type: str
     default: Optional[Default] = None
     deprecated: bool = False
+    repeated: bool = False
 
 
 @dataclass
@@ -365,13 +371,17 @@ class _Parser:
             self._check_field_name(message.name, name, names)
             names.add(name.value)
             self._expect(":")
+            repeated = self._accept("repeated")
             type_name = self._name("a field type")
+            if type_name.value == "repeated":
+                raise self._error("A list of lists needs a message in between", type_name)
             default = None
             if self._accept("="):
                 default = self._literal()
             deprecated = self._accept("deprecated")
             self._expect(";")
-            message.fields.append(ParsedField(number.value, name.value, type_name.value, default, deprecated))
+            message.fields.append(ParsedField(number.value, name.value, type_name.value, default, deprecated,
+                                              repeated))
             self._type_tokens[(message.name, name.value)] = type_name
         taken = {f.name for f in message.fields}
         for f in message.fields:
@@ -441,10 +451,15 @@ class _Parser:
 
     def _resolve_fields(self, schema: ParsedSchema, message: ParsedMessage):
         enums = {e.name: e for e in schema.enums}
+        messages = {m.name for m in schema.messages}
         for f in message.fields:
             token = self._type_tokens[(message.name, f.name)]
-            if f.type not in BASE_TYPES and f.type not in enums:
+            if f.type not in BASE_TYPES and f.type not in enums and f.type not in messages:
                 raise self._error(f"Field '{f.name}' has unknown type '{f.type}'", token)
+            if f.default is not None and f.repeated:
+                raise self._error(f"Repeated field '{f.name}' cannot have a default", token)
+            if f.default is not None and f.type in messages:
+                raise self._error(f"Message field '{f.name}' cannot have a default", token)
             if f.default is not None:
                 try:
                     f.default = _checked_default(f.type, f.default, enums)

@@ -33,6 +33,7 @@ endif()
 add_library(gendb_lib
     lib/gendb/bits.h
     lib/gendb/math.h
+    lib/gendb/list.h
     lib/gendb/message.h
     lib/gendb/message.cpp
     lib/gendb/checkpoint.h

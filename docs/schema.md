@@ -20,11 +20,23 @@ message Position {
   4 direction: Direction = kBuy;
   5 open_price: float;
   6 old_comment: string deprecated;
+  7 trader: Trader;
+  8 fills: repeated Fill;
+  9 tags: repeated string;
+}
+
+message Trader {
+  1 name: string;
+}
+
+message Fill {
+  1 quantity: int32;
+  2 price: double;
 }
 ```
 
 A file has at most one namespace, at its start, and any number of messages and enums. A message can
-use the enums of its own file.
+use the enums and messages of its own file, wherever they are in it.
 
 | Types | |
 | --- | --- |
@@ -32,6 +44,12 @@ use the enums of its own file.
 | Other scalars | `bool` `float` `double` |
 | Text and bytes | `string` |
 | Enums | Declared with one of the integer types |
+| Messages | Any message of the file, the same one included, which makes a tree |
+| Lists | `repeated` and any type above. A list of lists needs a message in between |
+
+Scalars, strings and enums are what they always were, in the file and in storage, whichever others are
+next to them. Nested messages and lists are stored [inside a field of their
+own](message_format.md#nested-messages-and-lists).
 
 ## Evolution as syntax
 
@@ -64,7 +82,8 @@ python3 gen/schema_evolution.py --base origin/main
 | Moving a declaration to another file | Fine: they are compared by qualified name |
 | Removing a field, message, enum or enumerator | Error |
 | Renaming a field or enumerator | Error |
-| Changing a field's type, or an enum's | Error |
+| Changing a field's type, or an enum's, including which message it holds | Error |
+| Making a field `repeated`, or the opposite | Error |
 | Changing or adding a default of an existing field | Error |
 | Undoing `deprecated` | Error |
 | Changing a collection's type or primary key | Error |
@@ -111,12 +130,15 @@ this has consequences:
 | `"text"` | `string`. Escapes are `\"` `\\` `\n` `\r` `\t` `\0` and `\xHH`, and text is UTF-8 |
 | `kBuy` | An enumerator of the field's enum |
 
+Nested messages and lists have no defaults: they are empty if not set. A primary key or an index cannot be
+one of them.
+
 ## Names
 
 Generated code must compile, so names are checked here rather than left to fail there. Messages and enums
 are PascalCase, and fields and namespaces are snake_case. C++ keywords and common macros are not allowed,
 nor are names that would clash with generated code: a field named after its message, `has_x` next to `x`,
-`field`, `view`, `has_field` and `field_count`, and a message named `Field`, `Message` or `XBuilder` next
+`field`, `view`, `has_field`, `field_count` and `verify`, and a message named `Field`, `Message` or `XBuilder` next
 to `X`.
 
 ## Generated code
@@ -126,8 +148,8 @@ See [api.md](api.md).
 
 ## Testing
 
-`gen/schema_parser_test.py` covers the language, and `tests/message_test.cpp` covers defaults through
-generated code. `gen/fuzz_schema_parser.py` throws random and mutated input at the parser, which must either
+`gen/schema_parser_test.py` covers the language, `tests/message_test.cpp` covers defaults through
+generated code, and `tests/nested_test.cpp` covers nested messages and lists. `gen/fuzz_schema_parser.py` throws random and mutated input at the parser, which must either
 work or raise `SchemaError`. It also checks that whatever parses keeps the numbering rules, that schemas
 survive being written out and read back, that the evolution check tells growth from breakage, and, with
 `--compile`, that code generated from random schemas compiles. The `fuzz` CI job runs it.

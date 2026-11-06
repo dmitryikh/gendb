@@ -10,6 +10,7 @@
 #include "account.gendb.h"
 #include "gendb/message.h"
 #include "message_benchmark_common.h"
+#include "order.gendb.h"
 #include "position.gendb.h"
 
 namespace {
@@ -342,5 +343,93 @@ void GeneratedPositionReadCold(benchmark::State& state) {
   }
 }
 BENCHMARK(GeneratedPositionReadCold)->Name("Position/Generated/ReadCold");
+
+// Nested messages and repeated fields. Order/Lines has that many messages, each with a string, an
+// int and a double. Order/Prices has that many doubles.
+namespace nested {
+using namespace gendb::tests;
+
+gendb::Bytes OrderWithLines(int count) {
+  OrderBuilder order;
+  order.set_order_id(1);
+  OrderLineBuilder line;
+  for (int i = 0; i < count; ++i) {
+    line.Reset();
+    line.set_sku("SKU-12345").set_quantity(i).set_price(1.5);
+    order.add_lines(line);
+  }
+  return order.Build();
+}
+
+void LinesBuild(benchmark::State& state) {
+  for (auto _ : state) {
+    auto bytes = OrderWithLines(static_cast<int>(state.range(0)));
+    benchmark::DoNotOptimize(bytes.data());
+  }
+  state.SetItemsProcessed(state.iterations() * state.range(0));
+}
+BENCHMARK(LinesBuild)->Name("Order/Lines/Build")->Arg(10)->Arg(1000);
+
+void LinesRead(benchmark::State& state) {
+  const auto bytes = OrderWithLines(static_cast<int>(state.range(0)));
+  for (auto _ : state) {
+    benchmark::ClobberMemory();
+    int64_t sum = 0;
+    for (const OrderLine& line : Order{bytes}.lines()) sum += line.quantity();
+    benchmark::DoNotOptimize(sum);
+  }
+  state.SetItemsProcessed(state.iterations() * state.range(0));
+}
+BENCHMARK(LinesRead)->Name("Order/Lines/ReadOneFieldOfEach")->Arg(10)->Arg(1000);
+
+void LinesVerify(benchmark::State& state) {
+  const auto bytes = OrderWithLines(static_cast<int>(state.range(0)));
+  for (auto _ : state) {
+    benchmark::ClobberMemory();
+    benchmark::DoNotOptimize(Order::Verify(bytes));
+  }
+  state.SetItemsProcessed(state.iterations() * state.range(0));
+}
+BENCHMARK(LinesVerify)->Name("Order/Lines/Verify")->Arg(10)->Arg(1000);
+
+void PricesBuild(benchmark::State& state) {
+  const std::vector<double> prices(static_cast<size_t>(state.range(0)), 1.5);
+  for (auto _ : state) {
+    OrderBuilder order;
+    order.set_order_id(1).set_prices(prices);
+    auto bytes = order.Build();
+    benchmark::DoNotOptimize(bytes.data());
+  }
+  state.SetItemsProcessed(state.iterations() * state.range(0));
+}
+BENCHMARK(PricesBuild)->Name("Order/Prices/Build")->Arg(10)->Arg(1000);
+
+void PricesRead(benchmark::State& state) {
+  const std::vector<double> prices(static_cast<size_t>(state.range(0)), 1.5);
+  OrderBuilder order;
+  order.set_prices(prices);
+  const auto bytes = order.Build();
+  for (auto _ : state) {
+    benchmark::ClobberMemory();
+    double sum = 0;
+    for (const double price : Order{bytes}.prices()) sum += price;
+    benchmark::DoNotOptimize(sum);
+  }
+  state.SetItemsProcessed(state.iterations() * state.range(0));
+}
+BENCHMARK(PricesRead)->Name("Order/Prices/ReadAll")->Arg(10)->Arg(1000);
+
+void NestedRead(benchmark::State& state) {
+  const auto bytes =
+      OrderBuilder()
+          .set_customer(CustomerBuilder().set_name("Ann").set_address(AddressBuilder().set_zip(7)))
+          .Build();
+  for (auto _ : state) {
+    benchmark::ClobberMemory();
+    benchmark::DoNotOptimize(Order{bytes}.customer().address().zip());
+  }
+}
+BENCHMARK(NestedRead)->Name("Order/Nested/ReadThreeLevelsDown");
+}  // namespace nested
 
 }  // namespace

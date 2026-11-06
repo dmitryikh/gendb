@@ -3,10 +3,12 @@
 #pragma once
 #include <array>
 #include <cstdint>
+#include <initializer_list>
 #include <span>
 #include <string_view>
 #include <utility>
 
+#include "gendb/list.h"
 #include "gendb/message.h"
 #include "gendb/reflection.h"
 
@@ -31,7 +33,16 @@ inline constexpr std::array<gendb::EnumValueInfo, {{ enum.vals | length }}> k{{ 
 {% endif %}
 {% endfor %}
 
-// Message classes
+// Message classes, which can refer to each other in any order, and to themselves
+{% for table in tables %}
+{% if table.namespace %}namespace {{ table.namespace }} { {% endif %}
+
+class {{ table.name }};
+class {{ table.name }}Builder;
+{% if table.namespace %}} // namespace {{ table.namespace }}
+{% endif %}
+{% endfor %}
+
 {% for table in tables %}
 {% if table.namespace %}namespace {{ table.namespace }} {
 {% endif %}
@@ -52,10 +63,11 @@ class {{ table.name }} {
   static constexpr std::array<gendb::FieldInfo, {{ table.fields | length }}> kFieldsInfo = {
     {% for field in table.fields %}
     gendb::FieldInfo{"{{ field.name }}", {{ field.name | pascalcase }},
-      {% if field.cpp_type == 'std::string' %}gendb::FieldInfo::STRING{% elif field.field_kind == FieldKind.ENUM %}gendb::FieldInfo::ENUM{% else %}gendb::FieldInfo::SCALAR{% endif %},
+      {% if field.field_kind == FieldKind.MESSAGE %}gendb::FieldInfo::MESSAGE{% elif field.cpp_type == 'std::string' %}gendb::FieldInfo::STRING{% elif field.field_kind == FieldKind.ENUM %}gendb::FieldInfo::ENUM{% else %}gendb::FieldInfo::SCALAR{% endif %},
       gendb::FieldInfo::{{ field | scalar_type_name }},
       {% if field.field_kind == FieldKind.ENUM %}"{{ field.cpp_type }}"{% else %}""{% endif %},
-      {% if field.field_kind == FieldKind.ENUM %}std::span<const gendb::EnumValueInfo>(k{{ enums[field.type].name }}Values){% else %}std::span<const gendb::EnumValueInfo>(){% endif %}},
+      {% if field.field_kind == FieldKind.ENUM %}std::span<const gendb::EnumValueInfo>(k{{ enums[field.type].name }}Values){% else %}std::span<const gendb::EnumValueInfo>(){% endif %},
+      {{ 'true' if field.repeated else 'false' }}},
     {% endfor %}
   };
 
@@ -64,8 +76,23 @@ class {{ table.name }} {
   // input with gendb::MessageView::Verify first.
   {{ table.name }}(std::span<const uint8_t> bytes) : _view(gendb::MessageView::OpenOrEmpty(bytes)) {}
 
+  // Whether these are the canonical bytes of such a message, down through its nested messages and
+  // lists. Linear in the size, and no deeper than `depth`. Fields this program does not know are
+  // checked only from the outside. Call it first on bytes from outside the process.
+  static bool Verify(std::span<const uint8_t> bytes, int depth = gendb::kMaxMessageDepth);
+  // Byte for byte, which the canonical encoding makes the same as field by field.
+  bool operator==(const {{ table.name }}& other) const { return _view == other._view; }
+
   {% for field in table.fields %}
-  {% if field.cpp_type == 'std::string' %}
+  {% if field.repeated %}
+  // Empty if not set, which has_{{field.name}}() tells apart from being set to an empty list.
+  bool has_{{field.name}}() const { return _view.Has<{{ field.name | pascalcase }}, gendb::Kind::Var>(); }
+  {{ field.list_type }} {{field.name}}() const { return {{ field.list_type }}(_view.GetBytes<{{ field.name | pascalcase }}>().value_or(std::span<const uint8_t>{})); }
+  {% elif field.field_kind == FieldKind.MESSAGE %}
+  // Empty if not set, which has_{{field.name}}() tells apart from being set to an empty message.
+  bool has_{{field.name}}() const { return _view.Has<{{ field.name | pascalcase }}, gendb::Kind::Var>(); }
+  {{ field.cpp_type }} {{field.name}}() const;
+  {% elif field.cpp_type == 'std::string' %}
   bool has_{{field.name}}() const { return _view.Has<{{ field.name | pascalcase }}, gendb::Kind::Var>(); }
   std::string_view {{field.name}}() const { return _view.GetString<{{ field.name | pascalcase }}>({{ field.default }}); }
   {% elif field.field_kind == FieldKind.ENUM %}
@@ -87,6 +114,7 @@ class {{ table.name }} {
 };
 
 // Builds a serialized {{ table.name }}. Strings are borrowed: they must stay alive until Build().
+// Nested messages and repeated fields are serialized or copied when set, so they can go right away.
 class {{table.name}}Builder : public gendb::MessageBuilder {
  public:
   {{table.name}}Builder() = default;
@@ -94,7 +122,28 @@ class {{table.name}}Builder : public gendb::MessageBuilder {
   explicit {{table.name}}Builder(const {{table.name}}& source) : MessageBuilder(source.View()) {}
 
   {% for field in table.fields %}
-  {% if field.cpp_type == 'std::string' %}
+  {% if field.repeated and field.field_kind == FieldKind.MESSAGE %}
+  {{table.name}}Builder& add_{{field.name}}({{ field.cpp_type }}Builder& value);
+  {{table.name}}Builder& add_{{field.name}}({{ field.cpp_type }}Builder&& value);
+  {{table.name}}Builder& add_{{field.name}}(const {{ field.cpp_type }}& value);
+  {{table.name}}Builder& set_{{field.name}}(const gendb::ListBuilder& value) { CopyBytesField({{ table.name }}::{{ field.name | pascalcase }}, value.Build()); return *this; }
+  {% elif field.repeated and field.cpp_type == 'std::string' %}
+  {{table.name}}Builder& add_{{field.name}}(std::string_view value) { AddRepeatedString({{ table.name }}::{{ field.name | pascalcase }}, value); return *this; }
+  {{table.name}}Builder& set_{{field.name}}(std::span<const std::string_view> value) {
+    SetEmptyList({{ table.name }}::{{ field.name | pascalcase }});
+    for (const std::string_view element : value) AddRepeatedString({{ table.name }}::{{ field.name | pascalcase }}, element);
+    return *this;
+  }
+  {{table.name}}Builder& set_{{field.name}}(std::initializer_list<std::string_view> value) { return set_{{field.name}}(std::span<const std::string_view>(value.begin(), value.size())); }
+  {% elif field.repeated %}
+  {{table.name}}Builder& add_{{field.name}}({{ field.const_ref_type }} value) { AddRepeated<{{ field.cpp_type }}>({{ table.name }}::{{ field.name | pascalcase }}, value); return *this; }
+  {{table.name}}Builder& set_{{field.name}}(std::span<const {{ field.cpp_type }}> value) { SetRepeated<{{ field.cpp_type }}>({{ table.name }}::{{ field.name | pascalcase }}, value); return *this; }
+  {{table.name}}Builder& set_{{field.name}}(std::initializer_list<{{ field.cpp_type }}> value) { return set_{{field.name}}(std::span<const {{ field.cpp_type }}>(value.begin(), value.size())); }
+  {% elif field.field_kind == FieldKind.MESSAGE %}
+  {{table.name}}Builder& set_{{field.name}}({{ field.cpp_type }}Builder& value);
+  {{table.name}}Builder& set_{{field.name}}({{ field.cpp_type }}Builder&& value);
+  {{table.name}}Builder& set_{{field.name}}(const {{ field.cpp_type }}& value);
+  {% elif field.cpp_type == 'std::string' %}
   {{table.name}}Builder& set_{{field.name}}(std::string_view value) { AddStringField({{ table.name }}::{{ field.name | pascalcase }}, value); return *this; }
   template <gendb::TemporaryString S>
   {{table.name}}Builder& set_{{field.name}}(S&&) = delete;
@@ -107,13 +156,39 @@ class {{table.name}}Builder : public gendb::MessageBuilder {
   {% endfor %}
 };
 
-// Builds a partial update of {{ table.name }}. Owns its string values.
+// Builds a partial update of {{ table.name }}. Owns its string values. A nested message or a list is
+// replaced as a whole, which keeps what the log holds a flat list of fields.
 class {{table.name}}PatchBuilder {
  public:
   {{table.name}}PatchBuilder() = default;
 
   {% for field in table.fields %}
-  {% if field.cpp_type == 'std::string' %}
+  {% if field.repeated and field.field_kind == FieldKind.MESSAGE %}
+  {{table.name}}PatchBuilder&& set_{{field.name}}(const gendb::ListBuilder& value) && {
+    _patch.CopyBytes({{ table.name }}::{{ field.name | pascalcase }}, value.Build());
+    return std::move(*this);
+  }
+  {% elif field.repeated and field.cpp_type == 'std::string' %}
+  {{table.name}}PatchBuilder&& set_{{field.name}}(std::span<const std::string_view> value) && {
+    _patch.CopyBytes({{ table.name }}::{{ field.name | pascalcase }}, gendb::PackList(value));
+    return std::move(*this);
+  }
+  {{table.name}}PatchBuilder&& set_{{field.name}}(std::initializer_list<std::string_view> value) && {
+    return std::move(*this).set_{{field.name}}(std::span<const std::string_view>(value.begin(), value.size()));
+  }
+  {% elif field.repeated %}
+  {{table.name}}PatchBuilder&& set_{{field.name}}(std::span<const {{ field.cpp_type }}> value) && {
+    _patch.CopyBytes({{ table.name }}::{{ field.name | pascalcase }}, gendb::PackList<{{ field.cpp_type }}>(value));
+    return std::move(*this);
+  }
+  {{table.name}}PatchBuilder&& set_{{field.name}}(std::initializer_list<{{ field.cpp_type }}> value) && {
+    return std::move(*this).set_{{field.name}}(std::span<const {{ field.cpp_type }}>(value.begin(), value.size()));
+  }
+  {% elif field.field_kind == FieldKind.MESSAGE %}
+  {{table.name}}PatchBuilder&& set_{{field.name}}({{ field.cpp_type }}Builder& value) &&;
+  {{table.name}}PatchBuilder&& set_{{field.name}}({{ field.cpp_type }}Builder&& value) &&;
+  {{table.name}}PatchBuilder&& set_{{field.name}}(const {{ field.cpp_type }}& value) &&;
+  {% elif field.cpp_type == 'std::string' %}
   {{table.name}}PatchBuilder&& set_{{field.name}}(std::string_view value) && {
     _patch.CopyString({{ table.name }}::{{ field.name | pascalcase }}, value);
     return std::move(*this);
@@ -140,6 +215,79 @@ class {{table.name}}PatchBuilder {
  private:
   gendb::MessagePatch _patch;
 };
+{% if table.namespace %}
+} // namespace {{ table.namespace }}
+{% endif %}
+{% endfor %}
+
+// What needs every message class to be complete.
+{% for table in tables %}
+{% if table.namespace %}namespace {{ table.namespace }} {
+{% endif %}
+inline bool {{ table.name }}::Verify(std::span<const uint8_t> bytes, int depth) {
+  if (depth <= 0 || !gendb::MessageView::Verify(bytes)) return false;
+  {% if table.verified_fields %}
+  const gendb::MessageView message = gendb::MessageView::OpenOrEmpty(bytes);
+  {% for field in table.verified_fields %}
+  {% if field.repeated and field.field_kind == FieldKind.MESSAGE %}
+  if (const auto f = message.GetBytes<{{ field.name | pascalcase }}>(); f && !{{ field.list_type }}::Verify(*f, depth)) return false;
+  {% elif field.repeated and field.cpp_type == 'std::string' %}
+  if (const auto f = message.GetBytes<{{ field.name | pascalcase }}>(); f && !gendb::VarList::Verify(*f)) return false;
+  {% elif field.repeated %}
+  if (const auto f = message.GetBytes<{{ field.name | pascalcase }}>(); f && !{{ field.list_type }}::Verify(*f)) return false;
+  {% else %}
+  if (const auto f = message.GetBytes<{{ field.name | pascalcase }}>(); f && !{{ field.cpp_type }}::Verify(*f, depth - 1)) return false;
+  {% endif %}
+  {% endfor %}
+  {% endif %}
+  return true;
+}
+{% for field in table.verified_fields if field.field_kind == FieldKind.MESSAGE %}
+{% if field.repeated %}
+
+inline {{table.name}}Builder& {{table.name}}Builder::add_{{field.name}}({{ field.cpp_type }}Builder& value) {
+  AddRepeatedMessage({{ table.name }}::{{ field.name | pascalcase }}, value);
+  return *this;
+}
+inline {{table.name}}Builder& {{table.name}}Builder::add_{{field.name}}({{ field.cpp_type }}Builder&& value) {
+  AddRepeatedMessage({{ table.name }}::{{ field.name | pascalcase }}, value);
+  return *this;
+}
+inline {{table.name}}Builder& {{table.name}}Builder::add_{{field.name}}(const {{ field.cpp_type }}& value) {
+  AddRepeatedMessage({{ table.name }}::{{ field.name | pascalcase }}, value.View());
+  return *this;
+}
+{% else %}
+
+inline {{ field.cpp_type }} {{ table.name }}::{{ field.name }}() const {
+  return {{ field.cpp_type }}(_view.GetBytes<{{ field.name | pascalcase }}>().value_or(std::span<const uint8_t>{}));
+}
+inline {{table.name}}Builder& {{table.name}}Builder::set_{{field.name}}({{ field.cpp_type }}Builder& value) {
+  AddMessageField({{ table.name }}::{{ field.name | pascalcase }}, value);
+  return *this;
+}
+inline {{table.name}}Builder& {{table.name}}Builder::set_{{field.name}}({{ field.cpp_type }}Builder&& value) {
+  AddMessageField({{ table.name }}::{{ field.name | pascalcase }}, value);
+  return *this;
+}
+inline {{table.name}}Builder& {{table.name}}Builder::set_{{field.name}}(const {{ field.cpp_type }}& value) {
+  AddMessageField({{ table.name }}::{{ field.name | pascalcase }}, value.View());
+  return *this;
+}
+inline {{table.name}}PatchBuilder&& {{table.name}}PatchBuilder::set_{{field.name}}({{ field.cpp_type }}Builder& value) && {
+  _patch.CopyMessage({{ table.name }}::{{ field.name | pascalcase }}, value);
+  return std::move(*this);
+}
+inline {{table.name}}PatchBuilder&& {{table.name}}PatchBuilder::set_{{field.name}}({{ field.cpp_type }}Builder&& value) && {
+  _patch.CopyMessage({{ table.name }}::{{ field.name | pascalcase }}, value);
+  return std::move(*this);
+}
+inline {{table.name}}PatchBuilder&& {{table.name}}PatchBuilder::set_{{field.name}}(const {{ field.cpp_type }}& value) && {
+  _patch.CopyMessage({{ table.name }}::{{ field.name | pascalcase }}, value.View());
+  return std::move(*this);
+}
+{% endif %}
+{% endfor %}
 {% if table.namespace %}
 } // namespace {{ table.namespace }}
 {% endif %}
