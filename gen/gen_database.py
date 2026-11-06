@@ -164,7 +164,8 @@ def main():
             "type": col_type,
             "unique": idx.unique,
             "fields": [
-                {"name": name, "param": store.get_field(collection.type, name).const_ref_type}
+                {"name": name, "param": store.get_field(collection.type, name).const_ref_type,
+                 "id": store.get_field(collection.type, name).id}
                 for name in idx.fields
             ],
         })

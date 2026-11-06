@@ -4,7 +4,8 @@
 set -euo pipefail
 seconds="${FUZZ_SECONDS:-60}"
 build=build/docker-fuzz
-flags="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -g"
+# NDEBUG_SANITIZER: Conan's Abseil is not sanitized, so its tables must keep their usual layout.
+flags="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -g -DNDEBUG_SANITIZER"
 
 conan profile detect --force >/dev/null
 conan install . --output-folder="$build" --build=missing -s build_type=Debug -o "&:with_grpc=False" >/dev/null

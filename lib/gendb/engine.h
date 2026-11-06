@@ -19,6 +19,8 @@
 #include <vector>
 
 #include "absl/container/btree_map.h"
+#include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "gendb/bytes.h"
@@ -61,6 +63,9 @@ struct IndexDef {
   bool (*extract)(BytesConstView message, std::string& out);
   // At most one record per value: a write that would make a second fails with AlreadyExists.
   bool unique = false;
+  // What `extract` reads, so that a patch that touches none of them can leave the index alone.
+  // Empty if not known, which makes every patch count.
+  std::vector<FieldId> fields = {};
 };
 
 struct EngineSchema {
@@ -262,6 +267,7 @@ class Engine {
   // indices, nobody can read them through the API, and subscribers do not hear of them, but they
   // are logged, checkpointed and replicated like any other.
   struct Collection {
+    explicit Collection(internal::BlockPool& pool) : table(pool) {}
     internal::RecordTable table;
     std::vector<size_t> indices;
     uint32_t id;  // In frames.
@@ -325,8 +331,9 @@ class Engine {
   void Notify(uint64_t seq, std::span<const Change> changes);
   ChangePosition ChangePositionAt(uint64_t lsn) const noexcept;
   void AfterCommit(uint64_t wal_bytes);
-  void UpdateIndexNow(size_t collection, std::string_view key, std::optional<BytesConstView> before,
-                      std::optional<BytesConstView> after, uint64_t seq);
+  void UpdateIndexNow(size_t collection, const internal::RecordNode* node,
+                      std::optional<BytesConstView> before, std::optional<BytesConstView> after,
+                      uint64_t seq);
   // Replays one commit frame through `txn`.
   absl::Status ApplyCommitFrame(Transaction& txn, const internal::Frame& frame);
 
@@ -388,6 +395,7 @@ class Engine {
   const EngineSchema _schema;
   const EngineOptions _options;
   // Fixed in size, so that adding a foreign collection does not move what readers are using.
+  internal::BlockPool _pool;  // Under the writer lock. Before what lives in it.
   std::vector<std::unique_ptr<Collection>> _collections;
   std::atomic<size_t> _collection_count{0};
   std::vector<std::pair<uint32_t, size_t>> _durable_ids;  // Sorted. Under the writer lock.
@@ -547,7 +555,8 @@ class IndexCursor {
   const internal::IndexEntry* NextVisible(const internal::IndexEntry* e) const noexcept;
   // The last visible entry with key below `bound`, or the last of all if `bound` is empty.
   const internal::IndexEntry* PreviousVisible(std::string_view bound) const noexcept;
-  std::optional<BytesConstView> Lookup(std::string_view primary_key) const noexcept;
+  // The record of an entry, as this cursor sees it.
+  std::optional<BytesConstView> Lookup(const internal::IndexEntry* entry) const noexcept;
 
   const Engine* _engine;
   size_t _collection;
@@ -578,6 +587,7 @@ class ScanCursor {
 
  private:
   uint64_t _seq;
+  static constexpr size_t kPrefetchNode = 16, kPrefetchVersion = 8;
   const internal::RecordTable::Slots* _slots;
   size_t _next = 0;
   const Transaction* _txn = nullptr;  // Set for a scan with uncommitted changes.
@@ -627,22 +637,84 @@ class Transaction {
   struct IndexDelta {
     bool added;
     uint32_t secondary_size;
+    uint64_t record_hash;
   };
-  using PendingMap = std::unordered_map<std::string_view, PendingWrite*>;
+  // What a transaction has done to one index, by whole key. Most transactions never read it back in
+  // order, so it stays in a hash table, and is sorted once to go into the index, in order, at
+  // commit. The first read in order turns it into a tree for the rest of the transaction.
+  class IndexDeltas {
+   public:
+    // For a unique index, also what AddedFor needs.
+    void Record(std::string_view key, const IndexDelta& delta, bool unique);
+    const IndexDelta* Find(std::string_view key) const noexcept;
+    bool empty() const noexcept { return _hash.empty() && _tree.empty(); }
+    void clear() noexcept;
+    const absl::btree_map<std::string, IndexDelta>& Ordered() const;
+    // Calls `fn` with each change, in key order, and leaves none.
+    template <typename Fn>
+    void Drain(Fn&& fn);
+    // For a unique index: which primary key this transaction gave a value, if any.
+    const std::string* AddedFor(std::string_view secondary) const noexcept;
 
-  PendingWrite* FindPending(size_t collection, std::string_view key) const noexcept;
+   private:
+    mutable absl::flat_hash_map<std::string, IndexDelta> _hash;
+    mutable absl::btree_map<std::string, IndexDelta> _tree;
+    mutable bool _ordered = false;
+    absl::flat_hash_map<std::string, std::string> _added_by_secondary;
+  };
+  // The writes of one collection, by key, over the hash each write already has.
+  class PendingMap {
+   public:
+    PendingWrite* Find(uint64_t hash, std::string_view key) const noexcept {
+      const auto it = _writes.find(Lookup{hash, key});
+      return it == _writes.end() ? nullptr : *it;
+    }
+    void Insert(PendingWrite* write) { _writes.insert(write); }
+    void clear() noexcept { _writes.clear(); }
+
+   private:
+    struct Lookup {
+      uint64_t hash;
+      std::string_view key;
+      explicit Lookup(uint64_t h, std::string_view k) noexcept : hash(h), key(k) {}
+      explicit Lookup(const PendingWrite* write) noexcept : hash(write->hash), key(write->key) {}
+    };
+    struct Hash {
+      using is_transparent = void;
+      size_t operator()(const PendingWrite* write) const noexcept { return write->hash; }
+      size_t operator()(const Lookup& lookup) const noexcept { return lookup.hash; }
+    };
+    struct Equal {
+      using is_transparent = void;
+      template <typename A, typename B>
+      bool operator()(const A& a, const B& b) const noexcept {
+        const Lookup left(a), right(b);
+        return left.hash == right.hash && left.key == right.key;
+      }
+    };
+    absl::flat_hash_set<PendingWrite*, Hash, Equal> _writes;
+  };
+
+  PendingWrite* FindPending(size_t collection, uint64_t hash, std::string_view key) const noexcept {
+    return _pending[collection].Find(hash, key);
+  }
+  std::optional<BytesConstView> GetHashed(size_t collection, uint64_t hash,
+                                          std::string_view key) const noexcept;
   void SetPending(size_t collection, uint64_t hash, std::string_view key, internal::Version* value,
                   std::string patch = {});
   // Replaying a log does not check unique indices: the primary did, and its schema decides.
   void PutUnchecked(size_t collection, BytesConstView key, BytesConstView value);
-  absl::Status CheckUnique(size_t collection, std::string_view key, BytesConstView value) const;
+  // With `patch`, what the patch cannot have changed needs no look.
+  absl::Status CheckUnique(size_t collection, std::string_view key, BytesConstView value,
+                           const MessagePatch* patch = nullptr) const;
   // Whether the log would hold this collection's updates as patches.
   bool LogsPatches(size_t collection) const noexcept;
   // Replays a logged patch, and checks that it gives the record the primary had.
   absl::Status ApplyLoggedPatch(size_t collection, std::string_view key, const MessagePatch& patch,
                                 uint32_t result_crc);
-  void UpdateIndices(size_t collection, std::string_view key, std::optional<BytesConstView> before,
-                     std::optional<BytesConstView> after);
+  void UpdateIndices(size_t collection, uint64_t hash, std::string_view key,
+                     std::optional<BytesConstView> before, std::optional<BytesConstView> after,
+                     const MessagePatch* patch = nullptr);
   // Drops deletions of keys that do not exist. Returns whether anything is left to commit, and
   // whether it reaches the log.
   std::pair<bool, bool> ResolveWrites() noexcept;
@@ -655,7 +727,7 @@ class Transaction {
   std::unique_lock<std::mutex> _lock;
   std::deque<PendingWrite> _writes;  // Stable addresses, in first-write order.
   std::vector<PendingMap> _pending;  // Per collection; keys view PendingWrite::key.
-  std::vector<absl::btree_map<std::string, IndexDelta>> _index_deltas;
+  std::vector<IndexDeltas> _index_deltas;
   std::string _old_key, _new_key;  // Scratch for UpdateIndices.
 };
 

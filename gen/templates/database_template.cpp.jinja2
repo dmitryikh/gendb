@@ -33,7 +33,8 @@ gendb::EngineSchema MakeSchema() {
 {% endfor %}
          return true;
        },
-       /*unique=*/{{ 'true' if idx.unique else 'false' }}});
+       /*unique=*/{{ 'true' if idx.unique else 'false' }},
+       /*fields=*/{ {% for f in idx.fields %}{{ f.id }}{{ ', ' if not loop.last }}{% endfor %} }});
 {% endfor %}
   return schema;
 }

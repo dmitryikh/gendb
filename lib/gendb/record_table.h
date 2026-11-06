@@ -7,6 +7,7 @@
 #include <new>
 #include <string_view>
 
+#include "gendb/block_pool.h"
 #include "gendb/bytes.h"
 
 namespace gendb::internal {
@@ -19,20 +20,22 @@ struct Version {
   uint32_t size;
   bool tombstone;
 
-  static Version* Create(size_t size, bool tombstone) {
-    auto* v = static_cast<Version*>(::operator new(sizeof(Version) + size));
+  static Version* Create(BlockPool& pool, size_t size, bool tombstone) {
+    auto* v = static_cast<Version*>(pool.Allocate(sizeof(Version) + size));
     v->seq = 0;
     v->older = nullptr;
     v->size = static_cast<uint32_t>(size);
     v->tombstone = tombstone;
     return v;
   }
-  static Version* Copy(BytesConstView bytes) {
-    Version* v = Create(bytes.size(), false);
+  static Version* Copy(BlockPool& pool, BytesConstView bytes) {
+    Version* v = Create(pool, bytes.size(), false);
     if (!bytes.empty()) std::memcpy(v->data(), bytes.data(), bytes.size());
     return v;
   }
-  static void Destroy(Version* v) noexcept { ::operator delete(v); }
+  static void Destroy(BlockPool& pool, Version* v) noexcept {
+    if (v != nullptr) pool.Free(v, sizeof(Version) + v->size);
+  }
 
   uint8_t* data() noexcept { return reinterpret_cast<uint8_t*>(this + 1); }
   const uint8_t* data() const noexcept { return reinterpret_cast<const uint8_t*>(this + 1); }
@@ -67,27 +70,16 @@ class RecordTable {
     std::unique_ptr<std::atomic<RecordNode*>[]> slots;
   };
 
-  RecordTable() : _slots(NewSlots(16)) {}
-  ~RecordTable() {
-    const Slots* slots = _slots.load(std::memory_order_relaxed);
-    for (size_t i = 0; i <= slots->mask; ++i) {
-      RecordNode* node = slots->slots[i].load(std::memory_order_relaxed);
-      if (node == nullptr || node == Erased()) continue;
-      Version* v = node->head.load(std::memory_order_relaxed);
-      while (v != nullptr) {
-        Version* older = v->older;
-        Version::Destroy(v);
-        v = older;
-      }
-      DestroyNode(node);
-    }
-    DestroySlots(slots);
-  }
+  // Records live in `pool`, which frees them when it goes.
+  explicit RecordTable(BlockPool& pool) : _pool(pool), _slots(NewSlots(16)) {}
+  ~RecordTable() { DestroySlots(_slots.load(std::memory_order_relaxed)); }
   RecordTable(const RecordTable&) = delete;
   RecordTable& operator=(const RecordTable&) = delete;
 
   static RecordNode* Erased() noexcept { return reinterpret_cast<RecordNode*>(uintptr_t{1}); }
-  static void DestroyNode(RecordNode* node) noexcept { ::operator delete(node); }
+  void DestroyNode(RecordNode* node) noexcept {
+    _pool.Free(node, sizeof(RecordNode) + node->key_size);
+  }
   static void DestroySlots(const Slots* slots) noexcept { delete slots; }
 
   const Slots* LoadSlots() const noexcept { return _slots.load(std::memory_order_acquire); }
@@ -108,7 +100,7 @@ class RecordTable {
       const size_t capacity = _slots.load(std::memory_order_relaxed)->mask + 1;
       *replaced = Rehash(live() * 2 >= capacity ? capacity * 2 : capacity);
     }
-    auto* node = static_cast<RecordNode*>(::operator new(sizeof(RecordNode) + key.size()));
+    auto* node = static_cast<RecordNode*>(_pool.Allocate(sizeof(RecordNode) + key.size()));
     new (&node->head) std::atomic<Version*>(nullptr);
     node->hash = hash;
     node->key_size = static_cast<uint32_t>(key.size());
@@ -173,6 +165,7 @@ class RecordTable {
     return old;
   }
 
+  BlockPool& _pool;
   std::atomic<const Slots*> _slots;  // Replaced only by the writer.
   size_t _used = 0;                  // Occupied and erased slots.
   std::atomic<size_t> _live{0};

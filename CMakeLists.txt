@@ -32,6 +32,7 @@ endif()
 # Main library
 add_library(gendb_lib
     lib/gendb/bits.h
+    lib/gendb/block_pool.h
     lib/gendb/math.h
     lib/gendb/list.h
     lib/gendb/message.h
@@ -69,7 +70,7 @@ target_include_directories(gendb_lib PUBLIC
 )
 set_target_properties(gendb_lib PROPERTIES EXPORT_NAME gendb)
 add_library(gendb::gendb ALIAS gendb_lib)
-target_link_libraries(gendb_lib PUBLIC absl::btree absl::crc32c absl::inlined_vector absl::hash absl::span absl::status absl::statusor absl::strings)
+target_link_libraries(gendb_lib PUBLIC absl::btree absl::flat_hash_map absl::flat_hash_set absl::crc32c absl::inlined_vector absl::hash absl::span absl::status absl::statusor absl::strings)
 find_package(Threads REQUIRED)
 target_link_libraries(gendb_lib PUBLIC Threads::Threads)
 add_dependencies(gendb_lib gendb_lib_codegen)
@@ -116,6 +117,7 @@ endif()
 if(GENDB_BUILD_TESTS)
     add_executable(gendb_tests
         lib/gendb/bits_test.cpp
+        lib/gendb/block_pool_test.cpp
         lib/gendb/key_codec_test.cpp
         lib/gendb/message_test.cpp
     )

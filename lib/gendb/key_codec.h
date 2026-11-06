@@ -61,14 +61,27 @@ inline constexpr uint8_t kStringEnd = 0x01;
 
 inline size_t EncodedStringSize(std::string_view s) noexcept {
   size_t zeros = 0;
-  for (const char c : s) zeros += c == 0 ? 1 : 0;
+  for (const char *at = s.data(), *const end = at + s.size(); at != end; ++zeros, ++at) {
+    at = static_cast<const char*>(std::memchr(at, 0, static_cast<size_t>(end - at)));
+    if (at == nullptr) break;
+  }
   return s.size() + zeros + 2;
 }
 
 inline void WriteString(std::string_view s, uint8_t* out) noexcept {
-  for (const char c : s) {
-    *out++ = static_cast<uint8_t>(c);
-    if (c == 0) *out++ = kStringEscape;
+  // Zero bytes are rare, so most strings are one copy.
+  while (!s.empty()) {
+    const void* zero = std::memchr(s.data(), 0, s.size());
+    const size_t run =
+        zero == nullptr ? s.size() : static_cast<size_t>(static_cast<const char*>(zero) - s.data());
+    std::memcpy(out, s.data(), run);
+    out += run;
+    s.remove_prefix(run);
+    if (zero != nullptr) {
+      *out++ = 0x00;
+      *out++ = kStringEscape;
+      s.remove_prefix(1);
+    }
   }
   *out++ = 0x00;
   *out = kStringEnd;

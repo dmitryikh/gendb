@@ -15,25 +15,28 @@ using namespace gendb;
 namespace {
 // Reads all of it the way a program would. This walks a damaged record safely, and only as deep as
 // it goes, as each level is inside the bytes of the one before.
-int WalkTree(const tests::TreeNode& node, int depth) {
+// Unsigned, as whatever the bytes say gets added up.
+uint32_t WalkTree(const tests::TreeNode& node, int depth) {
   if (depth == 0) return 0;
-  int sum = node.value();
+  uint32_t sum = static_cast<uint32_t>(node.value());
   if (node.has_next()) sum += WalkTree(node.next(), depth - 1);
   for (const tests::TreeNode& child : node.children()) sum += WalkTree(child, depth - 1);
   return sum;
 }
 
-int WalkOrder(const tests::Order& order) {
-  int sum = static_cast<int>(order.order_id()) + static_cast<int>(order.note().size());
+uint32_t WalkOrder(const tests::Order& order) {
+  uint32_t sum =
+      static_cast<uint32_t>(order.order_id()) + static_cast<uint32_t>(order.note().size());
   const tests::Customer customer = order.customer();
-  sum += static_cast<int>(customer.name().size()) + customer.address().zip();
-  for (const std::string_view phone : customer.phones()) sum += static_cast<int>(phone.size());
-  for (const tests::OrderLine& line : order.lines()) sum += line.quantity();
-  for (const std::string_view tag : order.tags()) sum += static_cast<int>(tag.size());
+  sum += static_cast<uint32_t>(customer.name().size()) +
+         static_cast<uint32_t>(customer.address().zip());
+  for (const std::string_view phone : customer.phones()) sum += static_cast<uint32_t>(phone.size());
+  for (const tests::OrderLine& line : order.lines()) sum += static_cast<uint32_t>(line.quantity());
+  for (const std::string_view tag : order.tags()) sum += static_cast<uint32_t>(tag.size());
   for (const double price : order.prices()) sum += price > 0 ? 1 : 0;
-  for (const int16_t quantity : order.quantities()) sum += quantity;
+  for (const int16_t quantity : order.quantities()) sum += static_cast<uint32_t>(quantity);
   for (const bool flag : order.flags()) sum += flag ? 1 : 0;
-  for (const tests::OrderStatus status : order.history()) sum += static_cast<int>(status);
+  for (const tests::OrderStatus status : order.history()) sum += static_cast<uint32_t>(status);
   return sum;
 }
 
@@ -62,7 +65,7 @@ void FuzzLists(std::span<const uint8_t> bytes) {
 }
 
 void FuzzGenerated(std::span<const uint8_t> bytes) {
-  volatile int sink = WalkOrder(tests::Order(bytes));
+  volatile uint32_t sink = WalkOrder(tests::Order(bytes));
   sink = WalkTree(tests::TreeNode(bytes), kMaxMessageDepth);
   (void)sink;
   // Verified bytes survive being taken apart and put together again.
