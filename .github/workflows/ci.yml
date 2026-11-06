@@ -20,7 +20,8 @@ jobs:
 
       # Dependencies take long to build, gRPC above all, and change rarely.
       - name: Restore the Conan cache
-        uses: actions/cache@v4
+        id: conan-cache
+        uses: actions/cache/restore@v4
         with:
           path: conan-cache
           key: conan-${{ matrix.job }}-${{ hashFiles('conanfile.py', 'Dockerfile') }}
@@ -28,8 +29,8 @@ jobs:
       - name: Run
         run: |
           mkdir -p conan-cache
-          # The image's user is not the runner's.
-          sudo chown -R 1000:1000 . conan-cache
+          # Files must belong to the image's user, whatever its ID is.
+          sudo chown -R "$(docker run --rm gendb-dev id -u):$(docker run --rm gendb-dev id -g)" .
           docker run --rm \
             -v "$PWD":/workspace -w /workspace \
             -v "$PWD/conan-cache":/home/dev/.conan2 \
@@ -38,6 +39,14 @@ jobs:
       - name: Give the workspace back
         if: always()
         run: sudo chown -R "$(id -u):$(id -g)" .
+
+      # Even if the job failed: built dependencies are good, and take long to build again.
+      - name: Save the Conan cache
+        if: always() && steps.conan-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: conan-cache
+          key: ${{ steps.conan-cache.outputs.cache-primary-key }}
 
       - name: Keep what a fuzzer found
         if: failure() && matrix.job == 'fuzz'
