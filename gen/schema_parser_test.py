@@ -142,3 +142,44 @@ def test_source_that_is_not_utf8_is_an_error():
 
 def test_a_very_long_number_is_an_error():
     rejects("message M { 1 a: int32 = " + "1" * 100000 + "; }", "too long")
+
+
+def test_nested_messages_in_any_order():
+    schema = parse_schema("""
+        message Order {
+          1 customer: Customer;
+          2 lines: repeated Line;
+          3 parent: Order;
+          4 tags: repeated string;
+          5 prices: repeated double;
+          6 kinds: repeated Kind deprecated;
+        }
+        message Customer { 1 name: string; }
+        message Line { 1 sku: string; }
+        enum Kind : uint8 { kA = 0; }
+    """)
+    fields = schema.messages[0].fields
+    assert [(f.type, f.repeated, f.deprecated) for f in fields] == [
+        ("Customer", False, False), ("Line", True, False), ("Order", False, False),
+        ("string", True, False), ("double", True, False), ("Kind", True, True)]
+
+
+@pytest.mark.parametrize("field, error", [
+    ("1 a: Other = 1;", "Message field 'a' cannot have a default"),
+    ("1 a: repeated int32 = 1;", "Repeated field 'a' cannot have a default"),
+    ('1 a: repeated string = "x";', "Repeated field 'a' cannot have a default"),
+    ("1 a: repeated repeated int32;", "A list of lists"),
+    ("1 a: repeated Missing;", "unknown type 'Missing'"),
+    ("1 a: repeated;", "Expected a field type"),
+    ("1 verify: int32;", "'verify' cannot name a field"),
+])
+def test_what_nested_and_repeated_fields_cannot_be(field, error):
+    with pytest.raises(SchemaError, match=error):
+        parse_schema(f"message Item {{ {field} }} message Other {{ }}")
+
+
+def test_repeated_can_still_name_a_field():
+    schema = parse_schema("message Item { 1 repeated: repeated int32; }")
+    assert schema.messages[0].fields[0].name == "repeated"
+    assert schema.messages[0].fields[0].repeated
+

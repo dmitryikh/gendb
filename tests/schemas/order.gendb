@@ -1,0 +1,47 @@
+// Nested messages and repeated fields, of each type.
+namespace gendb.tests;
+
+enum OrderStatus : uint16 {
+  kNew = 0;
+  kPaid = 1;
+  kShipped = 2;
+}
+
+// Declared after the message that uses it, which is fine.
+message Order {
+  1 order_id: uint64;
+  2 note: string = "none";
+  3 status: OrderStatus;
+  4 customer: Customer;
+  5 lines: repeated OrderLine;
+  6 tags: repeated string;
+  7 prices: repeated double;
+  8 quantities: repeated int16;
+  9 flags: repeated bool;
+  10 history: repeated OrderStatus;
+  11 old_lines: repeated OrderLine deprecated;
+}
+
+message Customer {
+  1 name: string;
+  2 address: Address;
+  3 phones: repeated string;
+}
+
+message Address {
+  1 city: string;
+  2 zip: int32;
+}
+
+message OrderLine {
+  1 sku: string;
+  2 quantity: int32;
+  3 price: double;
+}
+
+// Refers to itself: a tree.
+message TreeNode {
+  1 value: int32;
+  2 next: TreeNode;
+  3 children: repeated TreeNode;
+}

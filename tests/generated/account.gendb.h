@@ -3,16 +3,23 @@
 #pragma once
 #include <array>
 #include <cstdint>
+#include <initializer_list>
 #include <span>
 #include <string_view>
 #include <utility>
 
+#include "gendb/list.h"
 #include "gendb/message.h"
 #include "gendb/reflection.h"
 
 // Enum definitions
 
-// Message classes
+// Message classes, which can refer to each other in any order, and to themselves
+namespace gendb::tests {
+class Account;
+class AccountBuilder;
+}  // namespace gendb::tests
+
 namespace gendb::tests {
 // Zero-copy view of a serialized Account. Does not own the bytes. A getter returns the
 // field's default if it is not set, which has_x() tells apart from being set to that value.
@@ -32,27 +39,36 @@ class Account {
   // Field reflection metadata using common FieldInfo struct
   static constexpr std::array<gendb::FieldInfo, 8> kFieldsInfo = {
       gendb::FieldInfo{"account_id", AccountId, gendb::FieldInfo::SCALAR, gendb::FieldInfo::UINT64,
-                       "", std::span<const gendb::EnumValueInfo>()},
+                       "", std::span<const gendb::EnumValueInfo>(), false},
       gendb::FieldInfo{"trader_id", TraderId, gendb::FieldInfo::STRING,
-                       gendb::FieldInfo::NOT_SCALAR, "", std::span<const gendb::EnumValueInfo>()},
+                       gendb::FieldInfo::NOT_SCALAR, "", std::span<const gendb::EnumValueInfo>(),
+                       false},
       gendb::FieldInfo{"name", Name, gendb::FieldInfo::STRING, gendb::FieldInfo::NOT_SCALAR, "",
-                       std::span<const gendb::EnumValueInfo>()},
+                       std::span<const gendb::EnumValueInfo>(), false},
       gendb::FieldInfo{"address", Address, gendb::FieldInfo::STRING, gendb::FieldInfo::NOT_SCALAR,
-                       "", std::span<const gendb::EnumValueInfo>()},
+                       "", std::span<const gendb::EnumValueInfo>(), false},
       gendb::FieldInfo{"age", Age, gendb::FieldInfo::SCALAR, gendb::FieldInfo::INT32, "",
-                       std::span<const gendb::EnumValueInfo>()},
+                       std::span<const gendb::EnumValueInfo>(), false},
       gendb::FieldInfo{"is_active", IsActive, gendb::FieldInfo::SCALAR, gendb::FieldInfo::BOOL, "",
-                       std::span<const gendb::EnumValueInfo>()},
+                       std::span<const gendb::EnumValueInfo>(), false},
       gendb::FieldInfo{"balance", Balance, gendb::FieldInfo::SCALAR, gendb::FieldInfo::FLOAT, "",
-                       std::span<const gendb::EnumValueInfo>()},
+                       std::span<const gendb::EnumValueInfo>(), false},
       gendb::FieldInfo{"config_name", ConfigName, gendb::FieldInfo::STRING,
-                       gendb::FieldInfo::NOT_SCALAR, "", std::span<const gendb::EnumValueInfo>()},
+                       gendb::FieldInfo::NOT_SCALAR, "", std::span<const gendb::EnumValueInfo>(),
+                       false},
   };
 
   Account() = default;
   // The bytes must outlive the view. Malformed bytes read as an empty message; check untrusted
   // input with gendb::MessageView::Verify first.
   Account(std::span<const uint8_t> bytes) : _view(gendb::MessageView::OpenOrEmpty(bytes)) {}
+
+  // Whether these are the canonical bytes of such a message, down through its nested messages and
+  // lists. Linear in the size, and no deeper than `depth`. Fields this program does not know are
+  // checked only from the outside. Call it first on bytes from outside the process.
+  static bool Verify(std::span<const uint8_t> bytes, int depth = gendb::kMaxMessageDepth);
+  // Byte for byte, which the canonical encoding makes the same as field by field.
+  bool operator==(const Account& other) const { return _view == other._view; }
 
   bool has_account_id() const { return _view.Has<AccountId, gendb::KindOf<uint64_t>>(); }
   uint64_t account_id() const { return _view.Get<AccountId, uint64_t>(0ULL); }
@@ -81,6 +97,7 @@ class Account {
 };
 
 // Builds a serialized Account. Strings are borrowed: they must stay alive until Build().
+// Nested messages and repeated fields are serialized or copied when set, so they can go right away.
 class AccountBuilder : public gendb::MessageBuilder {
  public:
   AccountBuilder() = default;
@@ -161,7 +178,8 @@ class AccountBuilder : public gendb::MessageBuilder {
   }
 };
 
-// Builds a partial update of Account. Owns its string values.
+// Builds a partial update of Account. Owns its string values. A nested message or a list is
+// replaced as a whole, which keeps what the log holds a flat list of fields.
 class AccountPatchBuilder {
  public:
   AccountPatchBuilder() = default;
@@ -236,4 +254,12 @@ class AccountPatchBuilder {
  private:
   gendb::MessagePatch _patch;
 };
+}  // namespace gendb::tests
+
+// What needs every message class to be complete.
+namespace gendb::tests {
+inline bool Account::Verify(std::span<const uint8_t> bytes, int depth) {
+  if (depth <= 0 || !gendb::MessageView::Verify(bytes)) return false;
+  return true;
+}
 }  // namespace gendb::tests

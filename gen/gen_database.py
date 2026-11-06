@@ -148,7 +148,8 @@ def main():
             "pk_fixed_size": pk_fixed_size, # -1 in case the size is not fixed
             "private": col.private,
             "ephemeral": col.ephemeral,
-            "fields": store.list_fields(col.type),
+            # A deprecated field has no accessors to compare.
+            "fields": [f.name for f in store.get_message(col.type).fields if not f.deprecated],
         })
 
     # Compose indices info

@@ -22,6 +22,7 @@
 #include "config.gendb.h"
 #include "database.h"
 #include "metadata.gendb.h"
+#include "order.gendb.h"
 #include "position.gendb.h"
 #include "session.gendb.h"
 
@@ -33,6 +34,50 @@ class ChangeSubscriptionTest : public ::testing::Test {
  protected:
   Db db;
 };
+
+TEST_F(ChangeSubscriptionTest, TellsWhetherNestedMessagesAndListsChanged) {
+  struct Seen {
+    bool customer, lines, tags, prices, note;
+  };
+  std::vector<Seen> seen;
+  auto subscription = db.Subscribe({.on_order = [&seen](const OrderChange& change) {
+    seen.push_back({change.customer_changed(), change.lines_changed(), change.tags_changed(),
+                    change.prices_changed(), change.note_changed()});
+  }});
+  OrderBuilder order;
+  order.set_order_id(1).set_customer(CustomerBuilder().set_name("a"));
+  order.add_lines(OrderLineBuilder().set_sku("a")).set_tags({"a"}).set_prices({1});
+  {
+    auto writer = db.CreateWriter();
+    ASSERT_TRUE(writer.PutOrder(order.Build()).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+  }
+  const auto update = [this](gendb::MessagePatch patch) {
+    auto writer = db.CreateWriter();
+    ASSERT_TRUE(writer.UpdateOrder(1, patch).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+  };
+  update(OrderPatchBuilder().set_note("x").Build());
+  update(OrderPatchBuilder().set_customer(CustomerBuilder().set_name("b")).Build());
+  update(OrderPatchBuilder().set_tags({"b"}).Build());
+  update(OrderPatchBuilder().set_prices({2}).Build());
+  update(OrderPatchBuilder().clear_prices().Build());
+  // To what it already was.
+  update(OrderPatchBuilder().set_tags({"b"}).Build());
+  subscription.WaitUntilDelivered();
+
+  const auto as_tuple = [](const Seen& s) {
+    return std::make_tuple(s.customer, s.lines, s.tags, s.prices, s.note);
+  };
+  ASSERT_EQ(seen.size(), 7u);
+  EXPECT_EQ(as_tuple(seen[0]), std::make_tuple(true, true, true, true, false));
+  EXPECT_EQ(as_tuple(seen[1]), std::make_tuple(false, false, false, false, true));
+  EXPECT_EQ(as_tuple(seen[2]), std::make_tuple(true, false, false, false, false));
+  EXPECT_EQ(as_tuple(seen[3]), std::make_tuple(false, false, true, false, false));
+  EXPECT_EQ(as_tuple(seen[4]), std::make_tuple(false, false, false, true, false));
+  EXPECT_EQ(as_tuple(seen[5]), std::make_tuple(false, false, false, true, false));
+  EXPECT_EQ(as_tuple(seen[6]), std::make_tuple(false, false, false, false, false));
+}
 
 TEST_F(ChangeSubscriptionTest, DeliversBeforeAfterAndWhatChanged) {
   struct Seen {

@@ -114,8 +114,13 @@ std::vector<uint8_t> ParseText(std::string_view text_data) {
       if (field.name == field_info.name) {
         field_found = true;
 
+        if (field_info.repeated) {
+          throw std::runtime_error("The text format has no repeated fields: " + field.name);
+        }
         // Set the field based on its type using generic MessageBuilder
         switch (field_info.type) {
+          case gendb::FieldInfo::MESSAGE:
+            throw std::runtime_error("The text format has no nested messages: " + field.name);
           case gendb::FieldInfo::STRING:
             builder.AddStringField(field_info.field_id,
                                    strings.emplace_back(ParseStringValue(field.value)));

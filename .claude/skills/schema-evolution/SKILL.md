@@ -19,6 +19,8 @@ Work out which row below it falls under, and make the allowed form of it. People
 | Stop using a field | Mark it `deprecated` where it is, and remove its uses in code | Its number must never mean anything else, and stored values survive rewrites |
 | Rename a field | Deprecate it, and add a field with the new name | Generated names are API, and a rename reads as a different field in any diff |
 | Change a field's type, even to a wider one | Deprecate it, add a new field, and migrate in application code if old values matter | A different storage class reads as absent, so the data would seem to vanish |
+| Make a field `repeated`, or the opposite, or hold another message | Deprecate it, add a new field, and migrate in application code if old values matter | A nested message, a list and a string are all stored as bytes of a field, so nothing in the data says that it is misread |
+| Add a field to a nested message | Add it at the end, with the next number, as for any message | Old readers keep it, inside the parent's bytes, through updates |
 | Change or add a default on an existing field | Deprecate it, and add a new field with that default | A default is not stored: changing it changes the meaning of every record that does not set the field |
 | Add an enumerator | Add it at the end, with the next number | Readers that do not know it still get the number |
 | Remove or rename an enumerator | Keep it, and stop writing it | Records may hold its number |

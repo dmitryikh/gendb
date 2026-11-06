@@ -3,10 +3,12 @@
 #pragma once
 #include <array>
 #include <cstdint>
+#include <initializer_list>
 #include <span>
 #include <string_view>
 #include <utility>
 
+#include "gendb/list.h"
 #include "gendb/message.h"
 #include "gendb/reflection.h"
 
@@ -26,7 +28,12 @@ inline constexpr std::array<gendb::EnumValueInfo, 3> kLevelValues = {
 };
 }  // namespace gendb::tests::defaults
 
-// Message classes
+// Message classes, which can refer to each other in any order, and to themselves
+namespace gendb::tests::defaults {
+class Settings;
+class SettingsBuilder;
+}  // namespace gendb::tests::defaults
+
 namespace gendb::tests::defaults {
 // Zero-copy view of a serialized Settings. Does not own the bytes. A getter returns the
 // field's default if it is not set, which has_x() tells apart from being set to that value.
@@ -55,45 +62,53 @@ class Settings {
   // Field reflection metadata using common FieldInfo struct
   static constexpr std::array<gendb::FieldInfo, 16> kFieldsInfo = {
       gendb::FieldInfo{"id", Id, gendb::FieldInfo::SCALAR, gendb::FieldInfo::UINT64, "",
-                       std::span<const gendb::EnumValueInfo>()},
+                       std::span<const gendb::EnumValueInfo>(), false},
       gendb::FieldInfo{"enabled", Enabled, gendb::FieldInfo::SCALAR, gendb::FieldInfo::BOOL, "",
-                       std::span<const gendb::EnumValueInfo>()},
+                       std::span<const gendb::EnumValueInfo>(), false},
       gendb::FieldInfo{"retries", Retries, gendb::FieldInfo::SCALAR, gendb::FieldInfo::INT32, "",
-                       std::span<const gendb::EnumValueInfo>()},
+                       std::span<const gendb::EnumValueInfo>(), false},
       gendb::FieldInfo{"tiny", Tiny, gendb::FieldInfo::SCALAR, gendb::FieldInfo::INT8, "",
-                       std::span<const gendb::EnumValueInfo>()},
+                       std::span<const gendb::EnumValueInfo>(), false},
       gendb::FieldInfo{"huge", Huge, gendb::FieldInfo::SCALAR, gendb::FieldInfo::UINT64, "",
-                       std::span<const gendb::EnumValueInfo>()},
+                       std::span<const gendb::EnumValueInfo>(), false},
       gendb::FieldInfo{"lowest", Lowest, gendb::FieldInfo::SCALAR, gendb::FieldInfo::INT64, "",
-                       std::span<const gendb::EnumValueInfo>()},
+                       std::span<const gendb::EnumValueInfo>(), false},
       gendb::FieldInfo{"ratio", Ratio, gendb::FieldInfo::SCALAR, gendb::FieldInfo::FLOAT, "",
-                       std::span<const gendb::EnumValueInfo>()},
+                       std::span<const gendb::EnumValueInfo>(), false},
       gendb::FieldInfo{"weight", Weight, gendb::FieldInfo::SCALAR, gendb::FieldInfo::DOUBLE, "",
-                       std::span<const gendb::EnumValueInfo>()},
+                       std::span<const gendb::EnumValueInfo>(), false},
       gendb::FieldInfo{"mask", Mask, gendb::FieldInfo::SCALAR, gendb::FieldInfo::UINT32, "",
-                       std::span<const gendb::EnumValueInfo>()},
+                       std::span<const gendb::EnumValueInfo>(), false},
       gendb::FieldInfo{"level", Level, gendb::FieldInfo::ENUM, gendb::FieldInfo::UINT16,
                        "gendb::tests::defaults::Level",
-                       std::span<const gendb::EnumValueInfo>(kLevelValues)},
+                       std::span<const gendb::EnumValueInfo>(kLevelValues), false},
       gendb::FieldInfo{"title", Title, gendb::FieldInfo::STRING, gendb::FieldInfo::NOT_SCALAR, "",
-                       std::span<const gendb::EnumValueInfo>()},
+                       std::span<const gendb::EnumValueInfo>(), false},
       gendb::FieldInfo{"tricky", Tricky, gendb::FieldInfo::STRING, gendb::FieldInfo::NOT_SCALAR, "",
-                       std::span<const gendb::EnumValueInfo>()},
+                       std::span<const gendb::EnumValueInfo>(), false},
       gendb::FieldInfo{"unicode", Unicode, gendb::FieldInfo::STRING, gendb::FieldInfo::NOT_SCALAR,
-                       "", std::span<const gendb::EnumValueInfo>()},
+                       "", std::span<const gendb::EnumValueInfo>(), false},
       gendb::FieldInfo{"plain_count", PlainCount, gendb::FieldInfo::SCALAR, gendb::FieldInfo::INT32,
-                       "", std::span<const gendb::EnumValueInfo>()},
+                       "", std::span<const gendb::EnumValueInfo>(), false},
       gendb::FieldInfo{"plain_name", PlainName, gendb::FieldInfo::STRING,
-                       gendb::FieldInfo::NOT_SCALAR, "", std::span<const gendb::EnumValueInfo>()},
+                       gendb::FieldInfo::NOT_SCALAR, "", std::span<const gendb::EnumValueInfo>(),
+                       false},
       gendb::FieldInfo{"plain_level", PlainLevel, gendb::FieldInfo::ENUM, gendb::FieldInfo::UINT16,
                        "gendb::tests::defaults::Level",
-                       std::span<const gendb::EnumValueInfo>(kLevelValues)},
+                       std::span<const gendb::EnumValueInfo>(kLevelValues), false},
   };
 
   Settings() = default;
   // The bytes must outlive the view. Malformed bytes read as an empty message; check untrusted
   // input with gendb::MessageView::Verify first.
   Settings(std::span<const uint8_t> bytes) : _view(gendb::MessageView::OpenOrEmpty(bytes)) {}
+
+  // Whether these are the canonical bytes of such a message, down through its nested messages and
+  // lists. Linear in the size, and no deeper than `depth`. Fields this program does not know are
+  // checked only from the outside. Call it first on bytes from outside the process.
+  static bool Verify(std::span<const uint8_t> bytes, int depth = gendb::kMaxMessageDepth);
+  // Byte for byte, which the canonical encoding makes the same as field by field.
+  bool operator==(const Settings& other) const { return _view == other._view; }
 
   bool has_id() const { return _view.Has<Id, gendb::KindOf<uint64_t>>(); }
   uint64_t id() const { return _view.Get<Id, uint64_t>(0ULL); }
@@ -150,6 +165,7 @@ class Settings {
 };
 
 // Builds a serialized Settings. Strings are borrowed: they must stay alive until Build().
+// Nested messages and repeated fields are serialized or copied when set, so they can go right away.
 class SettingsBuilder : public gendb::MessageBuilder {
  public:
   SettingsBuilder() = default;
@@ -294,7 +310,8 @@ class SettingsBuilder : public gendb::MessageBuilder {
   }
 };
 
-// Builds a partial update of Settings. Owns its string values.
+// Builds a partial update of Settings. Owns its string values. A nested message or a list is
+// replaced as a whole, which keeps what the log holds a flat list of fields.
 class SettingsPatchBuilder {
  public:
   SettingsPatchBuilder() = default;
@@ -433,4 +450,12 @@ class SettingsPatchBuilder {
  private:
   gendb::MessagePatch _patch;
 };
+}  // namespace gendb::tests::defaults
+
+// What needs every message class to be complete.
+namespace gendb::tests::defaults {
+inline bool Settings::Verify(std::span<const uint8_t> bytes, int depth) {
+  if (depth <= 0 || !gendb::MessageView::Verify(bytes)) return false;
+  return true;
+}
 }  // namespace gendb::tests::defaults

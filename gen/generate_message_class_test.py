@@ -112,3 +112,59 @@ def test_deprecated_field_cannot_be_a_key_or_indexed(tmp_path):
     store.add_index(Index(name="by_age", collection="items", fields=["age"]))
     errors = schema_validator.validate_collections(store)
     assert len(errors) == 2
+
+
+def test_nested_and_repeated_fields(tmp_path):
+    path = write_schema(tmp_path, """
+        namespace test;
+        enum Color : uint16 { kRed = 0; }
+        message Item {
+          1 owner: Owner;
+          2 parts: repeated Owner;
+          3 tags: repeated string;
+          4 prices: repeated double;
+          5 colors: repeated Color;
+          6 gone: repeated Owner deprecated;
+        }
+        message Owner { 1 name: string; }
+    """)
+    code = render_schema(make_template(), path)
+    # Forward declarations, as Item comes first.
+    assert code.index("class Owner;") < code.index("class Item {")
+    assert "::test::Owner owner() const;" in code
+    assert "gendb::MessageList<::test::Owner> parts() const" in code
+    assert "gendb::StringList tags() const" in code
+    assert "gendb::ScalarList<double> prices() const" in code
+    assert "gendb::ScalarList<test::Color> colors() const" in code
+    assert "add_parts(::test::OwnerBuilder&& value)" in code
+    assert "gone()" not in code
+    assert "GetBytes<Gone>" not in code
+
+
+def test_scalar_fields_generate_the_same_code_next_to_them(tmp_path):
+    scalars = """
+          1 id: uint64;
+          2 name: string = "x";
+    """
+    plain = render_schema(make_template(), write_schema(tmp_path, f"message Item {{ {scalars} }}"))
+    mixed = render_schema(make_template(), write_schema(tmp_path, f"""
+        message Item {{ {scalars} 3 tags: repeated string; }}"""))
+    for line in plain.splitlines():
+        if "_view.Get" in line or "AddField<" in line or "AddStringField" in line or "_patch.Set<" in line:
+            assert line in mixed
+
+
+@pytest.mark.parametrize("field", ["repeated int32", "Other"])
+def test_a_key_or_an_index_cannot_be_nested_or_repeated(tmp_path, field):
+    store = Store()
+    schema_loader.load_schema_to_store(store, write_schema(tmp_path, f"""
+        message Item {{ 1 id: int32; 2 a: {field}; }}
+        message Other {{ }}
+    """))
+    store.add_collection(Collection("items", "Item", ["a"]))
+    store.add_index(Index("by_a", "items", ["a"]))
+    errors = schema_validator.validate_collections(store)
+    assert len(errors) == 2
+    assert "Primary key 'a'" in errors[0]
+    assert "Field 'a' of index" in errors[1]
+

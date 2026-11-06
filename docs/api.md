@@ -93,6 +93,66 @@ Each table generates three classes:
 | `AccountBuilder` | Makes a message: `.set_age(30).Build()`. Strings are borrowed until `Build()`. |
 | `AccountPatchBuilder` | Makes a partial update: `.set_age(31).clear_name().Build()`. Owns its strings. |
 
+Each also has `Account::Verify(bytes)`, for bytes from outside the process. Malformed bytes read as an
+empty message without it, and never outside the buffer.
+
+### Nested messages and lists
+
+```text
+message Order {
+  1 order_id: uint64;
+  2 customer: Customer;
+  3 lines: repeated OrderLine;
+  4 tags: repeated string;
+  5 prices: repeated double;
+}
+```
+
+```cpp
+OrderBuilder order;
+order.set_order_id(7);
+order.set_customer(CustomerBuilder().set_name("Ann"));   // Serialized here, so nothing is borrowed.
+
+OrderLineBuilder line;                                   // Can be reused for each element.
+for (const Item& item : items) {
+  line.Reset();
+  line.set_sku(item.sku).set_quantity(item.quantity);
+  order.add_lines(line);
+}
+order.add_tags("rush").add_tags(std::string("copied"));  // Copied here.
+order.set_prices({1.5, 2.5});                            // Replaces the list; also takes a span.
+gendb::Bytes bytes = order.Build();
+
+Order read{bytes};
+read.customer().name();                                  // Empty if not set, like any getter.
+read.has_customer();                                     // Which tells that from being set and empty.
+read.lines().size();
+read.lines()[0].sku();                                   // Each a zero-copy view, like `read`.
+for (const OrderLine& each : read.lines()) { /* ... */ }
+for (std::string_view tag : read.tags()) { /* ... */ }
+for (double price : read.prices()) { /* ... */ }         // Read as a copy: nothing is aligned.
+read.prices().ToVector();
+```
+
+- **Lists:** `add_x` appends, `set_x` replaces, `clear_x` removes the field. `set_x({})` leaves it set and
+  empty, which `has_x()` tells from not set.
+- **Going on from a message:** `OrderBuilder(read).add_tags("more")` continues the list that is there.
+  Fields this program does not know stay as they are, inside nested messages too.
+- **Patches replace a field as a whole.** `OrderPatchBuilder().set_customer(...)`, `.set_prices({...})`. A list of
+  messages goes through a `gendb::ListBuilder`:
+
+  ```cpp
+  gendb::ListBuilder lines;
+  for (const OrderLine& each : read.lines()) {
+    if (each.quantity() > 0) lines.AddMessage(each.View());
+  }
+  lines.AddMessage(OrderLineBuilder().set_sku("new"));
+  RETURN_IF_ERROR(writer.UpdateOrder(id, OrderPatchBuilder().set_lines(lines).Build()));
+  ```
+- **Comparing:** views and lists have `==`, byte for byte, which is field for field as the encoding is
+  canonical. So `change.lines_changed()` works in a subscription like for any field.
+- **A key or an index** cannot be nested or repeated. Follow the [schema language](schema.md) for the rest.
+
 ## Open a database
 
 ```cpp

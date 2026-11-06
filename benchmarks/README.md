@@ -49,6 +49,10 @@ does not make a difference real.
 `Position/Generated/*` repeats Build and ReadCold through the generated classes, to show they add
 nothing over the core API.
 
+`Order/*` covers nested messages and repeated fields, for the sizes in the name's argument: `Lines` is a
+list of messages with a string, an int and a double each, `Prices` a list of doubles, and `Nested` a read
+three levels down.
+
 These are warm-cache, single-threaded, per-message measurements, not database throughput. Every
 fixture is checked before timing, and buffers escape through benchmark barriers.
 

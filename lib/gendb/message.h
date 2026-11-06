@@ -62,6 +62,25 @@ inline constexpr Kind KindOf = std::same_as<T, bool> ? Kind::Bit
                                                      : Kind::S4;
 
 namespace detail {
+template <typename T>
+struct WireOfElement {
+  using type = T;
+};
+template <typename T>
+  requires std::is_enum_v<T>
+struct WireOfElement<T> {
+  using type = std::underlying_type_t<T>;
+};
+// What an element of a repeated field is stored as.
+template <typename T>
+using ElementWire = typename WireOfElement<T>::type;
+}  // namespace detail
+
+// What a list of fixed-size elements holds: see gendb/list.h.
+template <typename T>
+concept ListScalar = Scalar<detail::ElementWire<T>>;
+
+namespace detail {
 template <size_t Size>
 using Bits = std::conditional_t<
     Size == 1, uint8_t,
@@ -218,6 +237,11 @@ class MessageView {
     return _n8 + _n4 + _nvar + detail::PopcountBytes(_bits, _len[kBit]);
   }
   uint32_t PayloadSize() const noexcept { return _payload_size; }
+  // The encoding is canonical, so equal bytes are equal fields, for any message made by a builder.
+  bool operator==(const MessageView& other) const noexcept {
+    const auto a = Buffer(), b = other.Buffer();
+    return a.size() == b.size() && (a.empty() || std::memcmp(a.data(), b.data(), a.size()) == 0);
+  }
 
   // Presence with compile-time ID and storage class: one bit test, no class search.
   template <FieldId Id, Kind K>
@@ -531,7 +555,6 @@ class MessageBuilder {
   // Starts from every field of `source`, known or unknown. Var payloads stay borrowed from
   // the source bytes. Throws std::invalid_argument if the source is malformed.
   explicit MessageBuilder(const MessageView& source);
-
   template <Scalar T>
   void AddField(FieldId id, T value) {
     detail::Entry& e = Slot(id);
@@ -549,11 +572,39 @@ class MessageBuilder {
   void AddStringField(FieldId id, std::string_view value) {
     AddBytesField(id, {reinterpret_cast<const uint8_t*>(value.data()), value.size()});
   }
+  // A nested message, serialized here and owned by this builder, so `message` can be reused.
+  void AddMessageField(FieldId id, MessageBuilder& message);
+  // A copy of the bytes as they are, so fields this program does not know stay.
+  void AddMessageField(FieldId id, const MessageView& message);
+  // Copies the bytes, unlike AddBytesField.
+  void CopyBytesField(FieldId id, std::span<const uint8_t> value);
+
+  // Repeated fields. Each call appends, and elements are copied or serialized right away, so
+  // nothing is borrowed. The first append to a field already present, as from a source message,
+  // continues its list, and throws std::invalid_argument if those bytes are not one of this kind. A
+  // list made this way overrides AddBytesField for the same ID, whichever came first. ClearField
+  // drops it. gendb/list.h has what reads them.
+  template <ListScalar T>
+  void AddRepeated(FieldId id, T value);
+  // Replaces the list. An empty one is present, and differs from a field that is not set.
+  template <ListScalar T>
+  void SetRepeated(FieldId id, std::span<const T> values);
+  void AddRepeatedBytes(FieldId id, std::span<const uint8_t> value);
+  void AddRepeatedString(FieldId id, std::string_view value) {
+    AddRepeatedBytes(id, {reinterpret_cast<const uint8_t*>(value.data()), value.size()});
+  }
+  void AddRepeatedMessage(FieldId id, MessageBuilder& message);
+  void AddRepeatedMessage(FieldId id, const MessageView& message);
+  // Replaces the list with an empty one of strings or messages, which elements can then be added
+  // to.
+  void SetEmptyList(FieldId id);
+
   // Adds an enumerated field (known or unknown), preserving its storage class and bytes.
   void AddRaw(const Field& field);
   void ClearField(FieldId id);
   void Reset() noexcept {
     _entries.clear();
+    _owned.reset();
     _last_id = 0;
     _sorted = true;
     _finalized = false;
@@ -597,8 +648,20 @@ class MessageBuilder {
   [[noreturn]] static void ThrowBadId();
   void Append(const detail::Entry& e) { Slot(e.id) = e; }
   void Finalize();
+  // Appends `size` bytes, a whole number of elements of `element_size`, to a list of fixed-size
+  // elements, which it makes if needed.
+  void AppendPacked(FieldId id, const void* data, uint32_t element_size, size_t size);
+  // What repeated fields and nested messages own: nothing for a message without them.
+  struct Owned;
+  struct OwnedDeleter {
+    void operator()(Owned* owned) const noexcept;
+  };
+  Owned& EnsureOwned();
+  struct OwnedList;
+  OwnedList& VarListOf(FieldId id);
 
   detail::EntryVector<64> _entries;
+  std::unique_ptr<Owned, OwnedDeleter> _owned;
   FieldId _last_id = 0;
   bool _sorted = true;
   bool _finalized = false;
@@ -640,6 +703,9 @@ class MessagePatch {
   void CopyString(FieldId id, std::string_view value) {
     CopyBytes(id, {reinterpret_cast<const uint8_t*>(value.data()), value.size()});
   }
+  // A nested message, replaced as a whole.
+  void CopyMessage(FieldId id, MessageBuilder& message);
+  void CopyMessage(FieldId id, const MessageView& message);
   void Remove(FieldId id) {
     detail::Entry e{CheckId(id), Kind::Var, true, 0, {}};
     e.value = 0;
@@ -708,6 +774,26 @@ void ApplyPatch(const MessagePatch& patch, Bytes& bytes);
 
 // ---------------------------------------------------------------------------------------
 // Inline definitions.
+
+template <ListScalar T>
+void MessageBuilder::AddRepeated(FieldId id, T value) {
+  using Wire = detail::ElementWire<T>;
+  uint8_t bytes[sizeof(Wire)];
+  detail::Store<Wire>(bytes, static_cast<Wire>(value));
+  AppendPacked(id, bytes, sizeof(Wire), sizeof(Wire));
+}
+
+template <ListScalar T>
+void MessageBuilder::SetRepeated(FieldId id, std::span<const T> values) {
+  using Wire = detail::ElementWire<T>;
+  ClearField(id);
+  if constexpr (std::endian::native == std::endian::little) {
+    AppendPacked(id, values.data(), sizeof(Wire), values.size_bytes());
+  } else {
+    AppendPacked(id, nullptr, sizeof(Wire), 0);
+    for (const T value : values) AddRepeated<T>(id, value);
+  }
+}
 
 namespace detail {
 // Mask of the first min(len, 8) bytes of a bitmap word.

@@ -32,6 +32,13 @@ add_test(NAME message_test COMMAND message_test)
 
 
 
+add_executable(nested_test
+    nested_test.cpp
+)
+target_link_libraries(nested_test PRIVATE gendb_lib GTest::gtest_main GTest::gmock)
+add_dependencies(nested_test codegen)
+add_test(NAME nested_test COMMAND nested_test)
+
 add_executable(database_test
     database_test.cpp
     generated/database.h

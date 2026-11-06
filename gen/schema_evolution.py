@@ -41,6 +41,9 @@ def compare_messages(old: ParsedMessage, new: ParsedMessage, name: str, report: 
         if after.type != before.type:
             report.errors.append(f"{where} changed type from {before.type} to {after.type}, "
                                  "which would misread stored data. Add a new field instead")
+        if after.repeated != before.repeated:
+            report.errors.append(f"{where} {'became' if after.repeated else 'is no longer'} repeated, "
+                                 "which would misread stored data. Add a new field instead")
         if after.default != before.default:
             report.errors.append(f"{where} changed its default from {_default(before.default)} to "
                                  f"{_default(after.default)}, which changes what every record that "

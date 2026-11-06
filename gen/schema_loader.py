@@ -51,11 +51,35 @@ def _cpp_default(type_name: str, default, enum_cpp_type: str, underlying: str) -
     return f"static_cast<{base_types.cpp_type(type_name)}>({default}{suffix})"
 
 
+def _list_type(field: Field) -> str:
+    if field.field_kind == FieldKind.MESSAGE:
+        return f"gendb::MessageList<{field.cpp_type}>"
+    if field.cpp_type == "std::string":
+        return "gendb::StringList"
+    return f"gendb::ScalarList<{field.cpp_type}>"
+
+
 def _to_message(schema: ParsedSchema, message: ParsedMessage, cpp_include: str) -> Message:
     enums = {e.name: e for e in schema.enums}
+    messages = {m.name for m in schema.messages}
     fields = []
     for f in message.fields:
-        if f.type in enums:
+        if f.type in messages:
+            # From the global namespace, as in its class, a field's enumerator can hide the type's name.
+            cpp_type = "::" + naming.to_cpp_namespace(_qualified(schema.namespace, f.type))
+            fields.append(Field(
+                id=f.number,
+                name=f.name,
+                type=_qualified(schema.namespace, f.type),
+                field_kind=FieldKind.MESSAGE,
+                cpp_type=cpp_type,
+                underlying_type=None,
+                const_ref_type=f"const {cpp_type}&",
+                ref_type=f"{cpp_type}&",
+                is_fixed_size=False,
+                deprecated=f.deprecated,
+            ))
+        elif f.type in enums:
             cpp_type = naming.to_cpp_namespace(_qualified(schema.namespace, f.type))
             underlying = base_types.cpp_type(enums[f.type].underlying)
             fields.append(Field(
@@ -87,6 +111,10 @@ def _to_message(schema: ParsedSchema, message: ParsedMessage, cpp_include: str) 
                 has_default=f.default is not None,
                 deprecated=f.deprecated,
             ))
+        fields[-1].repeated = f.repeated
+        if f.repeated:
+            fields[-1].is_fixed_size = False
+            fields[-1].list_type = _list_type(fields[-1])
     return Message(full_name=_qualified(schema.namespace, message.name), cpp_include=cpp_include,
                    fields=fields)
 

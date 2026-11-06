@@ -168,7 +168,7 @@ pre { font: 13px/1.55 var(--mono); background: var(--panel); border: 1px solid v
         <tr><td><code>S8</code></td><td>int64, uint64, double</td><td>8-byte slot</td></tr>
         <tr><td><code>S4</code></td><td>int8, uint8, int16, uint16, int32, uint32, float</td><td>4-byte slot; value in the low bytes, the rest zero</td></tr>
         <tr><td><code>Bit</code></td><td>bool</td><td>one bit of the value bitmap; no slot</td></tr>
-        <tr><td><code>Var</code></td><td>string, bytes, nested message</td><td>end offset and a slice of the payload</td></tr>
+        <tr><td><code>Var</code></td><td>string, bytes, nested message, repeated field</td><td>end offset and a slice of the payload</td></tr>
       </tbody>
     </table>
   </div>

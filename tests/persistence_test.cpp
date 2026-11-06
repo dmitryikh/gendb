@@ -17,6 +17,7 @@
 #include "config.gendb.h"
 #include "database.h"
 #include "metadata.gendb.h"
+#include "order.gendb.h"
 #include "position.gendb.h"
 #include "session.gendb.h"
 
@@ -71,6 +72,52 @@ TEST_F(PersistentDbTest, StateAndIndicesSurviveReopen) {
   EXPECT_EQ(by_age.Value().account_id(), 1u);
   by_age.Next();
   EXPECT_FALSE(by_age.Valid());
+}
+
+// Nested messages and lists are bytes of a field, for everything below the generated classes: the
+// log, patches in it, the digest and checkpoints.
+TEST_F(PersistentDbTest, NestedMessagesAndListsSurviveTheLogAndACheckpoint) {
+  const auto check = [](Db& db) {
+    auto snapshot = db.CreateSnapshot();
+    Order order;
+    ASSERT_TRUE(snapshot.GetOrder(1, order).ok());
+    EXPECT_EQ(order.note(), "changed");
+    EXPECT_EQ(order.customer().name(), "Bob");
+    EXPECT_EQ(order.customer().address().zip(), 2);
+    ASSERT_EQ(order.lines().size(), 2u);
+    EXPECT_EQ(order.lines()[1].sku(), "b");
+    EXPECT_THAT(order.tags(), ::testing::ElementsAre("x", "y"));
+    EXPECT_THAT(order.prices(), ::testing::ElementsAre(9.5));
+    EXPECT_TRUE(Order::Verify(order.View().Buffer()));
+  };
+  {
+    auto db = OpenDb();
+    auto writer = db->CreateWriter();
+    OrderBuilder order;
+    order.set_order_id(1).set_note("first");
+    order.set_customer(CustomerBuilder().set_name("Ann"));
+    order.add_lines(OrderLineBuilder().set_sku("a")).add_lines(OrderLineBuilder().set_sku("b"));
+    order.set_tags({"x", "y"}).set_prices({1, 2, 3});
+    ASSERT_TRUE(writer.PutOrder(order.Build()).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+    ASSERT_TRUE(writer
+                    .UpdateOrder(1, OrderPatchBuilder()
+                                        .set_note("changed")
+                                        .set_customer(CustomerBuilder().set_name("Bob").set_address(
+                                            AddressBuilder().set_zip(2)))
+                                        .set_prices({9.5})
+                                        .Build())
+                    .ok());
+    ASSERT_TRUE(writer.Commit().ok());
+    check(*db);
+  }
+  {
+    auto db = OpenDb();
+    check(*db);
+    ASSERT_TRUE(db->engine().Checkpoint().ok());
+  }
+  auto db = OpenDb();
+  check(*db);
 }
 
 TEST_F(PersistentDbTest, SequencesAreDurable) {

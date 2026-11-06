@@ -22,6 +22,7 @@ Features:
   * [x] Upgrades in any order: collections a side does not know are kept for it
   * Message format:
     * [x] Zero-copy, deserialization-free O(1) field reads
+    * [x] Nested messages and repeated fields of any type, read without copying
     * [x] Forward and backward compatible schema evolution
     * [x] Unknown fields preserved through every update
     * [x] Partial updates, in place when the size does not change
