@@ -1,0 +1,18 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+find_dependency(absl)
+find_dependency(Threads)
+
+include("${CMAKE_CURRENT_LIST_DIR}/gendbTargets.cmake")
+
+if(@GENDB_INSTALL_GRPC@)
+    find_dependency(gRPC)
+    find_dependency(Protobuf)
+    include("${CMAKE_CURRENT_LIST_DIR}/gendbGrpcTargets.cmake")
+endif()
+
+# For gen_db_messages and gen_db_schema, which need Python 3 with jinja2 and PyYAML, and flatc.
+set_and_check(GENDB_GEN_DIR "@PACKAGE_GENDB_INSTALL_GEN_DIR@")
+set_and_check(GENDB_SCHEMA_DIR "@PACKAGE_GENDB_INSTALL_SCHEMA_DIR@")
+include("${CMAKE_CURRENT_LIST_DIR}/CodegenTargets.cmake")

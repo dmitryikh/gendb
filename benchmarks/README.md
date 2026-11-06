@@ -58,3 +58,9 @@ uses the object API, which does not preserve unknown fields.
 
 These are warm-cache, single-threaded, per-message measurements, not database throughput. Every
 fixture is checked before timing, and buffers escape through benchmark barriers.
+
+## Database benchmarks
+
+`db_benchmark.cpp` measures the generated API over 100,000 records: gets, index and collection
+scans, commits durable and not, subscribers, checkpoints, recovery, and replication over an
+in-process transport. The same script records them in [reference/db.txt](reference/db.txt).

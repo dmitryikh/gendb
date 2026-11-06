@@ -6,15 +6,18 @@ Fast &amp; Convenient embedded Database for C++. With batteries.
 Features:
   * [x] Strong typed Key-Value collections.
   * [x] Schema-driven, code-generated C++ API
-  * [x] Secondary indexes (efficient lookups on non-primary keys)
-  * [ ] Persistent storage
-  * [ ] Snapshot isolation (multi-version concurrency control)
-  * [ ] ACID transactions
-  * [ ] Write-ahead log (WAL) for crash recovery
-  * [ ] Durable atomic ID counters
-  * [ ] Ephemeral in-memory collections
-  * [ ] Change data capture
-  * [ ] Rocksdb as a storage engine
+  * [x] Secondary indexes: composite, unique, with open ranges, reverse order and limits
+  * [x] Persistent storage
+  * [x] Snapshot isolation (multi-version concurrency control)
+  * [x] ACID transactions
+  * [x] Own write-ahead log, durable or non-durable per commit, and background compaction into checkpoints
+  * [x] Crash recovery, tested against simulated power loss at every disk operation
+  * [x] Hot backup
+  * [x] Durable atomic ID counters
+  * [x] Ephemeral in-memory collections
+  * [x] Change subscriptions: follow chosen tables after each commit, see what changed, and resume after being away
+  * [x] Replication: a replica fetches a checkpoint and streams commits, over a transport you choose (gRPC included), and continually verifies its state
+  * [x] Upgrades in any order: collections a side does not know are kept for it
   * Message format:
     * [x] Zero-copy, deserialization-free O(1) field reads
     * [x] Forward and backward compatible schema evolution
@@ -29,7 +32,11 @@ Non goals:
   * Ad-hoc SQL query engine (no query parser or optimizer, API-only access)
 
 Documentation:
+  * Using it: [docs/api.md](docs/api.md)
   * Message format: [specification](docs/message_format.md) and [interactive explorer](docs/message_format.html) (open it in a browser)
-  * Generated database API: [docs/db_api_codegen.md](docs/db_api_codegen.md)
+  * Storage engine: [docs/storage_engine.md](docs/storage_engine.md)
+  * Replication and writing a transport: [docs/replication.md](docs/replication.md)
   * Build and test in Docker: [docs/docker_build.md](docs/docker_build.md)
   * Benchmarks: [benchmarks/README.md](benchmarks/README.md)
+
+License: [MIT](LICENSE)

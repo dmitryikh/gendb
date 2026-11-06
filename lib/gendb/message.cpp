@@ -1,5 +1,7 @@
 #include "gendb/message.h"
 
+#include "gendb/log_format.h"
+
 namespace gendb {
 
 bool MessageView::InitGeneric(std::span<const uint8_t> bytes) noexcept {
@@ -296,10 +298,67 @@ size_t MessageBuilder::SerializeTo(std::span<uint8_t> out) {
   return _total;
 }
 
-bool ApplyPatchInplace(const MessagePatch& patch, std::span<uint8_t> bytes) noexcept {
-  auto message = MutableView::Open(bytes);
-  if (!message) return false;
-  const MessageView& view = message->View();
+void MessagePatch::AppendEncoded(std::string& out) const {
+  internal::PutVarint(out, _changes.size());
+  for (const auto& e : _changes) {
+    internal::PutVarint(out, e.id);
+    out.push_back(static_cast<char>(static_cast<uint8_t>(e.kind) | (e.remove ? 4 : 0)));
+    if (e.remove) continue;
+    switch (e.kind) {
+      case Kind::S8:
+        internal::PutFixed64(out, e.value);
+        break;
+      case Kind::S4:
+        internal::PutFixed32(out, static_cast<uint32_t>(e.value));
+        break;
+      case Kind::Bit:
+        out.push_back(e.value != 0 ? 1 : 0);
+        break;
+      case Kind::Var:
+        internal::PutString(out, {reinterpret_cast<const char*>(e.data), e.len});
+        break;
+    }
+  }
+}
+
+std::optional<MessagePatch> MessagePatch::Decode(std::string_view encoded) {
+  internal::Decoder in(encoded);
+  MessagePatch patch;
+  const uint64_t count = in.Varint();
+  for (uint64_t i = 0; i < count; ++i) {
+    const uint64_t id = in.Varint();
+    const uint8_t tag = in.Byte();
+    if (!in.ok() || id == 0 || id > kMaxFieldId || tag > 7) return std::nullopt;
+    detail::Entry e{static_cast<FieldId>(id), static_cast<Kind>(tag & 3), (tag & 4) != 0, 0, {}};
+    e.value = 0;
+    if (!e.remove) {
+      switch (e.kind) {
+        case Kind::S8:
+          e.value = in.Fixed64();
+          break;
+        case Kind::S4:
+          e.value = in.Fixed32();
+          break;
+        case Kind::Bit:
+          e.value = in.Byte() != 0 ? 1 : 0;
+          break;
+        case Kind::Var: {
+          const std::string_view bytes = in.String();
+          if (bytes.size() > std::numeric_limits<uint32_t>::max()) return std::nullopt;
+          e.len = static_cast<uint32_t>(bytes.size());
+          e.data = reinterpret_cast<const uint8_t*>(bytes.data());
+          break;
+        }
+      }
+    }
+    if (!in.ok()) return std::nullopt;
+    patch.Put(e);
+  }
+  if (!in.ok() || !in.empty()) return std::nullopt;
+  return patch;
+}
+
+bool CanApplyPatchInplace(const MessagePatch& patch, const MessageView& view) noexcept {
   for (const auto& e : patch.Changes()) {
     if (e.remove) return false;
     auto kind = view.KindOfField(e.id);
@@ -309,6 +368,12 @@ bool ApplyPatchInplace(const MessagePatch& patch, std::span<uint8_t> bytes) noex
       if (!current || current->size() != e.len) return false;
     }
   }
+  return true;
+}
+
+bool ApplyPatchInplace(const MessagePatch& patch, std::span<uint8_t> bytes) noexcept {
+  auto message = MutableView::Open(bytes);
+  if (!message || !CanApplyPatchInplace(patch, message->View())) return false;
   for (const auto& e : patch.Changes()) {
     if (e.kind == Kind::Var)
       message->SetBytes(e.id, {e.data, e.len});
@@ -328,6 +393,8 @@ Bytes Rebuild(const MessageView& source, const MessagePatch& patch) {
     const uint32_t bit = detail::BitOf(e.id);
     if (source.TestRuntime(MessageView::kVar, bit)) {
       const uint32_t index = source.RankRuntime(MessageView::kVar, bit);
+      // Open checks counts, not that they match the bitmaps.
+      if (index >= source._nvar) throw std::invalid_argument("invalid source message");
       const uint32_t start = index ? source.EndAt(index - 1) : 0;
       const uint32_t end = source.EndAt(index);
       if (start > end || end > source._payload_size)

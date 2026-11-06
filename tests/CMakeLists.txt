@@ -1,3 +1,6 @@
+# The generated headers, for everything in here.
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/generated)
+
 # Message codegen
 gen_db_messages(
     codegen
@@ -37,6 +40,66 @@ add_executable(database_test
 target_link_libraries(database_test PRIVATE gendb_lib GTest::gtest_main GTest::gmock)
 add_dependencies(database_test codegen db_codegen primitive_db_codegen)
 add_test(NAME database_test COMMAND database_test)
+
+add_executable(index_test
+    index_test.cpp
+    generated/database.h
+    generated/database.cpp
+)
+target_link_libraries(index_test PRIVATE gendb_lib GTest::gtest_main GTest::gmock)
+add_dependencies(index_test codegen db_codegen)
+add_test(NAME index_test COMMAND index_test)
+
+add_executable(persistence_test
+    persistence_test.cpp
+    generated/database.h
+    generated/database.cpp
+)
+target_link_libraries(persistence_test PRIVATE gendb_lib GTest::gtest_main GTest::gmock)
+add_dependencies(persistence_test codegen db_codegen)
+add_test(NAME persistence_test COMMAND persistence_test)
+
+add_executable(subscription_test
+    subscription_test.cpp
+    generated/database.h
+    generated/database.cpp
+)
+target_link_libraries(subscription_test PRIVATE gendb_lib GTest::gtest_main GTest::gmock)
+add_dependencies(subscription_test codegen db_codegen)
+add_test(NAME subscription_test COMMAND subscription_test)
+
+# Replication, over an in-process transport and raw TCP, and over gRPC when available.
+add_executable(replication_test
+    replication_test.cpp
+    generated/database.h
+    generated/database.cpp
+)
+target_include_directories(replication_test PRIVATE ${CMAKE_SOURCE_DIR}/examples ${CMAKE_SOURCE_DIR}/tests)
+target_link_libraries(replication_test PRIVATE gendb_lib GTest::gtest_main GTest::gmock)
+add_dependencies(replication_test codegen db_codegen)
+add_test(NAME replication_test COMMAND replication_test)
+
+# Crash points and failed operations, on a file system that simulates a disk.
+add_executable(fault_injection_test
+    fault_injection_test.cpp
+    generated/database.h
+    generated/database.cpp
+)
+target_include_directories(fault_injection_test PRIVATE ${CMAKE_SOURCE_DIR}/tests)
+target_link_libraries(fault_injection_test PRIVATE gendb_lib GTest::gtest_main GTest::gmock)
+add_dependencies(fault_injection_test codegen db_codegen)
+add_test(NAME fault_injection_test COMMAND fault_injection_test)
+
+if(TARGET gendb_replication_grpc)
+    add_executable(replication_grpc_test
+        replication_grpc_test.cpp
+        generated/database.h
+        generated/database.cpp
+    )
+    target_link_libraries(replication_grpc_test PRIVATE gendb_replication_grpc GTest::gtest_main)
+    add_dependencies(replication_grpc_test codegen db_codegen)
+    add_test(NAME replication_grpc_test COMMAND replication_grpc_test)
+endif()
 
 # Primitive database test
 add_executable(primitive_database_test

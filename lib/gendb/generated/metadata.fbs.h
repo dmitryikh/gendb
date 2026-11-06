@@ -35,10 +35,11 @@ class MetadataValue {
     IntValue = 3,
     StringValue = 4,
     FloatValue = 5,
+    UintValue = 6,
   };
 
   // Field reflection metadata using common FieldInfo struct
-  static constexpr std::array<gendb::FieldInfo, 5> kFieldsInfo = {
+  static constexpr std::array<gendb::FieldInfo, 6> kFieldsInfo = {
       gendb::FieldInfo{"type", Type, gendb::FieldInfo::ENUM, gendb::FieldInfo::UINT32,
                        "gendb::MetadataType",
                        std::span<const gendb::EnumValueInfo>(kMetadataTypeValues)},
@@ -49,6 +50,8 @@ class MetadataValue {
       gendb::FieldInfo{"string_value", StringValue, gendb::FieldInfo::STRING,
                        gendb::FieldInfo::NOT_SCALAR, "", std::span<const gendb::EnumValueInfo>()},
       gendb::FieldInfo{"float_value", FloatValue, gendb::FieldInfo::SCALAR, gendb::FieldInfo::FLOAT,
+                       "", std::span<const gendb::EnumValueInfo>()},
+      gendb::FieldInfo{"uint_value", UintValue, gendb::FieldInfo::SCALAR, gendb::FieldInfo::UINT64,
                        "", std::span<const gendb::EnumValueInfo>()},
   };
 
@@ -69,6 +72,8 @@ class MetadataValue {
   std::string_view string_value() const { return _view.GetString<StringValue>(); }
   bool has_float_value() const { return _view.Has<FloatValue, gendb::KindOf<float>>(); }
   float float_value() const { return _view.Get<FloatValue, float>(0.0f); }
+  bool has_uint_value() const { return _view.Has<UintValue, gendb::KindOf<uint64_t>>(); }
+  uint64_t uint_value() const { return _view.Get<UintValue, uint64_t>(0ULL); }
 
   // Any field by ID, including unknown ones: this schema's future or deprecated fields.
   bool HasField(gendb::FieldId id) const { return _view.Has(id); }
@@ -128,6 +133,14 @@ class MetadataValueBuilder : public gendb::MessageBuilder {
     ClearField(MetadataValue::FloatValue);
     return *this;
   }
+  MetadataValueBuilder& set_uint_value(uint64_t value) {
+    AddField<uint64_t>(MetadataValue::UintValue, value);
+    return *this;
+  }
+  MetadataValueBuilder& clear_uint_value() {
+    ClearField(MetadataValue::UintValue);
+    return *this;
+  }
 };
 
 // Builds a partial update of MetadataValue. Owns its string values.
@@ -173,6 +186,14 @@ class MetadataValuePatchBuilder {
   }
   MetadataValuePatchBuilder&& clear_float_value() && {
     _patch.Remove(MetadataValue::FloatValue);
+    return std::move(*this);
+  }
+  MetadataValuePatchBuilder&& set_uint_value(uint64_t value) && {
+    _patch.Set<uint64_t>(MetadataValue::UintValue, value);
+    return std::move(*this);
+  }
+  MetadataValuePatchBuilder&& clear_uint_value() && {
+    _patch.Remove(MetadataValue::UintValue);
     return std::move(*this);
   }
 

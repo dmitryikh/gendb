@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        job: [format, test, asan, tsan, release, package, fuzz]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the image
+        run: docker build -t gendb-dev .
+
+      # Dependencies take long to build, gRPC above all, and change rarely.
+      - name: Restore the Conan cache
+        id: conan-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: conan-cache
+          key: conan-${{ matrix.job }}-${{ hashFiles('conanfile.py', 'Dockerfile') }}
+
+      - name: Run
+        run: |
+          mkdir -p conan-cache
+          # Files must belong to the image's user, whatever its ID is.
+          sudo chown -R "$(docker run --rm gendb-dev id -u):$(docker run --rm gendb-dev id -g)" .
+          docker run --rm \
+            -v "$PWD":/workspace -w /workspace \
+            -v "$PWD/conan-cache":/home/dev/.conan2 \
+            gendb-dev scripts/ci/run.sh ${{ matrix.job }}
+
+      - name: Give the workspace back
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" .
+
+      # Even if the job failed: built dependencies are good, and take long to build again.
+      - name: Save the Conan cache
+        if: always() && steps.conan-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: conan-cache
+          key: ${{ steps.conan-cache.outputs.cache-primary-key }}
+
+      - name: Keep what a fuzzer found
+        if: failure() && matrix.job == 'fuzz'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts
+          path: build/docker-fuzz/artifacts

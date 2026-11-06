@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -35,7 +36,7 @@ TEST(KeyCodecTest, StringEncodeDecode) {
   std::string s = "hello world";
   WriteString(s, out);
   BytesConstView in(out.data(), out.size());
-  auto sv = ReadStringView(in);
+  auto sv = ReadString(in);
   EXPECT_EQ(sv, s);
 }
 
@@ -133,4 +134,31 @@ TEST(KeyCodecOrderTest, NegativeIntegerOrderPreserved) {
   for (size_t i = 1; i < encoded.size(); ++i) {
     EXPECT_LT(encoded[i - 1], encoded[i]) << "Failed for " << values[i - 1] << " < " << values[i];
   }
+}
+
+TEST(KeyCodecOrderTest, StringsWithZeroBytesKeepTheirOrder) {
+  using namespace std::string_literals;
+  const std::vector<std::string> values = {""s,    "\0"s,   "\0\0"s, "\0a"s, "a"s,
+                                           "a\0"s, "a\0a"s, "aa"s,   "\xff"s};
+  std::vector<Bytes> encoded;
+  for (const auto& s : values) {
+    Bytes out;
+    WriteString(s, out);
+    BytesConstView in(out);
+    EXPECT_EQ(ReadString(in), s);
+    EXPECT_TRUE(in.empty());
+    encoded.push_back(out);
+  }
+  EXPECT_TRUE(std::is_sorted(encoded.begin(), encoded.end()));
+}
+
+// With a plain terminator, these two pairs would encode to the same bytes.
+TEST(KeyCodecTest, CompositeKeysWithZeroBytesAreNotAmbiguous) {
+  using namespace std::string_literals;
+  using Key = std::tuple<std::string, std::string>;
+  const Bytes a = EncodeTuple(Key{"a\0b"s, "c"s});
+  const Bytes b = EncodeTuple(Key{"a"s, "b\0c"s});
+  EXPECT_NE(a, b);
+  BytesConstView in(a);
+  EXPECT_EQ((DecodeTuple<std::string, std::string>(in)), (Key{"a\0b"s, "c"s}));
 }

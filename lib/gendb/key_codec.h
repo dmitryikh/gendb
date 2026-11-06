@@ -2,6 +2,7 @@
 
 #include <bit>
 #include <cassert>
+#include <concepts>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
@@ -53,23 +54,50 @@ inline T ReadInteger(BytesConstView& in) {
   }
 }
 
-// String encoding/decoding (delimiter-based, no escaping)
-inline void WriteString(std::string_view s, Bytes& out) {
-  out.insert(out.end(), s.begin(), s.end());
-  out.push_back(0x00);  // delimiter
+// A string keeps its order and ends unambiguously, so that it can be followed by another field: a
+// zero byte is written as 00 FF, and the end as 00 01, which sorts below any continuation.
+inline constexpr uint8_t kStringEscape = 0xff;
+inline constexpr uint8_t kStringEnd = 0x01;
+
+inline size_t EncodedStringSize(std::string_view s) noexcept {
+  size_t zeros = 0;
+  for (const char c : s) zeros += c == 0 ? 1 : 0;
+  return s.size() + zeros + 2;
 }
 
-inline std::string_view ReadStringView(BytesConstView& in) {
-  // Find delimiter
-  size_t len = 0;
-  while (len < in.size() && in[len] != 0x00) ++len;
-  if (len == in.size()) {
-    assert(false);  // Unterminated string
-    return {};
+inline void WriteString(std::string_view s, uint8_t* out) noexcept {
+  for (const char c : s) {
+    *out++ = static_cast<uint8_t>(c);
+    if (c == 0) *out++ = kStringEscape;
   }
-  std::string_view sv(reinterpret_cast<const char*>(in.data()), len);
-  in = in.subspan(len + 1);
-  return sv;
+  *out++ = 0x00;
+  *out = kStringEnd;
+}
+
+inline void WriteString(std::string_view s, Bytes& out) {
+  const size_t at = out.size();
+  out.resize(at + EncodedStringSize(s));
+  WriteString(s, out.data() + at);
+}
+
+inline std::string ReadString(BytesConstView& in) {
+  std::string out;
+  for (size_t i = 0; i < in.size(); ++i) {
+    if (in[i] != 0x00) {
+      out.push_back(static_cast<char>(in[i]));
+      continue;
+    }
+    if (i + 1 == in.size()) break;
+    if (in[i + 1] == kStringEnd) {
+      in = in.subspan(i + 2);
+      return out;
+    }
+    out.push_back('\0');
+    ++i;
+  }
+  assert(false);  // Unterminated string
+  in = {};
+  return out;
 }
 
 // Field size calculators (for preallocating buffer)
@@ -87,12 +115,17 @@ inline constexpr size_t FieldSize(const T&)
   return sizeof(std::underlying_type_t<T>);
 }
 
+template <std::floating_point T>
+inline constexpr size_t FieldSize(const T&) {
+  return sizeof(T);
+}
+
 inline size_t FieldSize(const std::string& s) {
-  return s.size() + 1;
+  return EncodedStringSize(s);
 }
 
 inline size_t FieldSize(std::string_view s) {
-  return s.size() + 1;
+  return EncodedStringSize(s);
 }
 
 // Encode fields (no extra allocations, BytesView version)
@@ -111,17 +144,35 @@ inline bool EncodeField(const T& v, BytesView& out)
   return WriteInteger(static_cast<U>(v), out);
 }
 
+// Sign-magnitude to order-preserving: negatives reverse, and all sort below positives.
+template <std::floating_point T>
+inline bool EncodeField(const T& v, BytesView& out) {
+  using U = std::conditional_t<sizeof(T) == 4, uint32_t, uint64_t>;
+  const U bits = std::bit_cast<U>(v);
+  const U sign = U(1) << (sizeof(U) * 8 - 1);
+  return WriteInteger<U>((bits & sign) ? ~bits : (bits | sign), out);
+}
+
 inline bool EncodeField(std::string_view v, BytesView& out) {
-  size_t needed = v.size() + 1;
+  const size_t needed = EncodedStringSize(v);
   if (out.size() < needed) return false;
-  std::memcpy(out.data(), v.data(), v.size());
-  out.data()[v.size()] = 0x00;
+  WriteString(v, out.data());
   out = out.subspan(needed);
   return true;
 }
 
 inline bool EncodeField(const std::string& v, BytesView& out) {
   return EncodeField(std::string_view(v), out);
+}
+
+// Appends one field's encoding, for composite keys built in a string.
+template <typename T>
+inline void AppendField(const T& v, std::string& out) {
+  const size_t offset = out.size();
+  const size_t size = FieldSize(v);
+  out.resize(offset + size);
+  BytesView view(reinterpret_cast<uint8_t*>(out.data()) + offset, size);
+  EncodeField(v, view);
 }
 
 // Encode tuple to BytesView
@@ -160,14 +211,8 @@ inline T DecodeField(BytesConstView& in)
 }
 
 template <>
-inline std::string_view DecodeField<std::string_view>(BytesConstView& in) {
-  return ReadStringView(in);
-}
-
-template <>
 inline std::string DecodeField<std::string>(BytesConstView& in) {
-  auto sv = ReadStringView(in);
-  return std::string(sv);  // allocates
+  return ReadString(in);
 }
 
 // Tuple encode/decode

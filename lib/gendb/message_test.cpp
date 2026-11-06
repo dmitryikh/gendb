@@ -2,9 +2,13 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <map>
 #include <random>
 #include <string>
+
+#include "absl/crc/crc32c.h"
+#include "gendb/log_format.h"
 
 namespace gendb {
 namespace {
@@ -617,4 +621,134 @@ TEST(MessageFormat, RandomizedRoundTripsAndPatchesMatchAModel) {
 }
 
 }  // namespace
+TEST(MessagePatchEncodingTest, RoundTripsEveryKindAndUnknownFields) {
+  MessageBuilder builder;
+  builder.AddField<int32_t>(1, 1);
+  builder.AddField<int64_t>(2, 2);
+  builder.AddField<bool>(3, false);
+  builder.AddStringField(4, "old");
+  builder.AddStringField(900, "unknown stays");
+  builder.AddField<int32_t>(5, 5);
+  const Bytes source = builder.Build();
+
+  MessagePatch patch;
+  patch.Set<int32_t>(1, -7);
+  patch.Set<int64_t>(2, -8);
+  patch.Set<bool>(3, true);
+  patch.CopyString(4, "a longer string");
+  patch.Remove(5);
+  patch.Set<float>(1000, 1.5f);  // A field this reader's schema would not have.
+
+  std::string encoded;
+  patch.AppendEncoded(encoded);
+  const std::optional<MessagePatch> decoded = MessagePatch::Decode(encoded);
+  ASSERT_TRUE(decoded.has_value());
+
+  const auto view = MessageView::Open(source);
+  ASSERT_TRUE(view.has_value());
+  EXPECT_EQ(Rebuild(*view, *decoded), Rebuild(*view, patch));
+}
+
+TEST(MessagePatchEncodingTest, IsSmall) {
+  MessagePatch patch;
+  patch.Set<float>(6, 1.5f);
+  std::string encoded;
+  patch.AppendEncoded(encoded);
+  EXPECT_EQ(encoded.size(), 7u);  // Count, ID, tag and 4 bytes.
+}
+
+TEST(MessagePatchEncodingTest, RejectsMalformedInput) {
+  MessagePatch patch;
+  patch.Set<int32_t>(1, 1);
+  patch.CopyString(2, "value");
+  patch.Remove(3);
+  std::string encoded;
+  patch.AppendEncoded(encoded);
+  for (size_t size = 0; size < encoded.size(); ++size) {
+    EXPECT_FALSE(MessagePatch::Decode(std::string_view(encoded).substr(0, size)).has_value())
+        << "cut to " << size;
+  }
+  EXPECT_FALSE(MessagePatch::Decode(encoded + "x").has_value());  // Trailing bytes.
+
+  std::string id_zero;
+  internal::PutVarint(id_zero, 1);
+  internal::PutVarint(id_zero, 0);
+  id_zero.push_back(0);
+  internal::PutFixed64(id_zero, 0);
+  EXPECT_FALSE(MessagePatch::Decode(id_zero).has_value());
+
+  std::string id_too_large;
+  internal::PutVarint(id_too_large, 1);
+  internal::PutVarint(id_too_large, kMaxFieldId + 1);
+  id_too_large.push_back(4);
+  EXPECT_FALSE(MessagePatch::Decode(id_too_large).has_value());
+
+  std::string huge_count;
+  internal::PutVarint(huge_count, uint64_t{1} << 40);
+  EXPECT_FALSE(MessagePatch::Decode(huge_count).has_value());
+}
+
+// The log holds patches with a checksum of their result, so the bytes these produce are part of the
+// on-disk format. If they change on purpose, bump kFormatVersion and update these numbers.
+TEST(MessagePatchEncodingTest, ResultBytesArePartOfTheLogFormat) {
+  MessageBuilder builder;
+  builder.AddField<int32_t>(1, 1);
+  builder.AddField<int64_t>(2, 2);
+  builder.AddField<bool>(3, true);
+  builder.AddStringField(4, "text");
+  builder.AddStringField(5, "more");
+  const Bytes source = builder.Build();
+  const auto view = MessageView::Open(source);
+  ASSERT_TRUE(view.has_value());
+  const auto crc = [](const Bytes& bytes) {
+    return static_cast<uint32_t>(
+        absl::ComputeCrc32c({reinterpret_cast<const char*>(bytes.data()), bytes.size()}));
+  };
+
+  EXPECT_EQ(crc(source), 2303624702u);
+  MessagePatch same_size_string;
+  same_size_string.CopyString(4, "TEXT");
+  Bytes in_place = source;
+  ASSERT_TRUE(ApplyPatchInplace(same_size_string, in_place));
+  EXPECT_EQ(crc(in_place), 659144704u);
+
+  MessagePatch longer_string;
+  longer_string.CopyString(4, "a longer text");
+  EXPECT_EQ(crc(Rebuild(*view, longer_string)), 1202667440u);
+
+  MessagePatch general;
+  general.Set<int32_t>(6, 6);
+  general.Remove(2);
+  EXPECT_EQ(crc(Rebuild(*view, general)), 3776665425u);
+}
+
+// Found by fuzz_message: a bitmap claiming more Var fields than the header's count let the fast
+// path of Rebuild read past the end, where Open promises that every read stays in bounds.
+TEST(MessagePatchEncodingTest, RebuildOfAMessageWhoseCountsDisagreeWithItsBitmapsStaysInBounds) {
+  const Bytes source = {
+      0x01, 0x00, 0x00, 0x01, 0x08, 0x64, 0x00, 0x00, 0x3f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+      0x00, 0x51, 0x10, 0x01, 0x8a, 0x83, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+      0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+      0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+      0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x63, 0x00, 0x00,
+      0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+      0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+      0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x32, 0x32,
+      0x32, 0x32, 0x32, 0x32, 0x32, 0x32, 0x32, 0x32, 0x3a, 0x32, 0x32, 0x0c, 0x05, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x32, 0x32, 0x32, 0x32, 0x32, 0x32, 0x32, 0x32, 0x32, 0x32, 0x32,
+      0x32, 0x98, 0x32, 0x32, 0x32, 0x32, 0x32, 0x32, 0x32, 0x32, 0x32, 0x32, 0x32, 0x32, 0x32,
+      0x32, 0x32, 0x32, 0x32, 0x32, 0x32, 0x32, 0x32, 0x32, 0x32, 0x51, 0x10, 0x01, 0xec, 0x64,
+      0xc1, 0x32, 0x32, 0x32, 0x32, 0x32, 0x32, 0x32, 0x32, 0x32, 0x32, 0x32, 0x32, 0x32, 0x32,
+      0x32, 0x00, 0x00, 0x09, 0x01, 0x00, 0xfb, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfb, 0x01,
+      0x5b, 0x03, 0x00, 0x02, 0x02, 0x02, 0x02, 0x20, 0x01, 0xfe, 0x3d, 0x40, 0x00, 0x32, 0x32,
+      0x32, 0x32, 0x00, 0x5b, 0x03, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+  const std::array<uint8_t, 4> encoded = {0x01, 0x7b, 0x03, 0x00};
+  const std::optional<MessagePatch> patch =
+      MessagePatch::Decode({reinterpret_cast<const char*>(encoded.data()), encoded.size()});
+  ASSERT_TRUE(patch.has_value());
+  const auto view = MessageView::Open(source);
+  ASSERT_TRUE(view.has_value());
+  EXPECT_THROW((void)Rebuild(*view, *patch), std::invalid_argument);
+}
+
 }  // namespace gendb

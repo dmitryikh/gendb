@@ -14,14 +14,14 @@ def load_yaml_db(yaml_path):
         return yaml.safe_load(f)
 
 
-def build_store_from_yaml(db_cfg):
+def build_store_from_yaml(db_cfg, metadata_fbs="lib/schemas/metadata.fbs"):
     store = Store()
     # Get include prefix
     include_prefix = db_cfg.get("types", {}).get("include_prefix", "")
     # Load all messages from fbs files
     fbs_files = db_cfg.get("types", {}).get("fbs_files", [])
     # Add metadata.fbs as the first file
-    all_fbs_files = ["lib/schemas/metadata.fbs"] + [f for f in fbs_files if f != "lib/schemas/metadata.fbs"]
+    all_fbs_files = [metadata_fbs] + [f for f in fbs_files if Path(f).name != Path(metadata_fbs).name]
     for fbs_file in all_fbs_files:
         flatc_to_store.load_fbs_to_store(store, Path(fbs_file))
 
@@ -39,7 +39,8 @@ def build_store_from_yaml(db_cfg):
             name=col["name"],
             type=col["type"],
             primary_key=col["primary_key"] if isinstance(col["primary_key"], list) else [col["primary_key"]],
-            private=col.get("private", False)
+            private=col.get("private", False),
+            ephemeral=col.get("ephemeral", False),
         )
         store.add_collection(collection)
     # Load indices
@@ -47,7 +48,8 @@ def build_store_from_yaml(db_cfg):
         index = Index(
             name=idx["name"],
             collection=idx["collection"],
-            field=idx["fields"][0] if isinstance(idx["fields"], list) else idx["fields"]
+            fields=idx["fields"] if isinstance(idx["fields"], list) else [idx["fields"]],
+            unique=idx.get("unique", False),
         )
         store.add_index(index)
 
@@ -69,9 +71,11 @@ def main():
     parser = argparse.ArgumentParser(description="Load DB schema from YAML and FBS files, and generate C++ database files.")
     parser.add_argument("--yaml", required=True, help="Path to db.yaml config")
     parser.add_argument("--output_dir", required=False, help="Directory to write generated files")
+    parser.add_argument("--metadata_fbs", default="lib/schemas/metadata.fbs",
+                        help="Path to gendb's own metadata.fbs")
     args = parser.parse_args()
     db_cfg = load_yaml_db(args.yaml)
-    store = build_store_from_yaml(db_cfg)
+    store = build_store_from_yaml(db_cfg, args.metadata_fbs)
     print(f"Loaded {len(store.messages)} messages and {len(store.collections)} collections.")
     # Optionally, print summary
     for enum_name in store.list_enums():
@@ -141,29 +145,25 @@ def main():
             "pk_fields": pk_fields,
             "pk_fixed_size": pk_fixed_size, # -1 in case the size is not fixed
             "private": col.private,
+            "ephemeral": col.ephemeral,
+            "fields": store.list_fields(col.type),
         })
 
     # Compose indices info
     indices = []
     for idx in store.indices.values():
         collection = store.get_collection(idx.collection)
-        msg = store.get_message(collection.type)
-        key_type = store.get_field(collection.type, idx.field).type
-        value_type = store.get_field(collection.type, collection.primary_key[0]).type
         col_type = naming.split_namespace_class(collection.type)[1]
         indices.append({
             "name": idx.name,
             "name_pascal_case": naming.PascalCase(idx.name),
-            "collection": idx.collection,
+            "collection_enum": naming.PascalCase(col_type) + "CollId",
             "type": col_type,
-            "type_snake_case": naming.snake_case(col_type),
-            "field": idx.field,
-            "field_enum": naming.PascalCase(idx.field),
-            "key_type": key_type,
-            "key_cpp_type": base_types.cpp_type(key_type),
-            "value_cpp_type": base_types.cpp_type(value_type),
-            "index_class": f"gendb::Index</*{idx.field}*/ {base_types.cpp_type(key_type)}, std::array<uint8_t, sizeof({base_types.cpp_type(value_type)})>>",
-            "primary_key": collection.primary_key[0],
+            "unique": idx.unique,
+            "fields": [
+                {"name": name, "param": store.get_field(collection.type, name).const_ref_type}
+                for name in idx.fields
+            ],
         })
 
     # Compose sequences info
@@ -172,8 +172,15 @@ def main():
         seq = store.get_sequence(seq_name)
         sequences.append(seq)
 
+    # Collections' message types are named without their namespace, as they usually share this one.
+    foreign_types = sorted({
+        col.type.replace(".", "::") for col in store.collections.values()
+        if naming.split_namespace_class(col.type)[0].replace(".", "::") != namespace
+    })
+
     template_ctx = {
         "namespace": namespace,
+        "foreign_types": foreign_types,
         "includes": includes,
         "collections": collections,
         "indices": indices,
