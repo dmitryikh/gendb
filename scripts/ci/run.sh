@@ -7,6 +7,9 @@
 set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"
 
+# A new Docker volume for the cache belongs to root.
+if [ ! -w "$HOME/.conan2" ]; then sudo chown "$(id -u):$(id -g)" "$HOME/.conan2"; fi
+
 install_dependencies() {  # <build directory> <build type> <extra conan arguments...>
   local build="$1" type="$2"
   shift 2

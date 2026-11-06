@@ -2,15 +2,16 @@
 
 The engine under the generated `Db` classes: transactions, snapshots, durability and change
 subscriptions. The code is in `lib/gendb/`: `engine.{h,cpp}`, `record_table.h`, `ordered_index.h`,
-`log_format.h`, `wal.{h,cpp}`, `checkpoint.{h,cpp}` and `file_io.{h,cpp}`. Replication has
-[its own document](replication.md). **This design is awaiting approval**; see
+`transaction.cpp`, `cursors.cpp`, `subscription.cpp`, `engine_recovery.cpp`, `engine_compaction.cpp`,
+`log_format.h`, `wal.{h,cpp}`, `checkpoint.{h,cpp}`, `file_io.{h,cpp}` and `file_system.{h,cpp}`.
+Replication has [its own document](replication.md), and [api.md](api.md) is the guide to using it. **This design is awaiting approval**; see
 [Decisions to confirm](#decisions-to-confirm).
 
 ## Overview
 
 All data lives in memory, where reads use it in place. The disk holds a write-ahead log and a
 checkpoint, and is read only when the database opens. There are no other dependencies: the log,
-the checkpoints and their file handling are about 1,200 lines of this repository.
+the checkpoints and their file handling are about 1,300 lines of this repository.
 
 ```text
  Snapshot (any thread)            ScopedWrite (one at a time)
@@ -26,44 +27,6 @@ the checkpoints and their file handling are about 1,200 lines of this repository
        |                            |    2. link new versions, publish
        |  a pinned snapshot         |    3. deliver to subscribers
        +--- background checkpoint --+    4. free what no snapshot can reach
-```
-
-## API
-
-```cpp
-auto db = Db::Open({.path = "/var/lib/app/db"});       // or Db db; for memory only
-if (!db.ok()) return db.status();
-
-{
-  auto writer = (*db)->CreateWriter();                 // blocks other writers, never readers
-  uint64_t id;
-  RETURN_IF_ERROR(writer.NextAccountIdSequence(id));
-  AccountBuilder account;
-  account.set_account_id(id).set_name("Ann").set_age(30);
-  RETURN_IF_ERROR(writer.PutAccount(id, account.Build()));
-  RETURN_IF_ERROR(writer.UpdateAccount(id, AccountPatchBuilder().set_age(31).Build()));
-  RETURN_IF_ERROR(writer.Commit());                    // durable when it returns
-}                                                      // no commit means rollback
-
-auto snapshot = (*db)->CreateSnapshot();               // repeatable, never blocks a commit
-Account account;
-RETURN_IF_ERROR(snapshot.GetAccount(id, account));     // zero-copy view
-for (auto it = snapshot.GetAccountByAgeRange(18, 65); it.Valid(); it.Next()) {
-  use(it.Value().name());
-}
-for (auto it = snapshot.ScanAccount(); it.Valid(); it.Next()) { /* any order */ }
-```
-
-Collections are declared in the schema YAML. `ephemeral: true` keeps one out of the log, checkpoints
-and replication; it can still be subscribed to:
-
-```yaml
-collections:
-  - name: sessions
-    type: app.Session
-    ephemeral: true
-    primary_key:
-      - session_id
 ```
 
 ## Guarantees
@@ -82,8 +45,8 @@ collections:
 
 | Mode | `Commit` returns after | Process dies | Power fails | Cost here |
 | --- | --- | --- | --- | ---: |
-| Durable (`true`, default) | `write` + `fdatasync` (`F_FULLFSYNC` on macOS) | nothing lost | nothing lost | 164 µs |
-| Non-durable (`false`) | `write` | nothing lost | latest commits lost | 1.2 µs |
+| Durable (`true`, default) | `write` + `fdatasync` (`F_FULLFSYNC` on macOS) | nothing lost | nothing lost | 157 µs |
+| Non-durable (`false`) | `write` | nothing lost | latest commits lost | 1.1 µs |
 
 Non-durable commits always leave a consistent prefix: the log is ordered and each frame is
 checksummed, so a lost commit takes only later commits with it. Two tools narrow the window:
@@ -148,14 +111,23 @@ which is what makes the next rule safe.
 
 | Found | Means | Result |
 | --- | --- | --- |
-| Torn or zeroed frame at the end of the **last** segment | The crash interrupted a write | Cut it off and continue; it was never acknowledged as durable |
-| Damage in any **other** segment, or a gap in LSNs | The disk lost acknowledged data | `DataLoss` |
+| Damage in the **last** segment with nothing to say it was durable | The tail of a crash | Cut it off and continue |
+| Damage in the last segment before a sync mark that covers it | The disk lost acknowledged data | `DataLoss` |
+| Damage in any other segment, or a gap in LSNs | The same | `DataLoss` |
 | Damage in the checkpoint | The same | `DataLoss` |
+| A failure to read | Says nothing about the data | That error, with nothing touched |
+| A patch whose result does not match its checksum | The state is not what the log expects | `DataLoss` |
 | A collection the schema does not have | A rollback, a removal, or a newer primary | Kept as a foreign collection |
 
-Damage in the middle of the last segment looks the same as a torn tail, so it loses the commits after
-it without an error. Telling them apart reliably needs a record of the synced position, which the
-format does not hold yet.
+**Torn tail or damage?** Intact commits after a bad one prove nothing: the OS writes unsynced pages in
+any order, so a crash can leave holes in what was never promised. So the log records what was
+promised: every 4 KB a sync mark says up to which commit it was known durable, and a clean shutdown
+ends with one. Damage that a later mark covers is data loss. This leaves up to 4 KB at the end of the
+log after a crash, in which damage cannot be told from a torn write, and is cut. A frame's size field
+is never trusted for how much to read, as in a torn tail it is garbage.
+
+**Opening is fast** because indices wait until the end: records load without them, then each index is
+built from its sorted keys in one go, in linear time, on `recovery_threads` threads.
 
 ## Collections the schema does not have
 
@@ -194,7 +166,7 @@ total written to about twice the log's size, for any amount of data, while disk 
 three times the data plus the thresholds.
 
 The cost during a checkpoint is memory: versions replaced while it runs stay until the snapshot is
-released. On a 100,000-record database a checkpoint takes about 11 ms, at about 11 M records/s.
+released. On a 100,000-record database a checkpoint takes about 12 ms.
 
 ## Snapshots and versions
 
@@ -210,14 +182,26 @@ Tables and indices have exactly one writer, so readers can be lock-free with pla
 - `OrderedIndex` is a skip list of `encoded field + primary key`, using the order-preserving
   `key_codec`. Entries carry `created` and `deleted` sequence numbers.
 
+### Pinning
+
+A snapshot pins its sequence number in one of 64 slots, each on a cache line of its own, and a thread
+keeps to its own slot, so threads do not contend: opening and closing one is an atomic compare and
+swap and a few loads. More snapshots at once than there are slots fall back to a map under a mutex.
+
+The writer reads the slots to know what it may free, but only those ever used, so that this costs
+in proportion to the threads there have been. Pinning and reclaiming mirror each other with
+sequentially consistent atomics: the writer publishes a number and then reads the slots, and a reader
+writes its slot and then reads the number again and moves up if it changed, so either the writer sees
+the pin, or the reader sees the number.
+
 ### Reclamation
 
 Memory is freed only by the writer, at the end of a commit. A queue ordered by sequence number
 holds what commits superseded; an item at `S` is released once the oldest pinned snapshot is at `S`
 or later. Removing something from a structure takes two steps: unlink it, then free it one commit
-later, as a reader already inside may be standing on it. Unpinning is a short mutex-protected map
-update, so the cost of a snapshot does not depend on its lifetime, but what it keeps does: a
-snapshot held across many commits keeps every version they replaced. `engine().Stats()` reports it.
+later, as a reader already inside may be standing on it. The cost of a snapshot does not depend on
+its lifetime, but what it keeps does: a snapshot held across many commits keeps every version they
+replaced. `engine().Stats()` reports it.
 
 ## Commit path
 
@@ -253,7 +237,7 @@ auto subscription = db->Subscribe({
       }
     },
     .on_position = [](const PositionChange& change) { /* ... */ },
-    .on_commit = [](uint64_t seq) { /* all changes of this commit have been delivered */ },
+    .on_commit = [](const gendb::ChangePosition& position) { /* this commit is all delivered */ },
 });
 // Ends when `subscription` is destroyed.
 ```
@@ -273,7 +257,7 @@ requested, and a field set to its current value would look changed.
 | Runs | On the subscription's own thread | During `Commit`, on the writer's thread |
 | Handler may | Anything, including commit | Read through a snapshot; must not start a transaction |
 | Views | Copied per change | Zero-copy |
-| Commit, 1 scalar patch | 1.9 µs | 513 ns (483 ns with no subscriber) |
+| Commit, 1 scalar patch | 1.7 µs | 432 ns (387 ns with no subscriber) |
 | A slow handler | Fills the queue | Delays every writer directly |
 
 A queued subscription never loses a change: once its queue reaches `max_queue_bytes`, new
@@ -282,29 +266,64 @@ otherwise wait for themselves. The limit is soft, as a transaction already runni
 `WaitUntilDelivered()` blocks until the handler has seen every commit made so far.
 
 Subscribers also work on a replica, where a whole checkpoint arrives as one commit reporting just the
-records that differ. Delivery is in memory only: a subscriber that must not miss changes across
-restarts should compare with a snapshot when it starts.
+records that differ.
+
+### Resuming
+
+A subscriber that was away, even across a restart, can continue from a position it stored:
+
+```cpp
+auto subscription = db->SubscribeFrom(stored_position, handlers);
+```
+
+The log holds patches, which only go forward, so a record's past states cannot be rebuilt from it.
+Catching up is therefore compacted: one change per record that changed, `kUpsert` with its current state
+or `kDelete` with only its key, from a snapshot taken at the switch to live delivery, after which
+changes are complete again. Nothing is missed, and intermediate states of a record are not seen.
+`OutOfRange` means the log no longer reaches back that far, or the database has another history, and
+the subscriber has to start over from a snapshot. To keep the log for it, raise `wal_retain_bytes`.
+
+## Backup
+
+`engine().Backup(directory)` writes a checkpoint of the current state to an empty directory, from a
+pinned snapshot, on any engine including a memory-only one. Opening that directory restores the
+database. A power loss during it leaves nothing or a whole backup. A restored database has the
+original's history, so opening it as a primary next to the original and its replicas would make
+them differ, which the [state digest](replication.md#verifying-replicas) reveals.
+
+## Observing
+
+An `EngineObserver` set in the options gets log messages and metrics for commits, checkpoints and
+recovery. The engine writes nothing to stderr, but for a clash of collection IDs, which is a programming
+error and fatal when the schema is first used.
 
 ## Performance
 
-Measured on an Apple M4 Pro in a Docker Linux VM, Release, 100,000 accounts of about 100 bytes. Raw
-results are in [benchmarks/reference/db.txt](../benchmarks/reference/db.txt). The comparison is with
-the RocksDB backend this replaced, built from commit `589e03e` and run alternately with this code in
-one session. The machine itself drifts between runs by up to 50%, so only the ratios in this table
-mean much.
+Measured on an Apple M4 Pro in a Docker Linux VM, Release, 100,000 accounts of 57 bytes. Raw results
+are in [benchmarks/reference/db.txt](../benchmarks/reference/db.txt). The machine drifts between runs
+by up to 50%, so these are medians of runs alternating with the code before the last round of work,
+and only the ratios mean much.
 
-| Operation | RocksDB backend | Now |
+| Operation | Before | Now |
 | --- | ---: | ---: |
-| Commit, non-durable | 1.94 µs | 1.19 µs |
-| Commit, durable | 166 µs | 164 µs |
-| Open with 100,000 records, from the log | 112 ms | 118 ms |
-| Open with 100,000 records, from a checkpoint | n/a | 115 ms |
-| Write a checkpoint of 100,000 records | n/a | 11 ms |
-| Get by key, 1 thread | 101 ns | 106 ns |
-| Index scan | 19.0 M rows/s | 17.1 M rows/s |
-| Full collection scan | 17.7 M rows/s | 17.1 M rows/s |
-| Commit one scalar patch, memory only | 465 ns | 468 ns |
-| Commit under a long-lived snapshot | 350 ns | 366 ns |
+| Snapshot open and close, 1 thread | 20 ns | 4 ns |
+| Snapshot open and close, 8 threads at once | 537 ns | 6 ns |
+| Open with 100,000 records, from a checkpoint | 84 ms | 45 ms |
+| Open with 100,000 records, from the log | 93 ms | 77 ms |
+| Open, replaying 100,000 updates over a checkpoint | 121 ms | 80 ms |
+| Get by key, 1 thread | 81 ns | 91 ns |
+| Get by key, 8 threads at once | 76 ns | 79 ns |
+| Index scan | 22 M rows/s | 23 M rows/s |
+| Full collection scan | 26 M rows/s | 26 M rows/s |
+| Commit one scalar patch, memory only | 370 ns | 387 ns |
+| Commit under a long-lived snapshot | 308 ns | 333 ns |
+| Commit, non-durable | 1.11 µs | 1.11 µs |
+| Commit, durable | 153 µs | 157 µs |
+| Write a checkpoint of 100,000 records | 10 ms | 12 ms |
+
+The small losses on commits and checkpoints are in part the two indices added to the test schema in
+that round, whose fields these accounts lack, and which still have to be looked at. Reads did not change,
+so that row shows the noise.
 
 Logging patches, compared with the same code logging whole records, one changed field per commit:
 
@@ -315,16 +334,24 @@ Logging patches, compared with the same code logging whole records, one changed 
 | Log for 100,000 updates of 57-byte accounts | 9.3 MB | 4.7 MB |
 | Replaying those updates, with opening | 122 ms | 127 ms |
 
-Non-durable commits are 40% faster. Everything else is within this machine's noise, as expected: the
-read path did not change, and a durable commit is one `fdatasync` either way. Most of the time to open
-goes to inserting into the skip list; building indices from sorted keys would be the next thing to
-try.
-
-The binary also loses RocksDB and its compression libraries, the write buffers and block cache (up to
-72 MB) are gone, and the log is directly useful for replication.
-
 Memory per record, beyond key and value: 48 bytes of headers for the node and version, 11–23 bytes
 of table slots, and about 43 bytes per index entry plus its key, before allocator overhead.
+
+## Testing
+
+What the storage promises is tested against failures, not assumed:
+
+| How | What it does |
+| --- | --- |
+| `MemoryFileSystem` in `tests/lib` | All disk access goes through `FileSystem`. This one keeps only what a disk promises: unsynced data can be lost, torn, have holes or end in garbage, and unsynced directory operations survive in any combination. |
+| `fault_injection_test` | Cuts the power at every single operation of a workload, a checkpoint, a backup and a replica's checkpoint install, in each way, and checks that what comes back is exactly one commit's state and no older than promised. Fails single writes, syncs and reads. |
+| Real processes | `persistence_test` kills processes during commits, rotation and checkpoints, and cuts logs at every byte. |
+| Fuzzers in `fuzz/` | Messages and patches, recovery from arbitrary files, and both ends of a replication session. They add valid checksums themselves, to reach the code behind them. |
+| Mutations | While writing these tests, twelve deliberately wrong fsync orderings were tried, and each is caught. Run them again when changing what syncs when. |
+
+These found defects that reading the code had not: a read error during recovery taken for a torn tail,
+which could cut good data; removals relied on an order that disks do not keep; a garbage size field
+allocating 4 GB during recovery; and a read past the end of a malformed message.
 
 ## Limitations
 
@@ -340,9 +367,9 @@ of table slots, and about 43 bytes per index entry plus its key, before allocato
 - A replica that crashes just after logging a commit that does not fit its state, before it can fetch
   a checkpoint, then fails to open with `DataLoss`. Delete its directory to seed it again. This takes
   a replica already wrong through a bug or a damaged disk.
-- Tested by killing processes and by cutting and damaging files. Power loss itself and failing disks
-  are not simulated, so the ordering of fsyncs is checked by review only. The kill tests use `fork`
-  and are skipped under ThreadSanitizer.
+- After a crash, damage in the last 4 KB of the log cannot be told from a torn write, and is cut.
+- The simulated disk models what a disk promises. It cannot show that a real disk or file system keeps
+  those promises. See [Testing](#testing).
 
 ## Decisions to confirm
 
@@ -356,9 +383,9 @@ of table slots, and about 43 bytes per index entry plus its key, before allocato
    commits of small records.
 4. **Before and after states for subscribers**, rather than patches, as explained above.
 5. **Backpressure rather than loss** when a queued subscriber falls behind.
-6. **Keeping foreign collections** rather than refusing to open or dropping them. Safe by default, at
+6. **Compacted catch-up for resuming subscribers**, rather than a full change history, which would
+   take logging before states, or a separate change log.
+7. **Keeping foreign collections** rather than refusing to open or dropping them. Safe by default, at
    the price of memory that nothing visibly uses, which `Stats()` reports.
-7. **Sync by default.** Safe, and about 140 times slower than no sync here.
-8. **`Guard` is gone**: `SharedLock()` became `CreateSnapshot()`, as a snapshot is equally cheap and
-   does not block commits. The accessor style in `db_api_codegen.md` (`db.Accounts().Get`) is not
-   implemented; the flat `GetAccount` names stayed.
+8. **Sync by default.** Safe, and about 140 times slower than no sync here.
+9. **One writer at a time, with no group commit**, as the database is meant for one writing thread.

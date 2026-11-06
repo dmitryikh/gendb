@@ -22,7 +22,6 @@ docker run --rm \
     sudo chown dev:dev /home/dev/.conan2
     /home/dev/.local/bin/conan profile detect --force
     /home/dev/.local/bin/conan install . --output-folder=build/docker-release --build=missing -s build_type=Release
-    rm -f CMakeUserPresets.json
     cmake -S . -B build/docker-release -G Ninja \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_TOOLCHAIN_FILE=$PWD/build/docker-release/conan_toolchain.cmake \

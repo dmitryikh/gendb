@@ -139,9 +139,23 @@ from the new primary and lose whatever only they had. There is no election or fe
 primary and keeping the old one from taking writes are the application's job.
 
 A replica ahead of its primary, with a higher LSN in the same history, means the primary lost data,
-as by restoring a backup. It gets a checkpoint too. So does one whose state turns out to differ, which
-a patch's checksum reveals as soon as a record that differs is updated, or which arrives damaged.
-Differences in records that are never patched stay unnoticed.
+as by restoring a backup. It gets a checkpoint too.
+
+## Verifying replicas
+
+Replicas are checked against their primary all the time, in constant work per message. Both sides keep a
+digest of their whole durable state: the sum of a hash of each record, updated with every commit. The
+stream carries the primary's digest at the commit that ends each batch, and heartbeats carry the latest.
+A replica at that commit compares it with its own.
+
+A difference, in any record whether or not it was ever patched, makes it fetch a new checkpoint, and
+`ReplicaStatus::divergences` counts how often that happened. `verified_lsn` is the latest commit at which
+the two were found equal. This costs a hash of each record changed, and nothing until replication
+starts. Batches read from log files have no digest, so a replica that is catching up is verified again
+once it is back on the ring.
+
+A patch's checksum, in the log itself, also catches a record that differs as soon as it is patched, and
+protects recovery, which has no primary to compare with.
 
 A memory-only primary starts a new history on each start, so its replicas follow it to an empty state.
 
@@ -161,10 +175,18 @@ Messages are forward and backward compatible, so fields can differ freely. For c
 Only the ID and the name travel. Indices need no metadata, as each side derives its own from its code
 when it knows the collection.
 
-This covers schemas. A change to the log format itself, `kFormatVersion`, comes with a new protocol
-version, and the two sides must then speak the same one. Formats 1 and 2 are not interchangeable in
-the stream: a primary refuses replicas that speak another protocol, with the reason in
-`Status().last_error`.
+## Upgrading the software
+
+Each side states the range of protocol versions it speaks when connecting, and they use the newest they
+share. With none in common they refuse, and both ranges are in `Status().last_error`. Keeping a range
+of more than one version in a release lets either side be upgraded first, and
+`oldest_protocol`/`newest_protocol` in the options can hold a side back.
+
+Log entries are handled the same way. A replica says which it can read, and one that meets an entry it
+cannot read is told so, rather than misreading it. So a new kind of entry gets into a running system in
+two steps: upgrade everything with it off, then turn it on on the primary, as `log_patches` allows for
+patches. A change to `kFormatVersion` itself, as of how keys are encoded, cannot be read by older
+code; since version 3, older files are refused.
 
 ## Performance
 
@@ -173,7 +195,7 @@ transport with no network, 100,000 accounts of about 100 bytes:
 
 | Operation | Time |
 | --- | ---: |
-| Seed a new memory-only replica, from connecting to fully readable | 72 ms |
+| Seed a new memory-only replica, from connecting to fully readable | 66 ms |
 | Commit on the primary and apply on a following replica | 2.3 µs per commit |
 
 ## Operations
@@ -197,8 +219,8 @@ transport with no network, 100,000 accounts of about 100 bytes:
 - A new memory-only primary's replicas restart from nothing, as above.
 - No built-in encryption or authentication: both belong to the transport. The gRPC transport takes
   whatever credentials its server and channel are built with.
-- Tested with process kills and dropped connections, over in-process, TCP and gRPC transports.
-  Network partitions with a silently dead peer are not simulated.
+- Tested with dropped connections and power loss during installs, over in-process, TCP and gRPC
+  transports, and fuzzed at both ends. Network partitions with a silently dead peer are not simulated.
 
 ## Decisions to confirm
 
