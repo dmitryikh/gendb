@@ -19,23 +19,24 @@ enum class {{ enum.name }} : {{ enum.underlying_type }} {
   {{ value_name }} = {{ value }},
   {% endfor %}
 };
-{% if enum.namespace %}
-} // namespace {{ enum.namespace }}
-{% endif %}
 
 // Enum value arrays for reflection
-static constexpr std::array<gendb::EnumValueInfo, {{ enum.vals | length }}> k{{ enum.name }}Values = {
+inline constexpr std::array<gendb::EnumValueInfo, {{ enum.vals | length }}> k{{ enum.name }}Values = {
   {% for value_name, value in enum.vals %}
   gendb::EnumValueInfo{"{{ value_name }}", {{ value }}},
   {% endfor %}
 };
+{% if enum.namespace %}
+} // namespace {{ enum.namespace }}
+{% endif %}
 {% endfor %}
 
 // Message classes
 {% for table in tables %}
 {% if table.namespace %}namespace {{ table.namespace }} {
 {% endif %}
-// Zero-copy view of a serialized {{ table.name }}. Does not own the bytes.
+// Zero-copy view of a serialized {{ table.name }}. Does not own the bytes. A getter returns the
+// field's default if it is not set, which has_x() tells apart from being set to that value.
 class {{ table.name }} {
  public:
   enum Field : gendb::FieldId {
@@ -66,7 +67,7 @@ class {{ table.name }} {
   {% for field in table.fields %}
   {% if field.cpp_type == 'std::string' %}
   bool has_{{field.name}}() const { return _view.Has<{{ field.name | pascalcase }}, gendb::Kind::Var>(); }
-  std::string_view {{field.name}}() const { return _view.GetString<{{ field.name | pascalcase }}>(); }
+  std::string_view {{field.name}}() const { return _view.GetString<{{ field.name | pascalcase }}>({{ field.default }}); }
   {% elif field.field_kind == FieldKind.ENUM %}
   bool has_{{field.name}}() const { return _view.Has<{{ field.name | pascalcase }}, gendb::KindOf<{{ field.underlying_type }}>>(); }
   {{ field.cpp_type }} {{field.name}}() const { return static_cast<{{ field.cpp_type }}>(_view.Get<{{ field.name | pascalcase }}, {{ field.underlying_type }}>({{ field.default }})); }

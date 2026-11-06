@@ -1,4 +1,4 @@
-// Message format benchmarks, with standard FlatBuffers tables as the baseline.
+// Message format benchmarks.
 // Methodology: benchmarks/README.md.
 #include <benchmark/benchmark.h>
 
@@ -7,15 +7,13 @@
 #include <string>
 #include <string_view>
 
-#include "account.fbs.h"
+#include "account.gendb.h"
 #include "gendb/message.h"
 #include "message_benchmark_common.h"
-#include "message_benchmark_generated.h"
-#include "position.fbs.h"
+#include "position.gendb.h"
 
 namespace {
 namespace data = gendb::benchmarks;
-namespace fb = gendb::benchmarks::flat;
 
 enum class Case { Position, AccountFull, AccountSparse, WideFull, WideSparse };
 constexpr bool IsWide(Case c) {
@@ -147,175 +145,6 @@ struct Message {
   X(49) X(50) X(51) X(52) X(53) X(54) X(55) X(56) X(57) X(58) X(59) X(60) X(61) X(62) X(63) X(64)
 // clang-format on
 
-template <Case C>
-struct FlatBuffers {
-  static constexpr const char* Name = "FlatBuffers";
-  using Buffer = flatbuffers::DetachedBuffer;
-  using Table = std::conditional_t<C == Case::Position, fb::Position,
-                                   std::conditional_t<IsAccount(C), fb::Account, fb::Wide>>;
-  struct WideSource {};
-  using Builder =
-      std::conditional_t<C == Case::Position, data::PositionDataset,
-                         std::conditional_t<IsAccount(C), data::AccountDataset, WideSource>>;
-  using View = const Table*;
-
-  static Builder MakeBuilder() {
-    if constexpr (C == Case::Position)
-      return data::kPositionFull;
-    else if constexpr (IsAccount(C))
-      return C == Case::AccountSparse ? data::kAccountSparse : data::kAccountFull;
-    else
-      return {};
-  }
-  static Buffer Serialize(Builder& source) {
-    flatbuffers::FlatBufferBuilder b;
-    flatbuffers::Offset<Table> root;
-    if constexpr (C == Case::Position) {
-      auto instrument = b.CreateString(source.instrument.data(), source.instrument.size());
-      fb::PositionBuilder position(b);
-      position.add_position_id(source.position_id);
-      position.add_account_id(source.account_id);
-      position.add_volume(source.volume);
-      position.add_instrument(instrument);
-      position.add_open_price(source.open_price);
-      position.add_direction(source.direction);
-      root = position.Finish();
-    } else if constexpr (IsAccount(C)) {
-      flatbuffers::Offset<flatbuffers::String> trader, name, address, config;
-      if constexpr (C == Case::AccountFull) {
-        trader = b.CreateString(source.trader_id.data(), source.trader_id.size());
-        name = b.CreateString(source.name.data(), source.name.size());
-        address = b.CreateString(source.address.data(), source.address.size());
-        config = b.CreateString(source.config_name.data(), source.config_name.size());
-      }
-      fb::AccountBuilder account(b);
-      account.add_account_id(source.account_id);
-      account.add_is_active(source.is_active);
-      if constexpr (C == Case::AccountFull) {
-        account.add_trader_id(trader);
-        account.add_name(name);
-        account.add_address(address);
-        account.add_age(source.age);
-        account.add_balance(source.balance);
-        account.add_config_name(config);
-      }
-      root = account.Finish();
-    } else {
-      fb::WideBuilder wide(b);
-#define ADD_FB_WIDE(N) \
-  if constexpr (WidePresent(C, N)) wide.add_f##N(1000 + N);
-      WIDE_FIELDS(ADD_FB_WIDE)
-#undef ADD_FB_WIDE
-      root = wide.Finish();
-    }
-    b.Finish(root);
-    return b.Release();
-  }
-  static View Open(const Buffer& bytes) { return flatbuffers::GetRoot<Table>(bytes.data()); }
-  static void CheckBuffer(const Buffer& bytes) {
-    flatbuffers::Verifier verifier(bytes.data(), bytes.size());
-    if (!verifier.VerifyBuffer<Table>(nullptr)) throw std::runtime_error("invalid FlatBuffer");
-  }
-  static std::string_view String(const flatbuffers::String* s) {
-    return s ? std::string_view(s->c_str(), s->size()) : std::string_view{};
-  }
-  static void Read(View v) {
-    if constexpr (C == Case::Position) {
-      benchmark::DoNotOptimize(v->position_id().value_or(0));
-      benchmark::DoNotOptimize(v->account_id().value_or(0));
-      benchmark::DoNotOptimize(v->volume().value_or(0));
-      benchmark::DoNotOptimize(String(v->instrument()));
-      benchmark::DoNotOptimize(v->open_price().value_or(0));
-      benchmark::DoNotOptimize(v->direction().value_or(0));
-    } else if constexpr (IsAccount(C)) {
-      benchmark::DoNotOptimize(v->account_id().value_or(0));
-      benchmark::DoNotOptimize(v->is_active().value_or(false));
-      if constexpr (C == Case::AccountFull) {
-        benchmark::DoNotOptimize(String(v->trader_id()));
-        benchmark::DoNotOptimize(String(v->name()));
-        benchmark::DoNotOptimize(String(v->address()));
-        benchmark::DoNotOptimize(v->age().value_or(0));
-        benchmark::DoNotOptimize(v->balance().value_or(0));
-        benchmark::DoNotOptimize(String(v->config_name()));
-      }
-    } else {
-      benchmark::DoNotOptimize(v->f1().value_or(0));
-      benchmark::DoNotOptimize(v->f2().value_or(0));
-      benchmark::DoNotOptimize(v->f32().value_or(0));
-      benchmark::DoNotOptimize(v->f64().value_or(0));
-    }
-  }
-  static void Check(View v) {
-    if constexpr (C == Case::Position) {
-      if (v->position_id().value_or(0) != 1001 || String(v->instrument()) != "EURUSD" ||
-          v->volume().value_or(0) != 250)
-        throw std::runtime_error("invalid FB Position");
-    } else if constexpr (IsAccount(C)) {
-      if (v->account_id().value_or(0) != 42 || !v->is_active().value_or(false) ||
-          (C == Case::AccountFull && String(v->name()) != "Alice Example") ||
-          (C == Case::AccountSparse &&
-           (v->age().has_value() || v->balance().has_value() || v->name())))
-        throw std::runtime_error("invalid FB Account");
-    } else if (v->f32().value_or(0) != 1032 || v->f64().value_or(0) != 1064 ||
-               (C == Case::WideSparse && v->f3().has_value())) {
-      throw std::runtime_error("invalid FB Wide");
-    }
-  }
-  static bool Patch(Buffer& bytes) {
-    auto* v = flatbuffers::GetMutableRoot<Table>(bytes.data());
-    if constexpr (C == Case::Position)
-      return v->mutate_volume(251);
-    else if constexpr (IsAccount(C))
-      return v->mutate_is_active(false);
-    else
-      return v->mutate_f32(9999);
-  }
-  static Buffer Rebuild(const Buffer& bytes, std::string_view value) {
-    std::unique_ptr<typename Table::NativeTableType> native(Open(bytes)->UnPack());
-    if constexpr (C == Case::Position)
-      native->instrument.assign(value);
-    else if constexpr (C == Case::AccountFull)
-      native->name.assign(value);
-    else if constexpr (C == Case::AccountSparse)
-      native->trader_id.assign(value);
-    flatbuffers::FlatBufferBuilder b;
-    auto root = Table::Pack(b, native.get());
-    b.Finish(root);
-    return b.Release();
-  }
-  static void CheckMutations() {
-    auto source = MakeBuilder();
-    auto bytes = Serialize(source);
-    if (!Patch(bytes)) throw std::runtime_error("FB scalar mutation rejected");
-    CheckBuffer(bytes);
-    auto v = Open(bytes);
-    if constexpr (C == Case::Position) {
-      if (v->volume().value_or(0) != 251) throw std::runtime_error("FB scalar mutation lost");
-    } else if constexpr (IsAccount(C)) {
-      if (!v->is_active().has_value() || v->is_active().value_or(true))
-        throw std::runtime_error("FB explicit false mutation lost");
-    } else if (v->f32().value_or(0) != 9999)
-      throw std::runtime_error("FB scalar mutation lost");
-    if constexpr (!IsWide(C)) {
-      constexpr std::string_view replacement = "replacement with a different length";
-      auto rebuilt = Rebuild(bytes, replacement);
-      CheckBuffer(rebuilt);
-      auto updated = Open(rebuilt);
-      if constexpr (C == Case::Position) {
-        if (String(updated->instrument()) != replacement || updated->volume().value_or(0) != 251)
-          throw std::runtime_error("FB rebuild lost field");
-      } else {
-        const auto* changed = C == Case::AccountFull ? updated->name() : updated->trader_id();
-        if (String(changed) != replacement || !updated->is_active().has_value() ||
-            updated->is_active().value_or(true) ||
-            (C == Case::AccountSparse &&
-             (updated->age().has_value() || updated->balance().has_value())))
-          throw std::runtime_error("FB rebuild changed field presence");
-      }
-    }
-  }
-};
-
 enum class Operation { Build, Serialize, Open, ReadHot, ReadCold, EndToEnd };
 constexpr const char* OpName(Operation op) {
   switch (op) {
@@ -400,7 +229,7 @@ void PatchSameSize(benchmark::State& state) {
   } else {
     for (auto _ : state) {
       benchmark::ClobberMemory();
-      if (!Adapter::Patch(bytes)) throw std::runtime_error("FlatBuffers mutation failed");
+      if (!Adapter::Patch(bytes)) throw std::runtime_error("mutation failed");
       benchmark::DoNotOptimize(bytes.data());
     }
   }
@@ -461,7 +290,6 @@ void RegisterAdapter() {
 template <Case C>
 void RegisterCase() {
   RegisterAdapter<C, Message<C>>();
-  RegisterAdapter<C, FlatBuffers<C>>();
   const auto prefix = std::string(CaseName(C)) + "/Message";
   benchmark::RegisterBenchmark((prefix + "/Verify").c_str(), &VerifyFull<C>);
 }

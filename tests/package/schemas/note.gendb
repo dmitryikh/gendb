@@ -1,0 +1,7 @@
+namespace notes;
+
+message Note {
+  1 id: uint64;
+  2 title: string;
+  3 stars: int32 = 1;
+}

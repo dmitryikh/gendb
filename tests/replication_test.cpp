@@ -16,7 +16,7 @@
 #include <thread>
 #include <vector>
 
-#include "account.fbs.h"
+#include "account.gendb.h"
 #include "database.h"
 #include "lib/loopback_transport.h"
 #include "tcp_transport.h"

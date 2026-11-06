@@ -1,6 +1,0 @@
-namespace gendb.tests;
-
-table Config {
-  config_name: string;
-  max_trade_volume: double;
-}

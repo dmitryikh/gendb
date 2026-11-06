@@ -26,7 +26,6 @@ gen_db_messages(
 find_package(absl REQUIRED)
 if(GENDB_BUILD_TESTS)
     find_package(benchmark REQUIRED)
-    find_package(flatbuffers REQUIRED)
     find_package(GTest REQUIRED)
 endif()
 
@@ -149,6 +148,7 @@ install(DIRECTORY lib/gendb DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 install(DIRECTORY gen/ DESTINATION ${GENDB_INSTALL_GEN_DIR}
     PATTERN "__pycache__" EXCLUDE
     PATTERN "*_test.py" EXCLUDE
+    PATTERN "fuzz_*" EXCLUDE
 )
 install(DIRECTORY lib/schemas/ DESTINATION ${GENDB_INSTALL_SCHEMA_DIR})
 install(EXPORT gendbTargets NAMESPACE gendb:: DESTINATION ${GENDB_INSTALL_CMAKE_DIR})

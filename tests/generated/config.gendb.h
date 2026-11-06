@@ -14,7 +14,8 @@
 
 // Message classes
 namespace gendb::tests {
-// Zero-copy view of a serialized Config. Does not own the bytes.
+// Zero-copy view of a serialized Config. Does not own the bytes. A getter returns the
+// field's default if it is not set, which has_x() tells apart from being set to that value.
 class Config {
  public:
   enum Field : gendb::FieldId {

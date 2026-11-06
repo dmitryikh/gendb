@@ -1,0 +1,20 @@
+// Two versions of one message, for testing schema evolution: a field keeps its number and type forever,
+// new fields go at the end, and a field that is no longer used is deprecated.
+namespace gendb.tests.evolution;
+
+message AccountV1 {
+  1 id: uint64;
+  2 name: string;
+  3 nickname: string;
+  4 age: int32;
+}
+
+message AccountV2 {
+  1 id: uint64;
+  2 name: string;
+  3 nickname: string deprecated;
+  4 age: int32 deprecated;
+  5 email: string;
+  6 score: double;
+  7 vip: bool;
+}

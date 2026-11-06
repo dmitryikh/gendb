@@ -14,7 +14,8 @@
 
 // Message classes
 namespace gendb::tests::evolution {
-// Zero-copy view of a serialized AccountV1. Does not own the bytes.
+// Zero-copy view of a serialized AccountV1. Does not own the bytes. A getter returns the
+// field's default if it is not set, which has_x() tells apart from being set to that value.
 class AccountV1 {
  public:
   enum Field : gendb::FieldId {
@@ -149,7 +150,8 @@ class AccountV1PatchBuilder {
 };
 }  // namespace gendb::tests::evolution
 namespace gendb::tests::evolution {
-// Zero-copy view of a serialized AccountV2. Does not own the bytes.
+// Zero-copy view of a serialized AccountV2. Does not own the bytes. A getter returns the
+// field's default if it is not set, which has_x() tells apart from being set to that value.
 class AccountV2 {
  public:
   enum Field : gendb::FieldId {

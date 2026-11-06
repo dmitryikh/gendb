@@ -2,11 +2,14 @@
 
 #include <gtest/gtest.h>
 
-#include "account.fbs.h"
-#include "evolution.fbs.h"
+#include <limits>
+
+#include "account.gendb.h"
+#include "defaults.gendb.h"
+#include "evolution.gendb.h"
 #include "lib/message_matchers.h"
 #include "lib/parse_text.h"
-#include "position.fbs.h"
+#include "position.gendb.h"
 
 using namespace gendb::tests;
 
@@ -16,6 +19,89 @@ std::vector<uint8_t> Patched(const gendb::MessagePatch& patch, std::vector<uint8
   gendb::ApplyPatch(patch, message);
   return message;
 }
+// A default is what a getter returns for a field that is not set, which is not the same as being
+// set to that value. tests/schemas/defaults.gendb has one of each type.
+namespace defaults = gendb::tests::defaults;
+
+TEST(SchemaDefaultsTest, UnsetFieldsReadAsTheirDefaults) {
+  std::vector<uint8_t> bytes = defaults::SettingsBuilder().set_id(1).Build();
+  defaults::Settings settings{bytes};
+  EXPECT_EQ(settings.enabled(), true);
+  EXPECT_EQ(settings.retries(), -3);
+  EXPECT_EQ(settings.tiny(), -128);
+  EXPECT_EQ(settings.huge(), 18446744073709551615ULL);
+  EXPECT_EQ(settings.lowest(), std::numeric_limits<int64_t>::min());
+  EXPECT_EQ(settings.ratio(), 0.25f);
+  EXPECT_EQ(settings.weight(), -1.5e300);
+  EXPECT_EQ(settings.mask(), 0xff00u);
+  EXPECT_EQ(settings.level(), defaults::Level::kHigh);
+  EXPECT_EQ(settings.title(), "untitled");
+  using namespace std::string_view_literals;
+  EXPECT_EQ(settings.tricky(), "quote\" back\\slash ?\?= \n tab\t \xff\0 end"sv);
+  EXPECT_EQ(settings.unicode(), "имя");
+  // Without a default in the schema, the type's zero.
+  EXPECT_EQ(settings.plain_count(), 0);
+  EXPECT_EQ(settings.plain_name(), "");
+  EXPECT_EQ(settings.plain_level(), defaults::Level::kNone);
+}
+
+TEST(SchemaDefaultsTest, ADefaultDoesNotMakeAFieldSet) {
+  std::vector<uint8_t> bytes = defaults::SettingsBuilder().set_id(1).Build();
+  defaults::Settings unset{bytes};
+  EXPECT_FALSE(unset.has_retries());
+  EXPECT_FALSE(unset.has_title());
+  EXPECT_FALSE(unset.has_level());
+  EXPECT_FALSE(unset.has_enabled());
+
+  // Set to the very value of the default, it is set.
+  std::vector<uint8_t> same = defaults::SettingsBuilder()
+                                  .set_id(1)
+                                  .set_retries(-3)
+                                  .set_title("untitled")
+                                  .set_level(defaults::Level::kHigh)
+                                  .set_enabled(true)
+                                  .Build();
+  defaults::Settings set{same};
+  EXPECT_TRUE(set.has_retries());
+  EXPECT_TRUE(set.has_title());
+  EXPECT_TRUE(set.has_level());
+  EXPECT_TRUE(set.has_enabled());
+  EXPECT_EQ(set.retries(), -3);
+
+  // Stored only when set: the default takes no room.
+  EXPECT_LT(bytes.size(), same.size());
+}
+
+TEST(SchemaDefaultsTest, SetValuesWinAndClearingGoesBackToTheDefault) {
+  std::vector<uint8_t> bytes = defaults::SettingsBuilder()
+                                   .set_id(1)
+                                   .set_retries(5)
+                                   .set_title("mine")
+                                   .set_enabled(false)
+                                   .Build();
+  defaults::Settings set{bytes};
+  EXPECT_EQ(set.retries(), 5);
+  EXPECT_EQ(set.title(), "mine");
+  EXPECT_FALSE(set.enabled());
+  EXPECT_TRUE(set.has_enabled());
+
+  gendb::ApplyPatch(defaults::SettingsPatchBuilder().clear_retries().clear_title().Build(), bytes);
+  defaults::Settings cleared{bytes};
+  EXPECT_FALSE(cleared.has_retries());
+  EXPECT_EQ(cleared.retries(), -3);
+  EXPECT_FALSE(cleared.has_title());
+  EXPECT_EQ(cleared.title(), "untitled");
+  EXPECT_FALSE(cleared.enabled());  // Still as it was set.
+}
+
+// Malformed bytes read as an empty message, so as all defaults.
+TEST(SchemaDefaultsTest, AnEmptyMessageReadsAsAllDefaults) {
+  defaults::Settings empty;
+  EXPECT_EQ(empty.retries(), -3);
+  EXPECT_EQ(empty.title(), "untitled");
+  EXPECT_FALSE(empty.has_retries());
+}
+
 }  // namespace
 
 class AccountPatchTest : public ::testing::Test {
@@ -613,7 +699,7 @@ TEST(MessageMatcherTest, MessageEqualPartially_WrongValueFails) {
   )m")));
 }
 
-// Schema evolution between two generated versions of a table, as in tests/schemas/evolution.fbs.
+// Schema evolution between two generated versions of a table, as in tests/schemas/evolution.gendb.
 namespace evolution = gendb::tests::evolution;
 
 template <typename T>

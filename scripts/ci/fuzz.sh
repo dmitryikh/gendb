@@ -15,7 +15,12 @@ cmake -S . -B "$build" -G Ninja \
   -DCMAKE_CXX_FLAGS="$flags" \
   -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" \
   -DGENDB_BUILD_FUZZERS=ON >/dev/null
-cmake --build "$build" --target fuzz_message fuzz_recovery fuzz_replication
+# All of the library, for the generated headers and the compile commands.
+cmake --build "$build" --target gendb_lib fuzz_message fuzz_recovery fuzz_replication
+
+echo "== schema parser"
+python3 gen/fuzz_schema_parser.py --seconds "$seconds" --compile 30 --compile-commands "$build/compile_commands.json"
+
 mkdir -p "$build/artifacts"
 for target in fuzz_message fuzz_recovery fuzz_replication; do
   corpus="$build/corpus/$target"

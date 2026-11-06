@@ -1,0 +1,28 @@
+// A default of each type, including what would break naive code generation.
+namespace gendb.tests.defaults;
+
+enum Level : uint16 {
+  kNone = 0;
+  kLow = 1;
+  kHigh = 2;
+}
+
+message Settings {
+  1 id: uint64;
+  2 enabled: bool = true;
+  3 retries: int32 = -3;
+  4 tiny: int8 = -128;
+  5 huge: uint64 = 18446744073709551615;
+  6 lowest: int64 = -9223372036854775808;
+  7 ratio: float = 0.25;
+  8 weight: double = -1.5e300;
+  9 mask: uint32 = 0xff00;
+  10 level: Level = kHigh;
+  11 title: string = "untitled";
+  12 tricky: string = "quote\" back\\slash ??= \n tab\t \xff\x00 end";
+  13 unicode: string = "имя";
+  14 plain_count: int32;
+  15 plain_name: string;
+  16 plain_level: Level;
+  17 old_setting: int32 = 7 deprecated;
+}

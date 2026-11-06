@@ -2,7 +2,7 @@
 #include <filesystem>
 
 #include "database.h"
-#include "note.fbs.h"
+#include "note.gendb.h"
 
 int main() {
   const auto path = std::filesystem::temp_directory_path() / "gendb_package_test";

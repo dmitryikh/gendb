@@ -8,7 +8,7 @@ class FieldKind(Enum):
     ENUM = 2
     MESSAGE = 3
 
-# Properties for a field in Flatbuffer message.
+# Properties for a field of a message.
 @dataclass
 class Field:
     id: int
@@ -21,13 +21,14 @@ class Field:
     ref_type: str # type in c++, which is used to pass the field value as a reference (for modifications)
     is_fixed_size: bool # if the size of the field is known at compile-time
     optional: bool = True
-    default: Optional[Union[int, float, str]] = None
+    default: Optional[str] = None # C++ expression for a getter's value when unset; may be empty
+    has_default: bool = False # the schema states a default
     deprecated: bool = False # keeps its ID reserved; no generated accessors
 
 @dataclass
 class Enum:
     full_name: str
-    underlying_type: str # e.g., "Int", "UInt", etc.
+    underlying_type: str # e.g., "int32", "uint32", etc.
     values: dict[str, int]  # e.g., {"LABEL1": 1, "LABEL2": 2}
 
     def name(self) -> str:

@@ -1,0 +1,24 @@
+namespace gendb.tests;
+
+enum Direction : uint32 {
+  kUnknown = 0;
+  kBuy = 1;
+  kSell = 2;
+}
+
+message Position {
+  1 position_id: int32;
+  2 account_id: int32;
+  3 volume: int32;
+  4 instrument: string;
+  5 open_price: float;
+  6 direction: Direction;
+}
+
+message ClosedPosition {
+  1 position_id: int32;
+  2 account_id: int32;
+  3 volume: int32;
+  4 instrument: string;
+  5 profit: float;
+}

@@ -1,33 +1,33 @@
-2026-11-06T09:59:02+00:00
-Running ./build/docker-release/benchmarks/db_benchmarks
+2026-11-06T11:24:15+00:00
+Running ./build/ci-release/benchmarks/db_benchmarks
 Run on (12 X 48 MHz CPU s)
-Load Average: 1.80, 1.88, 1.83
+Load Average: 3.28, 2.78, 1.41
 --------------------------------------------------------------------------------
 Benchmark                                      Time             CPU   Iterations
 --------------------------------------------------------------------------------
-SnapshotOpenClose/real_time/threads:1       4.01 ns         4.01 ns    174706039
-SnapshotOpenClose/real_time/threads:2       3.98 ns         3.98 ns    176750102
-SnapshotOpenClose/real_time/threads:4       4.97 ns         4.97 ns    122945488
-SnapshotOpenClose/real_time/threads:8       4.10 ns         4.10 ns    154054616
-SnapshotGet/real_time/threads:1             67.7 ns         67.7 ns     11096800 items_per_second=14.7775M/s
-SnapshotGet/real_time/threads:2             68.0 ns         68.0 ns      8852854 items_per_second=14.7069M/s
-SnapshotGet/real_time/threads:4             73.4 ns         73.4 ns      9217136 items_per_second=13.6305M/s
-SnapshotGet/real_time/threads:8             69.9 ns         69.9 ns      8188168 items_per_second=14.3045M/s
-IndexEqualScan                             48431 ns        48429 ns        12699 items_per_second=25.8108M/s
-CollectionScan                           3050787 ns      3050770 ns          226 items_per_second=32.7786M/s
-CommitOneScalarPatch                         407 ns          407 ns      1826649
-CommitUnderSnapshot                          300 ns          300 ns      2182768
-CommitWithSubscriber/queued:0                404 ns          404 ns      1769044
-CommitWithSubscriber/queued:1               1576 ns         1206 ns       564487
-PersistentCommit/0                          1103 ns         1103 ns       669181
-PersistentCommit/1                        153889 ns        17483 ns        41332
-LoggedCommit/string:16/update:0              524 ns          508 ns      1304668 log_bytes_per_commit=77.0001
-LoggedCommit/string:16/update:1              526 ns          526 ns      1326967 log_bytes_per_commit=47
-LoggedCommit/string:1024/update:0           1175 ns         1015 ns       695605 log_bytes_per_commit=1.087k
-LoggedCommit/string:1024/update:1            783 ns          782 ns       894339 log_bytes_per_commit=47
-RecoverUpdates                              81.7 ms         80.4 ms            8 log_MB=11.3489
-CheckpointWrite                             11.7 ms         9.55 ms           67 bytes=6.70023M items_per_second=10.4718M/s
-Recover/from_checkpoint:0                   78.6 ms         77.7 ms            9 items_per_second=1.28637M/s
-Recover/from_checkpoint:1                   43.6 ms         42.3 ms           16 items_per_second=2.36645M/s
-ReplicaSeed/real_time                       64.1 ms         13.3 ms            9 items_per_second=1.55937M/s
-ReplicaFollow/real_time                     2321 ns         1546 ns       311969
+SnapshotOpenClose/real_time/threads:1       4.35 ns         4.35 ns    160383178
+SnapshotOpenClose/real_time/threads:2       4.36 ns         4.36 ns    171267354
+SnapshotOpenClose/real_time/threads:4       5.41 ns         5.41 ns     98316864
+SnapshotOpenClose/real_time/threads:8       8.80 ns         8.80 ns     92423792
+SnapshotGet/real_time/threads:1              133 ns          133 ns      5087468 items_per_second=7.52348M/s
+SnapshotGet/real_time/threads:2              119 ns          119 ns      5643790 items_per_second=8.437M/s
+SnapshotGet/real_time/threads:4              119 ns          119 ns      5721872 items_per_second=8.37404M/s
+SnapshotGet/real_time/threads:8              150 ns          150 ns      5690472 items_per_second=6.687M/s
+IndexEqualScan                             77762 ns        77753 ns         9391 items_per_second=16.0766M/s
+CollectionScan                           7380354 ns      7380391 ns           94 items_per_second=13.5494M/s
+CommitOneScalarPatch                         567 ns          567 ns      1014392
+CommitUnderSnapshot                          421 ns          421 ns      1601082
+CommitWithSubscriber/queued:0                586 ns          586 ns       915621
+CommitWithSubscriber/queued:1               2498 ns         2005 ns       342747
+PersistentCommit/0                          1265 ns         1265 ns       545023
+PersistentCommit/1                        196015 ns        23898 ns        31387
+LoggedCommit/string:16/update:0              543 ns          527 ns      1310189 log_bytes_per_commit=77.0001
+LoggedCommit/string:16/update:1              553 ns          553 ns      1245037 log_bytes_per_commit=47
+LoggedCommit/string:1024/update:0           1307 ns         1027 ns       667466 log_bytes_per_commit=1.087k
+LoggedCommit/string:1024/update:1            801 ns          801 ns       889898 log_bytes_per_commit=47
+RecoverUpdates                               132 ms          129 ms            6 log_MB=11.3489
+CheckpointWrite                             17.9 ms         13.2 ms           47 bytes=6.70023M items_per_second=7.57081M/s
+Recover/from_checkpoint:0                    133 ms          131 ms            5 items_per_second=762.562k/s
+Recover/from_checkpoint:1                   74.0 ms         71.5 ms           14 items_per_second=1.39951M/s
+ReplicaSeed/real_time                       85.6 ms         20.9 ms            8 items_per_second=1.16881M/s
+ReplicaFollow/real_time                     3147 ns         2102 ns       220513

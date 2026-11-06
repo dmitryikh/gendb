@@ -5,12 +5,12 @@
 #include <cstdint>
 
 #include "absl/status/status.h"
-#include "account.fbs.h"
-#include "config.fbs.h"
+#include "account.gendb.h"
+#include "config.gendb.h"
 #include "gendb/status.h"
-#include "metadata.fbs.h"
-#include "position.fbs.h"
-#include "session.fbs.h"
+#include "metadata.gendb.h"
+#include "position.gendb.h"
+#include "session.gendb.h"
 
 namespace gendb::tests {
 

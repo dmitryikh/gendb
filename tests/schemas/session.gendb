@@ -1,0 +1,6 @@
+namespace gendb.tests;
+
+message Session {
+  1 session_id: uint64;
+  2 token: string;
+}

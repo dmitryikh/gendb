@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One CI job, in the Docker image from the Dockerfile:
-#   scripts/ci/run.sh format|test|asan|tsan|release|package|fuzz
+#   scripts/ci/run.sh format|schema|test|asan|tsan|release|package|fuzz
 # The same runs locally:
 #   docker run --rm -v "$PWD":/workspace -w /workspace -v gendb-conan:/home/dev/.conan2 gendb-dev \
 #     scripts/ci/run.sh test
@@ -8,7 +8,7 @@ set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"
 
 # A new Docker volume for the cache belongs to root.
-if [ ! -w "$HOME/.conan2" ]; then sudo chown "$(id -u):$(id -g)" "$HOME/.conan2"; fi
+if [ -d "$HOME/.conan2" ] && [ ! -w "$HOME/.conan2" ]; then sudo chown "$(id -u):$(id -g)" "$HOME/.conan2"; fi
 
 install_dependencies() {  # <build directory> <build type> <extra conan arguments...>
   local build="$1" type="$2"
@@ -32,6 +32,10 @@ case "${1:-}" in
   format)
     git ls-files '*.h' '*.cpp' | grep -vE '(^|/)generated/|^third_party/' |
       xargs clang-format --dry-run --Werror --style=file
+    ;;
+  schema)
+    # What a schema must not have changed since the branch started. Needs the git history.
+    python3 gen/schema_evolution.py --base "${SCHEMA_BASE:-origin/main}"
     ;;
   test)
     install_dependencies build/ci-debug Debug "${without_grpc[@]}"
@@ -90,7 +94,7 @@ case "${1:-}" in
     FUZZ_SECONDS="${FUZZ_SECONDS:-60}" scripts/ci/fuzz.sh
     ;;
   *)
-    echo "usage: $0 format|test|asan|tsan|release|package|fuzz" >&2
+    echo "usage: $0 format|schema|test|asan|tsan|release|package|fuzz" >&2
     exit 2
     ;;
 esac

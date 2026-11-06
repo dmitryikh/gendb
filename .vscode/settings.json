@@ -6,7 +6,6 @@
         "absl",
         "codegen",
         "EURUSD",
-        "flatc",
         "GBPUSD",
         "gendb",
         "gtest"

@@ -8,7 +8,7 @@
 #include <string_view>
 #include <thread>
 
-#include "account.fbs.h"
+#include "account.gendb.h"
 #include "database.h"
 #include "gendb/replication.h"
 

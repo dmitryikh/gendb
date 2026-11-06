@@ -21,7 +21,6 @@ class GendbConan(ConanFile):
         self.requires("abseil/20250512.1")
         self.requires("gtest/1.14.0")
         self.requires("benchmark/1.9.0")
-        self.requires("flatbuffers/2.0.8")
         if self.options.with_grpc:
             self.requires("protobuf/6.33.5")
             self.requires("grpc/1.78.1")

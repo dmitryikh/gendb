@@ -6,9 +6,9 @@
 #include <string>
 #include <vector>
 
-#include "account.fbs.h"
+#include "account.gendb.h"
 #include "database.h"
-#include "position.fbs.h"
+#include "position.gendb.h"
 
 namespace {
 
