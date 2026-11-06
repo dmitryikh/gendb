@@ -1,7 +1,0 @@
-namespace notes;
-
-table Note {
-  id: ulong;
-  title: string;
-  stars: int;
-}

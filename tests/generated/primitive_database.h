@@ -16,8 +16,8 @@
 #include "gendb/engine.h"
 #include "gendb/key_codec.h"
 #include "gendb/message.h"
-#include "messageA.fbs.h"
-#include "metadata.fbs.h"
+#include "messageA.gendb.h"
+#include "metadata.gendb.h"
 
 namespace gendb::tests::primitive {
 

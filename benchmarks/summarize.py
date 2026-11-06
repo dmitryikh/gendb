@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 
 CASES = ("Position", "AccountFull", "AccountSparse", "WideFull64", "WideSparse8of64")
-FORMATS = ("Message", "FlatBuffers")
 OPERATIONS = (
     ("Open", "Open"),
     ("ReadHot", "Read hot"),
@@ -42,24 +41,14 @@ def summarize(path: Path) -> str:
         f"Recorded at `{context['date']}`. Median CPU nanoseconds per operation; "
         "[methodology](../README.md).",
         "",
-        "| Record | Message bytes | FlatBuffers bytes |",
-        "| --- | ---: | ---: |",
+        "| Record | Bytes | " + " | ".join(label for _, label in OPERATIONS) + " |",
+        "| --- | ---: |" + " ---: |" * len(OPERATIONS),
     ]
     for case in CASES:
-        sizes = [int(medians[f"{case}/{name}/ReadHot"]["serialized_bytes"]) for name in FORMATS]
-        lines.append(f"| {case} | {sizes[0]} | {sizes[1]} |")
+        size = int(medians[f"{case}/Message/ReadHot"]["serialized_bytes"])
+        values = [cell(f"{case}/Message/{op}") for op, _ in OPERATIONS]
+        lines.append(f"| {case} | {size} | " + " | ".join(values) + " |")
     lines.append("")
-    for case in CASES:
-        lines += [
-            f"## {case}",
-            "",
-            "| Format | " + " | ".join(label for _, label in OPERATIONS) + " |",
-            "| --- |" + " ---: |" * len(OPERATIONS),
-        ]
-        for name in FORMATS:
-            values = [cell(f"{case}/{name}/{op}") for op, _ in OPERATIONS]
-            lines.append(f"| {name} | " + " | ".join(values) + " |")
-        lines.append("")
     lines += [
         "## Generated classes",
         "",

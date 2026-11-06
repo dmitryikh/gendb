@@ -6,8 +6,8 @@
 
 #include "absl/status/status.h"
 #include "gendb/status.h"
-#include "messageA.fbs.h"
-#include "metadata.fbs.h"
+#include "messageA.gendb.h"
+#include "metadata.gendb.h"
 
 namespace gendb::tests::primitive {
 

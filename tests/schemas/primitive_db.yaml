@@ -1,6 +1,6 @@
 types:
-  fbs_files:
-    - tests/schemas/messageA.fbs
+  schema_files:
+    - tests/schemas/messageA.gendb
   include_prefix: ""
 
 options:

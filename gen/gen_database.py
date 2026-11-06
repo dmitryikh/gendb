@@ -1,11 +1,12 @@
 import yaml
 from pathlib import Path
-from fb_types import Message, Field, Collection, Database, Index, FieldKind, Sequence
+from schema_types import Message, Field, Collection, Database, Index, FieldKind, Sequence
 from store import Store
 import naming
 from clang_format import clang_format
 import base_types
-import flatc_to_store
+import schema_loader
+import schema_parser
 import schema_validator
 
 
@@ -14,16 +15,15 @@ def load_yaml_db(yaml_path):
         return yaml.safe_load(f)
 
 
-def build_store_from_yaml(db_cfg, metadata_fbs="lib/schemas/metadata.fbs"):
+def build_store_from_yaml(db_cfg, metadata_schema="lib/schemas/metadata.gendb"):
     store = Store()
     # Get include prefix
     include_prefix = db_cfg.get("types", {}).get("include_prefix", "")
-    # Load all messages from fbs files
-    fbs_files = db_cfg.get("types", {}).get("fbs_files", [])
-    # Add metadata.fbs as the first file
-    all_fbs_files = [metadata_fbs] + [f for f in fbs_files if Path(f).name != Path(metadata_fbs).name]
-    for fbs_file in all_fbs_files:
-        flatc_to_store.load_fbs_to_store(store, Path(fbs_file))
+    schema_files = db_cfg.get("types", {}).get("schema_files", [])
+    # gendb's own schema comes first.
+    all_files = [metadata_schema] + [f for f in schema_files if Path(f).name != Path(metadata_schema).name]
+    for schema_file in all_files:
+        schema_loader.load_schema_to_store(store, Path(schema_file))
 
     # Load collections
     # Add metadata collection as the first collection
@@ -68,14 +68,17 @@ def build_store_from_yaml(db_cfg, metadata_fbs="lib/schemas/metadata.fbs"):
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description="Load DB schema from YAML and FBS files, and generate C++ database files.")
+    parser = argparse.ArgumentParser(description="Load a database schema from YAML and schema files, and generate C++ database files.")
     parser.add_argument("--yaml", required=True, help="Path to db.yaml config")
     parser.add_argument("--output_dir", required=False, help="Directory to write generated files")
-    parser.add_argument("--metadata_fbs", default="lib/schemas/metadata.fbs",
-                        help="Path to gendb's own metadata.fbs")
+    parser.add_argument("--metadata_schema", default="lib/schemas/metadata.gendb",
+                        help="Path to gendb's own metadata.gendb")
     args = parser.parse_args()
     db_cfg = load_yaml_db(args.yaml)
-    store = build_store_from_yaml(db_cfg, args.metadata_fbs)
+    try:
+        store = build_store_from_yaml(db_cfg, args.metadata_schema)
+    except schema_parser.SchemaError as error:
+        raise SystemExit(f"error: {error}")
     print(f"Loaded {len(store.messages)} messages and {len(store.collections)} collections.")
     # Optionally, print summary
     for enum_name in store.list_enums():
@@ -91,8 +94,7 @@ def main():
         seq = store.get_sequence(seq_name)
         print(f"Sequence: {seq}")
 
-    errors = (schema_validator.validate_names(store) + schema_validator.validate_field_ids(store)
-              + schema_validator.validate_collections(store))
+    errors = schema_validator.validate_collections(store)
     if errors:
         print("Schema validation errors found:")
         for error in errors:

@@ -25,21 +25,24 @@ format redesign, not a refactoring.
 
 ## Schema evolution rules
 
-Schemas are FlatBuffers `.fbs` files. **Only backward-compatible evolution is supported, by
+Schemas are [`.gendb` files](schema.md). **Only backward-compatible evolution is supported, by
 design.** The rules:
 
-1. **A field keeps its ID and type forever.** The type is never changed: `int32` to `int64`
-   needs a new field. Tools do not check this; it is the schema author's responsibility.
-2. **New fields are appended.** flatc assigns IDs in declaration order, or `(id: N)` sets them.
-3. **A field that is no longer used is deprecated, not removed**, with `(deprecated)`. The
-   generator then emits no accessors and keeps the ID reserved, while stored values remain in
-   existing messages and are preserved by rewrites. Primary keys and indexed fields cannot be
-   deprecated: the generator rejects it.
-4. **IDs are limited to `1..2040`.** The generator rejects higher IDs.
+1. **A field keeps its ID and type forever.** The type is never changed: `int32` to `int64` needs a new
+   field. `gen/schema_evolution.py` checks this against what a branch started from.
+2. **New fields are appended.** A field states its ID, and IDs go up by one, which the parser enforces.
+3. **A field that is no longer used is deprecated, not removed**, with `deprecated`. The generator then
+   emits no accessors and keeps the ID reserved, while stored values remain in existing messages and are
+   preserved by rewrites. Primary keys and indexed fields cannot be deprecated: the generator rejects it.
+4. **IDs are limited to `1..2040`.** The parser rejects higher IDs.
 
 A reader that expects a different storage class for an ID sees the field as absent: it never
-reinterprets the bytes. `tests/schemas/evolution.fbs` and `SchemaEvolutionTest` in
+reinterprets the bytes. `tests/schemas/evolution.gendb` and `SchemaEvolutionTest` in
 `tests/message_test.cpp` exercise these rules through generated classes.
+
+**Defaults are not part of the format.** A schema's default is what a generated getter returns for an
+absent field. It is not stored, and the field stays absent: presence in the bitmaps is the only thing that
+says a field is set.
 
 ## Wire layout
 
@@ -169,8 +172,8 @@ bytes from outside the process. Storage reads trust their own data and skip it.
 
 ### Generated classes
 
-`gen/generate_message_class.py` turns `tests/schemas/account.fbs` into
-`tests/generated/account.fbs.h`, with three classes per table. This is what application code uses.
+`gen/generate_message_class.py` turns `tests/schemas/account.gendb` into
+`tests/generated/account.gendb.h`, with three classes per message. This is what application code uses.
 
 ```cpp
 AccountBuilder builder;

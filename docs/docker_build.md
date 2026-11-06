@@ -21,12 +21,13 @@ docker run --rm -v "$PWD":/workspace -w /workspace -v gendb-conan:/home/dev/.con
 | Job | What it does |
 | --- | --- |
 | `format` | Checks formatting with clang-format |
+| `schema` | Checks that schemas only grew since the branch started: see [schema.md](schema.md). Compares with `SCHEMA_BASE`, or `origin/main` |
 | `test` | Debug build, all tests |
 | `asan` | All tests under AddressSanitizer and UndefinedBehaviorSanitizer |
 | `tsan` | All tests under ThreadSanitizer |
 | `release` | Release build with gRPC, all tests, and the replication demo as two processes over gRPC and TCP. gRPC takes a long time to build the first time |
 | `package` | Installs the library and builds [tests/package](../tests/package) against it |
-| `fuzz` | Runs each fuzzer for `FUZZ_SECONDS` (`-e FUZZ_SECONDS=300`), 60 by default. A crash leaves its input in `build/docker-fuzz/artifacts` |
+| `fuzz` | Runs each fuzzer, and the schema parser's, for `FUZZ_SECONDS` (`-e FUZZ_SECONDS=300`), 60 by default. A crash leaves its input in `build/docker-fuzz/artifacts` |
 
 Only `release` builds the gRPC transport: other jobs pass `-o "&:with_grpc=False"` to Conan. Conan's prebuilt Abseil has a different table layout from sanitized code, which rules out `absl::flat_hash_map` in the engine. Fuzzing and sanitizing leave gRPC out as its uninstrumented libraries give false reports.
 

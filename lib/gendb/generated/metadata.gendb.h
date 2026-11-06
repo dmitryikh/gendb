@@ -16,17 +16,18 @@ enum class MetadataType : uint32_t {
   kUnknown = 0,
   kSequence = 1,
 };
-}  // namespace gendb
 
 // Enum value arrays for reflection
-static constexpr std::array<gendb::EnumValueInfo, 2> kMetadataTypeValues = {
+inline constexpr std::array<gendb::EnumValueInfo, 2> kMetadataTypeValues = {
     gendb::EnumValueInfo{"kUnknown", 0},
     gendb::EnumValueInfo{"kSequence", 1},
 };
+}  // namespace gendb
 
 // Message classes
 namespace gendb {
-// Zero-copy view of a serialized MetadataValue. Does not own the bytes.
+// Zero-copy view of a serialized MetadataValue. Does not own the bytes. A getter returns the
+// field's default if it is not set, which has_x() tells apart from being set to that value.
 class MetadataValue {
  public:
   enum Field : gendb::FieldId {

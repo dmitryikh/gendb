@@ -1,0 +1,6 @@
+namespace gendb.tests;
+
+message Config {
+  1 config_name: string;
+  2 max_trade_volume: double;
+}

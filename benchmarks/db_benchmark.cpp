@@ -8,7 +8,7 @@
 #include <thread>
 #include <vector>
 
-#include "account.fbs.h"
+#include "account.gendb.h"
 #include "database.h"
 #include "gendb/replication.h"
 #include "lib/loopback_transport.h"

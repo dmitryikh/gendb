@@ -1,0 +1,15 @@
+namespace gendb;
+
+enum MetadataType : uint32 {
+  kUnknown = 0;
+  kSequence = 1;
+}
+
+message MetadataValue {
+  1 type: MetadataType;
+  2 id: uint32;
+  3 int_value: int32;
+  4 string_value: string;
+  5 float_value: float;
+  6 uint_value: uint64;
+}

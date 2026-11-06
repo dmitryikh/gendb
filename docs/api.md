@@ -21,36 +21,37 @@ target_link_libraries(app PRIVATE gendb::gendb)   # and gendb::replication_grpc,
 add_dependencies(app messages database)
 ```
 
-The generators need Python 3 with `jinja2` and `PyYAML`, and `flatc` on the `PATH`. Paths in the YAML
+The generators need Python 3 with `jinja2` and `PyYAML`. Paths in the YAML
 file are relative to the top of your source tree. [tests/package](../tests/package) is a complete
 example.
 
 ## Describe the data
 
-Records are described in FlatBuffers schemas. `flatc` only parses them: stored bytes use the
-[gendb message format](message_format.md).
+Records are described in `.gendb` schema files, whose [language](schema.md) makes the evolution rules
+part of the syntax. Stored bytes use the [gendb message format](message_format.md).
 
 ```text
 namespace app;
 
-table Account {
-  account_id: ulong;
-  name: string;
-  address: string;
-  age: int;
-  balance: float;
+message Account {
+  1 account_id: uint64;
+  2 name: string;
+  3 address: string;
+  4 age: int32 = 18;
+  5 balance: float;
 }
 ```
 
-Fields can be added, and retired with `(deprecated)`. A field keeps its ID and type forever. See
-[message_format.md](message_format.md).
+A field states its number, and numbers go up by one, so a new field goes at the end. A field no longer
+used stays, marked `deprecated`. A default is what a getter returns when a field is not set, while
+`has_age()` stays false.
 
 The database is described in YAML:
 
 ```yaml
 types:
-  fbs_files:
-    - schemas/account.fbs
+  schema_files:
+    - schemas/account.gendb
 
 options:
   cpp_namespace: "app"
@@ -79,7 +80,7 @@ indices:
 
 sequences:
   - name: account_id_sequence
-    type: ULong
+    type: uint64
 ```
 
 ## Messages

@@ -11,9 +11,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        job: [format, test, asan, tsan, release, package, fuzz]
+        job: [format, schema, test, asan, tsan, release, package, fuzz]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # The schema job compares with what the branch started from.
 
       - name: Build the image
         run: docker build -t gendb-dev .
@@ -34,6 +36,7 @@ jobs:
           docker run --rm \
             -v "$PWD":/workspace -w /workspace \
             -v "$PWD/conan-cache":/home/dev/.conan2 \
+            -e SCHEMA_BASE="${{ github.event.pull_request.base.sha || github.event.before }}" \
             gendb-dev scripts/ci/run.sh ${{ matrix.job }}
 
       - name: Give the workspace back

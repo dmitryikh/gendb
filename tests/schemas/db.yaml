@@ -1,9 +1,9 @@
 types:
-  fbs_files:
-    - tests/schemas/account.fbs
-    - tests/schemas/position.fbs
-    - tests/schemas/config.fbs
-    - tests/schemas/session.fbs
+  schema_files:
+    - tests/schemas/account.gendb
+    - tests/schemas/position.gendb
+    - tests/schemas/config.gendb
+    - tests/schemas/session.gendb
   include_prefix: ""  # Optional prefix path for generated includes
 
 options:
@@ -34,9 +34,9 @@ collections:
 
 sequences:
   - name: account_id_sequence
-    type: ULong
+    type: uint64
   - name: position_id_sequence
-    type: Int
+    type: int32
 
 indices:
   - name: account_by_age

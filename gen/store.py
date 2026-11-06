@@ -1,6 +1,6 @@
 
 from typing import List, Optional, Dict
-from fb_types import Message, Collection, Field, Index, Enum, Sequence
+from schema_types import Message, Collection, Field, Index, Enum, Sequence
 
 class Store:
     """

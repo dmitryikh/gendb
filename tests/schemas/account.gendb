@@ -1,0 +1,12 @@
+namespace gendb.tests;
+
+message Account {
+  1 account_id: uint64;
+  2 trader_id: string;
+  3 name: string;
+  4 address: string;
+  5 age: int32;
+  6 is_active: bool;
+  7 balance: float;
+  8 config_name: string;
+}

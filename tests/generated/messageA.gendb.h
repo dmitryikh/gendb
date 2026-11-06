@@ -17,18 +17,19 @@ enum class KeyEnum : uint32_t {
   kFirstValue = 1,
   kSecondValue = 2,
 };
-}  // namespace gendb::tests::primitive
 
 // Enum value arrays for reflection
-static constexpr std::array<gendb::EnumValueInfo, 3> kKeyEnumValues = {
+inline constexpr std::array<gendb::EnumValueInfo, 3> kKeyEnumValues = {
     gendb::EnumValueInfo{"kUnknown", 0},
     gendb::EnumValueInfo{"kFirstValue", 1},
     gendb::EnumValueInfo{"kSecondValue", 2},
 };
+}  // namespace gendb::tests::primitive
 
 // Message classes
 namespace gendb::tests::primitive {
-// Zero-copy view of a serialized MessageA. Does not own the bytes.
+// Zero-copy view of a serialized MessageA. Does not own the bytes. A getter returns the
+// field's default if it is not set, which has_x() tells apart from being set to that value.
 class MessageA {
  public:
   enum Field : gendb::FieldId {

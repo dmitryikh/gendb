@@ -1,6 +1,0 @@
-namespace gendb.tests;
-
-table Session {
-  session_id: ulong;
-  token: string;
-}

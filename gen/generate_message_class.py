@@ -5,10 +5,10 @@ from jinja2 import Environment, FileSystemLoader
 
 from clang_format import clang_format
 import base_types
-import flatc_to_store
-from fb_types import Field, FieldKind
+import schema_loader
+import schema_parser
+from schema_types import Field, FieldKind
 import naming
-import schema_validator
 from store import Store
 
 TEMPLATE_PATH = Path(__file__).parent / "templates" / "message_class_template.h.jinja2"
@@ -34,12 +34,9 @@ def scalar_type_name(field: Field) -> str:
     return SCALAR_TYPE_NAMES.get(cpp_type, "NOT_SCALAR")
 
 
-def render_fbs(template, fbs_file: Path) -> str:
+def render_schema(template, schema_file: Path) -> str:
     store = Store()
-    flatc_to_store.load_fbs_to_store(store, fbs_file)
-    errors = schema_validator.validate_field_ids(store)
-    if errors:
-        raise ValueError(f"Invalid schema {fbs_file}: " + "; ".join(errors))
+    schema_loader.load_schema_to_store(store, schema_file)
 
     tables = []
     for msg_name in store.list_messages():
@@ -74,8 +71,8 @@ def make_template():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate C++ headers from all FlatBuffer schemas in a directory.")
-    parser.add_argument("--fbs_dir", type=Path, required=True, help="Directory containing .fbs schema files")
+    parser = argparse.ArgumentParser(description="Generate C++ headers from all schema files in a directory.")
+    parser.add_argument("--schema_dir", type=Path, required=True, help="Directory containing .gendb schema files")
     parser.add_argument("--output_dir", type=Path, required=True, help="Directory to write generated header files")
     args = parser.parse_args()
 
@@ -83,10 +80,12 @@ def main():
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     generated_files = []
-    for fbs_file in sorted(args.fbs_dir.glob("*.fbs")):
-        # Output file named after .fbs file
-        output_file = args.output_dir / f"{fbs_file.name}.h"
-        output_file.write_text(render_fbs(template, fbs_file))
+    for schema_file in sorted(args.schema_dir.glob(f"*{schema_loader.SCHEMA_SUFFIX}")):
+        output_file = args.output_dir / f"{schema_file.name}.h"
+        try:
+            output_file.write_text(render_schema(template, schema_file))
+        except schema_parser.SchemaError as error:
+            raise SystemExit(f"error: {error}")
         generated_files.append(output_file)
         print(f"Generated {output_file}")
 

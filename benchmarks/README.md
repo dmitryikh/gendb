@@ -1,8 +1,7 @@
 # Message benchmarks
 
-`message_benchmark.cpp` measures the [message format](../docs/message_format.md), with standard
-generated FlatBuffers tables as the baseline. Recorded results are in
-[reference/message.md](reference/message.md).
+`message_benchmark.cpp` measures the [message format](../docs/message_format.md). Recorded results
+are in [reference/message.md](reference/message.md).
 
 ## Run
 
@@ -25,8 +24,6 @@ does not make a difference real.
 
 ## Records
 
-All formats encode identical fields and values.
-
 | Record | Present fields | Timed reads |
 | --- | ---: | --- |
 | Position | 6 | All six fields, including one string |
@@ -47,14 +44,10 @@ All formats encode identical fields and values.
 | EndToEnd | Build, serialize, open and read |
 | PatchSameSize | Overwrite one scalar in place, with no full verification |
 | RebuildVariable | Replace a string with one of a different length. AccountSparse inserts an absent field instead, which re-encodes the message |
-| Verify | Full verification of untrusted bytes, for messages only |
+| Verify | Full verification of untrusted bytes |
 
 `Position/Generated/*` repeats Build and ReadCold through the generated classes, to show they add
 nothing over the core API.
-
-The FlatBuffers builder copies a source-data snapshot rather than field setters, so its Build and
-SerializeOnly nearly coincide. Its scalar patch uses the generated in-place mutator, and its rebuild
-uses the object API, which does not preserve unknown fields.
 
 These are warm-cache, single-threaded, per-message measurements, not database throughput. Every
 fixture is checked before timing, and buffers escape through benchmark barriers.

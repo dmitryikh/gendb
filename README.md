@@ -5,7 +5,9 @@ Fast &amp; Convenient embedded Database for C++. With batteries.
 
 Features:
   * [x] Strong typed Key-Value collections.
-  * [x] Schema-driven, code-generated C++ API
+  * [x] Schema-driven, code-generated C++ API, from its own schema language with no compiler to install
+  * [x] Evolution rules as syntax: field numbers only grow, and old fields do not change
+  * [x] Field defaults, kept apart from whether a field is set
   * [x] Secondary indexes: composite, unique, with open ranges, reverse order and limits
   * [x] Persistent storage
   * [x] Snapshot isolation (multi-version concurrency control)
@@ -33,6 +35,7 @@ Non goals:
 
 Documentation:
   * Using it: [docs/api.md](docs/api.md)
+  * Schema language: [docs/schema.md](docs/schema.md)
   * Message format: [specification](docs/message_format.md) and [interactive explorer](docs/message_format.html) (open it in a browser)
   * Storage engine: [docs/storage_engine.md](docs/storage_engine.md)
   * Replication and writing a transport: [docs/replication.md](docs/replication.md)

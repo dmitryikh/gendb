@@ -1,0 +1,12 @@
+namespace gendb.tests.primitive;
+
+enum KeyEnum : uint32 {
+  kUnknown = 0;
+  kFirstValue = 1;
+  kSecondValue = 2;
+}
+
+message MessageA {
+  1 key: KeyEnum;
+  2 data: string;
+}

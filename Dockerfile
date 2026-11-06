@@ -27,9 +27,6 @@ RUN apt-get update && apt-get install -y \
     fish \
     && rm -rf /var/lib/apt/lists/*
 
-# FlatBuffers
-RUN apt-get update && apt-get install -y libflatbuffers-dev flatbuffers-compiler
-
 # User (so you don’t run as root inside container)
 RUN useradd -m dev && echo "dev ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 USER dev

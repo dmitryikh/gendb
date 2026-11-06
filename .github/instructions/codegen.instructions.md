@@ -4,7 +4,7 @@ applyTo: "**"
 # DB Code Generation Instructions
 
 ## General Flow
-1. The database schema is defined in yaml files. Example of such file is `tests/schemas/db.yaml`. This file includes references to FlatBuffers schema files (with `.fbs` extension) that define the structure of the data.
+1. The database schema is defined in yaml files. Example of such file is `tests/schemas/db.yaml`. This file includes references to schema files (with `.gendb` extension) that define the structure of the data.
 
 2. The CMakeLists.txt file contains a custom CMake function `gen_db_schema` that is responsible for generating the database code based on the provided schema files. Example usage of this function can be found in `tests/CMakeLists.txt`. `gen_db_messages` is a similar function that generates only message classes.
 
@@ -19,7 +19,7 @@ applyTo: "**"
 ## Message Format
 `docs/message_format.md` specifies the bytes of every stored record and lists its principles: zero-copy reads, forward and backward compatibility, unknown field preservation. Read it before changing `lib/gendb/message.h`, `lib/gendb/message.cpp` or the message template, and keep it and `docs/message_format.html` in sync with the code.
 
-Schemas evolve only in backward-compatible ways: a field keeps its ID and type forever, new fields are appended, and unused fields get `(deprecated)` instead of being removed.
+Schemas evolve only in backward-compatible ways: a field keeps its ID and type forever, new fields are appended, and unused fields get `deprecated` instead of being removed. `docs/schema.md` is the language, and the `schema-evolution` skill in `.claude/skills` applies whenever a schema changes.
 
 ## API
 `docs/api.md` describes the generated API. Keep it in step with the database templates.

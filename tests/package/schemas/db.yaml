@@ -1,6 +1,6 @@
 types:
-  fbs_files:
-    - schemas/note.fbs
+  schema_files:
+    - schemas/note.gendb
   include_prefix: ""
 
 options:
