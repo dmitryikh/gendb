@@ -483,6 +483,8 @@ class Transaction {
     std::string key;
     internal::Version* version;  // Owned until the commit publishes it; null if it changes nothing.
     internal::RecordNode* node;  // Set when the commit starts; null for a record not yet in memory.
+    // The whole change against the committed record, encoded, if it can be logged as a patch.
+    std::string patch;
   };
   struct IndexDelta {
     bool added;
@@ -491,7 +493,13 @@ class Transaction {
   using PendingMap = std::unordered_map<std::string_view, PendingWrite*>;
 
   PendingWrite* FindPending(size_t collection, std::string_view key) const noexcept;
-  void SetPending(size_t collection, uint64_t hash, std::string_view key, internal::Version* value);
+  void SetPending(size_t collection, uint64_t hash, std::string_view key, internal::Version* value,
+                  std::string patch = {});
+  // Whether the log would hold this collection's changes.
+  bool IsLogged(size_t collection) const noexcept;
+  // Replays a logged patch, and checks that it gives the record the primary had.
+  absl::Status ApplyLoggedPatch(size_t collection, std::string_view key, const MessagePatch& patch,
+                                uint32_t result_crc);
   void UpdateIndices(size_t collection, std::string_view key, std::optional<BytesConstView> before,
                      std::optional<BytesConstView> after);
   // Drops deletions of keys that do not exist. Returns whether anything is left to commit, and

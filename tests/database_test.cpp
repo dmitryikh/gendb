@@ -1038,6 +1038,142 @@ TEST_F(PersistentDbTest, TornTailIsCutOffAtTheLastIntactCommit) {
   EXPECT_EQ(db->engine().Stats().lsn, 3u);
 }
 
+// Logged size of what a function commits.
+template <typename F>
+uint64_t LogGrowth(Db& db, F commit) {
+  const uint64_t before = db.engine().Stats().wal_bytes;
+  commit();
+  return db.engine().Stats().wal_bytes - before;
+}
+
+TEST_F(PersistentDbTest, UpdatesAreLoggedAsPatchesWhenThatIsSmaller) {
+  auto db = OpenDb();
+  const std::string long_name(1000, 'n');
+  const auto put = [&] {
+    auto writer = db->CreateWriter();
+    ASSERT_TRUE(
+        writer.PutAccount(1, AccountBuilder().set_account_id(1).set_name(long_name).Build()).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+  };
+  const uint64_t whole = LogGrowth(*db, put);
+  EXPECT_GT(whole, 1000u);
+
+  const uint64_t patch = LogGrowth(*db, [&] {
+    auto writer = db->CreateWriter();
+    ASSERT_TRUE(writer.UpdateAccount(1, AccountPatchBuilder().set_age(1).Build()).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+  });
+  EXPECT_LT(patch, 60u);
+
+  // Several updates of one record in a transaction make one patch.
+  const uint64_t merged = LogGrowth(*db, [&] {
+    auto writer = db->CreateWriter();
+    ASSERT_TRUE(writer.UpdateAccount(1, AccountPatchBuilder().set_age(2).Build()).ok());
+    ASSERT_TRUE(writer.UpdateAccount(1, AccountPatchBuilder().set_age(3).Build()).ok());
+    ASSERT_TRUE(writer.UpdateAccount(1, AccountPatchBuilder().set_balance(1.f).Build()).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+  });
+  EXPECT_LT(merged, 70u);
+
+  // A record new in the transaction has no committed state to patch.
+  const uint64_t new_record = LogGrowth(*db, [&] {
+    auto writer = db->CreateWriter();
+    ASSERT_TRUE(
+        writer.PutAccount(2, AccountBuilder().set_account_id(2).set_name(long_name).Build()).ok());
+    ASSERT_TRUE(writer.UpdateAccount(2, AccountPatchBuilder().set_age(1).Build()).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+  });
+  EXPECT_GT(new_record, 1000u);
+
+  // A patch larger than the record is not worth it.
+  const uint64_t rewritten = LogGrowth(*db, [&] {
+    auto writer = db->CreateWriter();
+    ASSERT_TRUE(writer.PutAccount(3, AccountBuilder().set_account_id(3).Build()).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+  });
+  const uint64_t larger = LogGrowth(*db, [&] {
+    auto writer = db->CreateWriter();
+    ASSERT_TRUE(writer.UpdateAccount(3, AccountPatchBuilder().set_trader_id("t").Build()).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+  });
+  EXPECT_LT(larger, rewritten + 16);
+}
+
+// Every way of changing a record, recovered from the log, must give exactly the same bytes.
+TEST_F(PersistentDbTest, RecoveryFromPatchesGivesExactlyTheSameBytes) {
+  const auto bytes_of = [](Db& db, uint64_t id) {
+    const gendb::EngineSnapshot snapshot(db.engine());
+    const auto value = snapshot.Get(AccountCollId, ToAccountKey(id));
+    return value.has_value() ? std::vector<uint8_t>(value->begin(), value->end())
+                             : std::vector<uint8_t>{};
+  };
+  std::vector<std::vector<uint8_t>> expected;
+  {
+    auto db = OpenDb();
+    auto writer = db->CreateWriter();
+    AccountBuilder unknown;
+    unknown.set_account_id(1).set_name("Ann").set_age(30).set_balance(1.f);
+    unknown.AddStringField(1000, "from a newer schema");
+    ASSERT_TRUE(writer.PutAccount(1, unknown.Build()).ok());
+    ASSERT_TRUE(writer.PutAccount(2, AccountBuilder().set_account_id(2).set_age(1).Build()).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+
+    ASSERT_TRUE(
+        writer.UpdateAccount(1, AccountPatchBuilder().set_age(31).Build()).ok());  // In place.
+    ASSERT_TRUE(writer.Commit().ok());
+    ASSERT_TRUE(writer.UpdateAccount(1, AccountPatchBuilder().set_name("Annabelle").Build()).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+    ASSERT_TRUE(writer.UpdateAccount(1, AccountPatchBuilder().clear_balance().Build()).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+    // In one transaction: a change of size, then in place, then undoing a removal.
+    ASSERT_TRUE(writer.UpdateAccount(1, AccountPatchBuilder().set_name("Bo").Build()).ok());
+    ASSERT_TRUE(
+        writer.UpdateAccount(1, AccountPatchBuilder().set_age(32).clear_is_active().Build()).ok());
+    ASSERT_TRUE(writer.UpdateAccount(1, AccountPatchBuilder().set_balance(2.f).Build()).ok());
+    ASSERT_TRUE(writer.UpdateAccount(2, AccountPatchBuilder().set_age(2).Build()).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+    // A patch whose index key moves.
+    ASSERT_TRUE(writer.UpdateAccount(2, AccountPatchBuilder().set_age(40).Build()).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+
+    Account account;
+    ASSERT_TRUE(writer.GetAccount(1, account).ok());
+    EXPECT_EQ(account.name(), "Bo");
+    EXPECT_EQ(account.age(), 32);
+    EXPECT_EQ(account.balance(), 2.f);
+    EXPECT_EQ(account.View().GetString(1000), "from a newer schema");
+    expected = {bytes_of(*db, 1), bytes_of(*db, 2)};
+  }
+  {
+    // First with the patches replayed from the log, then, since a checkpoint holds whole records,
+    // from the checkpoint and then a further patch.
+    auto db = OpenDb();
+    EXPECT_EQ(bytes_of(*db, 1), expected[0]);
+    EXPECT_EQ(bytes_of(*db, 2), expected[1]);
+    Account account;
+    auto snapshot = db->CreateSnapshot();
+    ASSERT_TRUE(snapshot.GetAccount(1, account).ok());
+    EXPECT_EQ(account.name(), "Bo");
+    EXPECT_EQ(account.age(), 32);
+    EXPECT_EQ(account.balance(), 2.f);
+    EXPECT_EQ(account.View().GetString(1000), "from a newer schema");
+    auto by_age = snapshot.GetAccountByAgeEqual(40);
+    ASSERT_TRUE(by_age.Valid());
+    EXPECT_EQ(by_age.Value().account_id(), 2u);
+    EXPECT_FALSE(snapshot.GetAccountByAgeEqual(2).Valid());
+    ASSERT_TRUE(db->engine().Checkpoint().ok());
+    auto writer = db->CreateWriter();
+    ASSERT_TRUE(writer.UpdateAccount(1, AccountPatchBuilder().set_age(33).Build()).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+  }
+  auto db = OpenDb();
+  ASSERT_NE(db, nullptr);
+  EXPECT_EQ(bytes_of(*db, 2), expected[1]);
+  Account account;
+  ASSERT_TRUE(db->CreateSnapshot().GetAccount(1, account).ok());
+  EXPECT_EQ(account.age(), 33);
+}
+
 // Cuts the log at every byte: recovery must give exactly the commits that are whole.
 TEST_F(PersistentDbTest, LogCutAtAnyByteRecoversTheCommitsBeforeIt) {
   std::vector<uint64_t> commit_ends;

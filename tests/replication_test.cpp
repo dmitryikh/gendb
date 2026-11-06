@@ -3,6 +3,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -423,6 +424,92 @@ TEST_F(ReplicationTest, ReadersSeeWholeCommitsWhileFollowing) {
   done = true;
   reader.join();
   EXPECT_FALSE(torn.load());
+}
+
+// The replica's records must be the primary's, byte for byte, however they were changed.
+TEST_F(ReplicationTest, PatchesGiveTheReplicaExactlyThePrimarysBytes) {
+  Db primary;
+  LoopbackServer server(primary.engine());
+  Db replica_db;
+  gendb::Replica replica(replica_db.engine(), server.connector());
+
+  AccountBuilder builder;
+  builder.set_account_id(1).set_name("Ann").set_age(30).set_balance(1.f);
+  builder.AddStringField(1000, "from a newer schema");
+  {
+    auto writer = primary.CreateWriter();
+    ASSERT_TRUE(writer.PutAccount(1, builder.Build()).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+    ASSERT_TRUE(writer.UpdateAccount(1, AccountPatchBuilder().set_age(31).Build()).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+    ASSERT_TRUE(writer.UpdateAccount(1, AccountPatchBuilder().set_name("Annabelle").Build()).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+    ASSERT_TRUE(writer.UpdateAccount(1, AccountPatchBuilder().clear_balance().Build()).ok());
+    ASSERT_TRUE(
+        writer.UpdateAccount(1, AccountPatchBuilder().set_balance(2.f).set_name("B").Build()).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+  }
+  ASSERT_TRUE(replica.WaitForLsn(primary.engine().Stats().lsn, kPatience))
+      << replica.Status().last_error;
+  EXPECT_EQ(replica.Status().checkpoints_installed, 1u);
+
+  const auto key = gendb::tests::ToAccountKey(uint64_t{1});
+  gendb::EngineSnapshot on_primary(primary.engine());
+  gendb::EngineSnapshot on_replica(replica_db.engine());
+  const auto ours = on_primary.Get(gendb::tests::AccountCollId, key);
+  const auto theirs = on_replica.Get(gendb::tests::AccountCollId, key);
+  ASSERT_TRUE(ours.has_value() && theirs.has_value());
+  EXPECT_TRUE(std::equal(ours->begin(), ours->end(), theirs->begin(), theirs->end()));
+}
+
+// Two databases with the same history and LSN but different contents, as only a bug or a damaged
+// disk can make. The checksum on patches catches it at the next patch, and a checkpoint heals it.
+TEST_F(ReplicationTest, DivergedReplicaIsCaughtByThePatchChecksumAndHealed) {
+  const auto update_age = [](Db& db, int32_t age) {
+    auto writer = db.CreateWriter();
+    ASSERT_TRUE(writer.UpdateAccount(1, AccountPatchBuilder().set_age(age).Build()).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+  };
+  {
+    auto db = Db::Open({.path = Path("primary")});
+    ASSERT_TRUE(db.ok());
+    auto writer = (*db)->CreateWriter();
+    ASSERT_TRUE(
+        writer.PutAccount(1, AccountBuilder().set_account_id(1).set_age(1).set_balance(1.f).Build())
+            .ok());
+    ASSERT_TRUE(writer.Commit().ok());
+  }
+  std::filesystem::copy(Path("primary"), Path("replica"), std::filesystem::copy_options::recursive);
+
+  auto primary = Db::Open({.path = Path("primary")});
+  ASSERT_TRUE(primary.ok());
+  update_age(**primary, 100);
+  {
+    auto diverged = Db::Open({.path = Path("replica")});
+    ASSERT_TRUE(diverged.ok());
+    update_age(**diverged, 200);
+  }
+
+  auto replica_db = Db::Open({.path = Path("replica"), .replica = true});
+  ASSERT_TRUE(replica_db.ok());
+  ASSERT_EQ((*replica_db)->engine().Stats().lsn, 2u);
+  LoopbackServer server((*primary)->engine());
+  gendb::Replica replica((*replica_db)->engine(), server.connector(),
+                         {.min_backoff = std::chrono::milliseconds(1)});
+  {
+    auto writer = (*primary)->CreateWriter();
+    ASSERT_TRUE(writer.UpdateAccount(1, AccountPatchBuilder().set_balance(2.f).Build()).ok());
+    ASSERT_TRUE(writer.Commit().ok());
+  }
+  ASSERT_TRUE(replica.WaitForLsn(3, kPatience)) << replica.Status().last_error;
+  for (int i = 0; i < 1000 && replica.Status().checkpoints_installed == 0; ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  EXPECT_EQ(replica.Status().checkpoints_installed, 1u);
+  Account account;
+  ASSERT_TRUE((*replica_db)->CreateSnapshot().GetAccount(1, account).ok());
+  EXPECT_EQ(account.age(), 100);
+  EXPECT_EQ(account.balance(), 2.f);
 }
 
 // Two versions of one program, by raw collections, as what matters is what each schema has.

@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <stdexcept>
 #include <system_error>
 #include <utility>
 
@@ -54,6 +55,27 @@ bool SameBytes(BytesConstView a, std::string_view b) noexcept {
 }
 
 thread_local bool t_on_subscriber_thread = false;
+
+uint32_t CrcOf(BytesConstView bytes) noexcept {
+  return static_cast<uint32_t>(absl::ComputeCrc32c(AsStringView(bytes)));
+}
+
+// What a patch does to a record: on the writer, in recovery and on replicas alike, which must
+// produce the same bytes, since the log holds only the patch. Null if the record is malformed.
+Version* PatchedVersion(BytesConstView current, const MessagePatch& patch) {
+  const auto view = MessageView::Open(current);
+  if (!view.has_value()) return nullptr;
+  if (CanApplyPatchInplace(patch, *view)) {
+    Version* next = Version::Copy(current);
+    ApplyPatchInplace(patch, std::span<uint8_t>(next->data(), next->size));
+    return next;
+  }
+  try {
+    return Version::Copy(Rebuild(*view, patch));
+  } catch (const std::invalid_argument&) {
+    return nullptr;
+  }
+}
 
 }  // namespace
 
@@ -824,13 +846,33 @@ absl::Status Engine::ApplyCommitFrame(Transaction& txn, const Frame& frame) {
       collection = *foreign;
       txn._pending.resize(collection_count());
     }
-    if (entry.deleted) {
-      if (!txn.Delete(*collection, AsBytes(entry.key)).ok()) {
-        txn.Rollback();
-        return absl::DataLossError("The log deletes a record that does not exist");
+    switch (entry.op) {
+      case internal::CommitOp::kPut:
+        txn.Put(*collection, AsBytes(entry.key), AsBytes(entry.value));
+        break;
+      case internal::CommitOp::kDelete:
+        if (!txn.Delete(*collection, AsBytes(entry.key)).ok()) {
+          txn.Rollback();
+          return absl::DataLossError("The log deletes a record that does not exist");
+        }
+        break;
+      case internal::CommitOp::kPatch: {
+        internal::Decoder value(entry.value);
+        const uint32_t result_crc = value.Fixed32();
+        const std::optional<MessagePatch> patch =
+            value.ok() ? MessagePatch::Decode(value.rest()) : std::nullopt;
+        absl::Status status = patch.has_value()
+                                  ? txn.ApplyLoggedPatch(*collection, entry.key, *patch, result_crc)
+                                  : absl::DataLossError("Malformed patch in the log");
+        if (!status.ok()) {
+          txn.Rollback();
+          return status;
+        }
+        break;
       }
-    } else {
-      txn.Put(*collection, AsBytes(entry.key), AsBytes(entry.value));
+      default:
+        txn.Rollback();
+        return absl::DataLossError("Unknown operation in the log");
     }
   }
   txn.CommitReplayed(commit.lsn, frame.raw);
@@ -1233,15 +1275,16 @@ std::optional<BytesConstView> Transaction::Get(size_t collection,
                          _engine->_committed_seq.load(std::memory_order_relaxed));
 }
 
-void Transaction::SetPending(size_t collection, uint64_t hash, std::string_view key,
-                             Version* value) {
+void Transaction::SetPending(size_t collection, uint64_t hash, std::string_view key, Version* value,
+                             std::string patch) {
   if (PendingWrite* write = FindPending(collection, key)) {
     Version::Destroy(write->version);
     write->version = value;
+    write->patch = std::move(patch);
     return;
   }
-  PendingWrite& write =
-      _writes.emplace_back(PendingWrite{collection, hash, std::string(key), value, nullptr});
+  PendingWrite& write = _writes.emplace_back(
+      PendingWrite{collection, hash, std::string(key), value, nullptr, std::move(patch)});
   _pending[collection].emplace(write.key, &write);
 }
 
@@ -1276,24 +1319,62 @@ void Transaction::Put(size_t collection, BytesConstView key, BytesConstView valu
   SetPending(collection, HashKey(key_view), key_view, Version::Copy(value));
 }
 
+bool Transaction::IsLogged(size_t collection) const noexcept {
+  return (_engine->_wal != nullptr || _engine->_ring->enabled()) &&
+         !_engine->_collections[collection]->ephemeral;
+}
+
 absl::Status Transaction::Update(size_t collection, BytesConstView key, const MessagePatch& patch) {
   const std::string_view key_view = AsStringView(key);
   const std::optional<BytesConstView> current = Get(collection, key);
   if (!current.has_value()) return absl::NotFoundError("Key not found");
-  auto view = MessageView::Open(*current);
-  if (!view.has_value()) return absl::DataLossError("Malformed stored message");
 
-  Version* next;
-  if (CanApplyPatchInplace(patch, *view)) {
-    next = Version::Copy(*current);
-    ApplyPatchInplace(patch, std::span<uint8_t>(next->data(), next->size));
+  Version* next = nullptr;
+  std::string encoded;
+  PendingWrite* pending = FindPending(collection, key_view);
+  if (!IsLogged(collection) || (pending != nullptr && pending->patch.empty())) {
+    // Nothing to log, or the record is new in this transaction and is logged whole.
+    next = PatchedVersion(*current, patch);
+  } else if (pending == nullptr) {
+    next = PatchedVersion(*current, patch);
+    patch.AppendEncoded(encoded);
   } else {
-    next = Version::Copy(Rebuild(*view, patch));
+    // Updated before in this transaction. The log holds one patch per record, so the new state is
+    // derived from the committed record just as a replay will, not from the previous update.
+    std::optional<MessagePatch> merged = MessagePatch::Decode(pending->patch);
+    const std::optional<BytesConstView> committed =
+        _engine->ReadAt(collection, pending->hash, key_view,
+                        _engine->_committed_seq.load(std::memory_order_relaxed));
+    if (merged.has_value() && committed.has_value()) {
+      merged->MergeFrom(patch);
+      next = PatchedVersion(*committed, *merged);
+      merged->AppendEncoded(encoded);
+    }
   }
+  if (next == nullptr) return absl::DataLossError("Malformed stored message");
+
   if (!_engine->_collections[collection]->indices.empty()) {
     UpdateIndices(collection, key_view, current, next->bytes());
   }
-  SetPending(collection, HashKey(key_view), key_view, next);
+  SetPending(collection, HashKey(key_view), key_view, next, std::move(encoded));
+  return absl::OkStatus();
+}
+
+absl::Status Transaction::ApplyLoggedPatch(size_t collection, std::string_view key,
+                                           const MessagePatch& patch, uint32_t result_crc) {
+  const std::optional<BytesConstView> current = Get(collection, AsBytes(key));
+  if (!current.has_value()) return absl::DataLossError("The log patches a missing record");
+  Version* next = PatchedVersion(*current, patch);
+  if (next == nullptr) return absl::DataLossError("The log patches a malformed record");
+  if (CrcOf(next->bytes()) != result_crc) {
+    Version::Destroy(next);
+    return absl::DataLossError(
+        "A patch from the log gave a different record: states have diverged");
+  }
+  if (!_engine->_collections[collection]->indices.empty()) {
+    UpdateIndices(collection, key, current, next->bytes());
+  }
+  SetPending(collection, HashKey(key), key, next);
   return absl::OkStatus();
 }
 
@@ -1356,9 +1437,17 @@ absl::Status Transaction::Commit(CommitOptions options) {
         if (write.version == nullptr || engine._collections[write.collection]->ephemeral) {
           continue;
         }
-        internal::AddCommitEntry(buffer, engine._collections[write.collection]->id,
-                                 write.version->tombstone, write.key,
-                                 AsStringView(write.version->bytes()));
+        const uint32_t id = engine._collections[write.collection]->id;
+        const BytesConstView value = write.version->bytes();
+        if (write.version->tombstone) {
+          internal::AddCommitEntry(buffer, id, internal::CommitOp::kDelete, write.key, {});
+        } else if (!write.patch.empty() &&
+                   internal::kPatchEntryOverhead + write.patch.size() < value.size()) {
+          internal::AddCommitPatch(buffer, id, write.key, CrcOf(value), write.patch);
+        } else {
+          internal::AddCommitEntry(buffer, id, internal::CommitOp::kPut, write.key,
+                                   AsStringView(value));
+        }
         ++count;
       }
       internal::EndCommit(buffer, begin, count);

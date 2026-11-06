@@ -36,7 +36,8 @@ using internal::PutHistory;
 using internal::PutString;
 using internal::PutVarint;
 
-constexpr uint32_t kProtocolVersion = 1;
+// Commit frames travel as they are, so this changes with what a frame can hold.
+constexpr uint32_t kProtocolVersion = 2;
 constexpr size_t kDataBytesPerMessage = size_t{1} << 20;
 constexpr auto kPollInterval = std::chrono::milliseconds(100);
 

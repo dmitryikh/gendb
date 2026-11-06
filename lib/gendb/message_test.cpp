@@ -6,6 +6,9 @@
 #include <random>
 #include <string>
 
+#include "absl/crc/crc32c.h"
+#include "gendb/log_format.h"
+
 namespace gendb {
 namespace {
 
@@ -617,4 +620,106 @@ TEST(MessageFormat, RandomizedRoundTripsAndPatchesMatchAModel) {
 }
 
 }  // namespace
+TEST(MessagePatchEncodingTest, RoundTripsEveryKindAndUnknownFields) {
+  MessageBuilder builder;
+  builder.AddField<int32_t>(1, 1);
+  builder.AddField<int64_t>(2, 2);
+  builder.AddField<bool>(3, false);
+  builder.AddStringField(4, "old");
+  builder.AddStringField(900, "unknown stays");
+  builder.AddField<int32_t>(5, 5);
+  const Bytes source = builder.Build();
+
+  MessagePatch patch;
+  patch.Set<int32_t>(1, -7);
+  patch.Set<int64_t>(2, -8);
+  patch.Set<bool>(3, true);
+  patch.CopyString(4, "a longer string");
+  patch.Remove(5);
+  patch.Set<float>(1000, 1.5f);  // A field this reader's schema would not have.
+
+  std::string encoded;
+  patch.AppendEncoded(encoded);
+  const std::optional<MessagePatch> decoded = MessagePatch::Decode(encoded);
+  ASSERT_TRUE(decoded.has_value());
+
+  const auto view = MessageView::Open(source);
+  ASSERT_TRUE(view.has_value());
+  EXPECT_EQ(Rebuild(*view, *decoded), Rebuild(*view, patch));
+}
+
+TEST(MessagePatchEncodingTest, IsSmall) {
+  MessagePatch patch;
+  patch.Set<float>(6, 1.5f);
+  std::string encoded;
+  patch.AppendEncoded(encoded);
+  EXPECT_EQ(encoded.size(), 7u);  // Count, ID, tag and 4 bytes.
+}
+
+TEST(MessagePatchEncodingTest, RejectsMalformedInput) {
+  MessagePatch patch;
+  patch.Set<int32_t>(1, 1);
+  patch.CopyString(2, "value");
+  patch.Remove(3);
+  std::string encoded;
+  patch.AppendEncoded(encoded);
+  for (size_t size = 0; size < encoded.size(); ++size) {
+    EXPECT_FALSE(MessagePatch::Decode(std::string_view(encoded).substr(0, size)).has_value())
+        << "cut to " << size;
+  }
+  EXPECT_FALSE(MessagePatch::Decode(encoded + "x").has_value());  // Trailing bytes.
+
+  std::string id_zero;
+  internal::PutVarint(id_zero, 1);
+  internal::PutVarint(id_zero, 0);
+  id_zero.push_back(0);
+  internal::PutFixed64(id_zero, 0);
+  EXPECT_FALSE(MessagePatch::Decode(id_zero).has_value());
+
+  std::string id_too_large;
+  internal::PutVarint(id_too_large, 1);
+  internal::PutVarint(id_too_large, kMaxFieldId + 1);
+  id_too_large.push_back(4);
+  EXPECT_FALSE(MessagePatch::Decode(id_too_large).has_value());
+
+  std::string huge_count;
+  internal::PutVarint(huge_count, uint64_t{1} << 40);
+  EXPECT_FALSE(MessagePatch::Decode(huge_count).has_value());
+}
+
+// The log holds patches with a checksum of their result, so the bytes these produce are part of the
+// on-disk format: if this fails, old logs no longer replay. Bump kFormatVersion and make recovery
+// handle the old result, rather than updating these numbers.
+TEST(MessagePatchEncodingTest, ResultBytesArePartOfTheLogFormat) {
+  MessageBuilder builder;
+  builder.AddField<int32_t>(1, 1);
+  builder.AddField<int64_t>(2, 2);
+  builder.AddField<bool>(3, true);
+  builder.AddStringField(4, "text");
+  builder.AddStringField(5, "more");
+  const Bytes source = builder.Build();
+  const auto view = MessageView::Open(source);
+  ASSERT_TRUE(view.has_value());
+  const auto crc = [](const Bytes& bytes) {
+    return static_cast<uint32_t>(
+        absl::ComputeCrc32c({reinterpret_cast<const char*>(bytes.data()), bytes.size()}));
+  };
+
+  EXPECT_EQ(crc(source), 2303624702u);
+  MessagePatch same_size_string;
+  same_size_string.CopyString(4, "TEXT");
+  Bytes in_place = source;
+  ASSERT_TRUE(ApplyPatchInplace(same_size_string, in_place));
+  EXPECT_EQ(crc(in_place), 659144704u);
+
+  MessagePatch longer_string;
+  longer_string.CopyString(4, "a longer text");
+  EXPECT_EQ(crc(Rebuild(*view, longer_string)), 1202667440u);
+
+  MessagePatch general;
+  general.Set<int32_t>(6, 6);
+  general.Remove(2);
+  EXPECT_EQ(crc(Rebuild(*view, general)), 3776665425u);
+}
+
 }  // namespace gendb

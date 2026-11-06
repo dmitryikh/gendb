@@ -178,6 +178,76 @@ void PersistentCommit(benchmark::State& state) {
 }
 BENCHMARK(PersistentCommit)->Arg(0)->Arg(1);
 
+// One changed field of a record, non-durably, as an Update or a whole Put. Reports what each commit
+// adds to the log. state.range(0): size of the record's string; state.range(1): 1 for an Update.
+void LoggedCommit(benchmark::State& state) {
+  const std::string path =
+      (std::filesystem::temp_directory_path() / "gendb_benchmark_logged").string();
+  std::filesystem::remove_all(path);
+  uint64_t log_bytes = 0;
+  {
+    auto db = Db::Open({.path = path, .sync_commits = false, .checkpoint_wal_bytes = 0});
+    const std::string name(static_cast<size_t>(state.range(0)), 'n');
+    const auto make = [&name](float balance) {
+      AccountBuilder builder;
+      builder.set_account_id(1).set_name(name).set_balance(balance);
+      return builder.Build();
+    };
+    {
+      auto writer = (*db)->CreateWriter();
+      (void)writer.PutAccount(1, make(0.f));
+      (void)writer.Commit();
+    }
+    const std::vector<uint8_t> whole = make(1.f);
+    const uint64_t before = (*db)->engine().Stats().wal_bytes;
+    uint64_t i = 0;
+    for (auto _ : state) {
+      auto writer = (*db)->CreateWriter();
+      if (state.range(1) != 0) {
+        (void)writer.UpdateAccount(1, AccountPatchBuilder().set_balance(float(i++)).Build());
+      } else {
+        (void)writer.PutAccount(1, whole);
+      }
+      (void)writer.Commit();
+    }
+    log_bytes = (*db)->engine().Stats().wal_bytes - before;
+  }
+  state.counters["log_bytes_per_commit"] =
+      static_cast<double>(log_bytes) / static_cast<double>(state.iterations());
+  std::filesystem::remove_all(path);
+}
+BENCHMARK(LoggedCommit)
+    ->ArgNames({"string", "update"})
+    ->Args({16, 0})
+    ->Args({16, 1})
+    ->Args({1024, 0})
+    ->Args({1024, 1});
+
+// Replaying a log of single-field updates.
+void RecoverUpdates(benchmark::State& state) {
+  const std::string path =
+      (std::filesystem::temp_directory_path() / "gendb_benchmark_recover_updates").string();
+  std::filesystem::remove_all(path);
+  constexpr uint64_t kUpdates = 100'000;
+  {
+    auto db = Db::Open({.path = path, .sync_commits = false, .checkpoint_wal_bytes = 0});
+    Fill(**db);
+    (void)(*db)->engine().Checkpoint();
+    for (uint64_t i = 0; i < kUpdates; ++i) {
+      auto writer = (*db)->CreateWriter();
+      (void)writer.UpdateAccount(Scatter(i), AccountPatchBuilder().set_balance(float(i)).Build());
+      (void)writer.Commit();
+    }
+    state.counters["log_MB"] = static_cast<double>((*db)->engine().Stats().wal_bytes) / (1 << 20);
+  }
+  for (auto _ : state) {
+    auto db = Db::Open({.path = path});
+    benchmark::DoNotOptimize(db.ok());
+  }
+  std::filesystem::remove_all(path);
+}
+BENCHMARK(RecoverUpdates)->Unit(benchmark::kMillisecond);
+
 void CheckpointWrite(benchmark::State& state) {
   const std::string path =
       (std::filesystem::temp_directory_path() / "gendb_benchmark_checkpoint").string();

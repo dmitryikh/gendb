@@ -13,7 +13,10 @@
 //
 //   frame:   [crc32c: u32] [body size + 1: u32] [type: u8] [body]
 //   commit:  [lsn: u64] [entry count: u32] entry*
-//   entry:   [collection id: u32] [deleted: u8] [key size: varint] [value size: varint] key value
+//   entry:   [collection id: u32] [op: u8] [key size: varint] [value size: varint] key value
+//
+// The value of a kPatch entry is [crc32c of the resulting record: u32]
+// [MessagePatch::AppendEncoded].
 //
 // The checksum covers everything after itself. Integers are little-endian. docs/storage_engine.md
 // describes the layout of each file.
@@ -29,7 +32,8 @@ enum class FrameType : uint8_t {
 };
 
 inline constexpr size_t kFrameHeaderSize = 8;
-inline constexpr uint32_t kFormatVersion = 1;
+// What this code writes, and the newest it reads. Version 1 has no kPatch entries.
+inline constexpr uint32_t kFormatVersion = 2;
 
 // Identifies one linear history of commits: the same ID and LSN mean the same database state.
 struct HistoryId {
@@ -191,14 +195,29 @@ inline size_t BeginCommit(std::string& out, uint64_t lsn) {
   return begin;
 }
 
-inline void AddCommitEntry(std::string& out, uint32_t collection_id, bool deleted,
+enum class CommitOp : uint8_t { kPut = 0, kDelete = 1, kPatch = 2 };
+
+inline void AddCommitEntry(std::string& out, uint32_t collection_id, CommitOp op,
                            std::string_view key, std::string_view value) {
   PutFixed32(out, collection_id);
-  out.push_back(deleted ? 1 : 0);
+  out.push_back(static_cast<char>(op));
   PutVarint(out, key.size());
   PutVarint(out, value.size());
   out.append(key);
   out.append(value);
+}
+
+inline constexpr size_t kPatchEntryOverhead = sizeof(uint32_t);
+
+inline void AddCommitPatch(std::string& out, uint32_t collection_id, std::string_view key,
+                           uint32_t result_crc, std::string_view patch) {
+  PutFixed32(out, collection_id);
+  out.push_back(static_cast<char>(CommitOp::kPatch));
+  PutVarint(out, key.size());
+  PutVarint(out, kPatchEntryOverhead + patch.size());
+  out.append(key);
+  PutFixed32(out, result_crc);
+  out.append(patch);
 }
 
 inline void EndCommit(std::string& out, size_t begin, uint32_t count) {
@@ -208,7 +227,7 @@ inline void EndCommit(std::string& out, size_t begin, uint32_t count) {
 
 struct CommitEntry {
   uint32_t collection_id;
-  bool deleted;
+  CommitOp op;
   std::string_view key;
   std::string_view value;
 };
@@ -228,7 +247,7 @@ class CommitDecoder {
   CommitEntry Next() noexcept {
     CommitEntry entry;
     entry.collection_id = _in.Fixed32();
-    entry.deleted = _in.Byte() != 0;
+    entry.op = static_cast<CommitOp>(_in.Byte());
     const uint64_t key_size = _in.Varint();
     const uint64_t value_size = _in.Varint();
     entry.key = _in.Bytes(key_size);

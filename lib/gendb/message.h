@@ -657,6 +657,20 @@ class MessagePatch {
   }
   const detail::EntryVector<8>& Changes() const noexcept { return _changes; }
 
+  // Per field, `later` wins, so that the result does what applying both in turn would. Values are
+  // borrowed from `later`.
+  void MergeFrom(const MessagePatch& later) {
+    for (const auto& e : later._changes) Put(e);
+  }
+
+  // The form in the log, which needs no schema, so unknown fields travel too:
+  //   [count: varint] ([id: varint] [kind | remove << 2: u8] [value])*
+  // A value is 8 bytes for S8, 4 for S4, 1 for Bit, and a varint size and bytes for Var. A removal
+  // has none.
+  void AppendEncoded(std::string& out) const;
+  // Nullopt if malformed. The patch borrows from `encoded`, which must outlive it.
+  static std::optional<MessagePatch> Decode(std::string_view encoded);
+
  private:
   static FieldId CheckId(FieldId id) {
     if (id == 0 || id > kMaxFieldId) throw std::invalid_argument("message field ID out of range");
