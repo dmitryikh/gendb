@@ -35,8 +35,14 @@ add_library(gendb_lib
     lib/gendb/message.cpp
     lib/gendb/checkpoint.h
     lib/gendb/checkpoint.cpp
+    lib/gendb/commit_ring.h
+    lib/gendb/cursors.cpp
     lib/gendb/engine.h
     lib/gendb/engine.cpp
+    lib/gendb/engine_compaction.cpp
+    lib/gendb/engine_internal.h
+    lib/gendb/engine_recovery.cpp
+    lib/gendb/engine_replication.cpp
     lib/gendb/file_io.h
     lib/gendb/file_io.cpp
     lib/gendb/log_format.h
@@ -44,6 +50,8 @@ add_library(gendb_lib
     lib/gendb/record_table.h
     lib/gendb/replication.h
     lib/gendb/replication.cpp
+    lib/gendb/subscription.cpp
+    lib/gendb/transaction.cpp
     lib/gendb/wal.h
     lib/gendb/wal.cpp
 )

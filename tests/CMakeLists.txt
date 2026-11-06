@@ -38,6 +38,24 @@ target_link_libraries(database_test PRIVATE gendb_lib GTest::gtest_main GTest::g
 add_dependencies(database_test codegen db_codegen primitive_db_codegen)
 add_test(NAME database_test COMMAND database_test)
 
+add_executable(persistence_test
+    persistence_test.cpp
+    generated/database.h
+    generated/database.cpp
+)
+target_link_libraries(persistence_test PRIVATE gendb_lib GTest::gtest_main GTest::gmock)
+add_dependencies(persistence_test codegen db_codegen)
+add_test(NAME persistence_test COMMAND persistence_test)
+
+add_executable(subscription_test
+    subscription_test.cpp
+    generated/database.h
+    generated/database.cpp
+)
+target_link_libraries(subscription_test PRIVATE gendb_lib GTest::gtest_main GTest::gmock)
+add_dependencies(subscription_test codegen db_codegen)
+add_test(NAME subscription_test COMMAND subscription_test)
+
 # Replication, over an in-process transport and raw TCP, and over gRPC when available.
 add_executable(replication_test
     replication_test.cpp

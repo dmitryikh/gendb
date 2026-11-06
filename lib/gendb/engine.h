@@ -267,6 +267,7 @@ class Engine {
   // Subscriptions.
   void Unsubscribe(const std::shared_ptr<internal::Subscriber>& subscriber);
   void WaitForSubscriberRoom();
+  void StopSubscribers();
 
   // Replication, for ReplicationServer and Replica.
   void EnableCommitRing(size_t capacity_bytes);
